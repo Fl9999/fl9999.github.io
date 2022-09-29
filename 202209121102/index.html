@@ -296,6 +296,83 @@
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo setenforce 0</span><br><span class="line">sudo sed -i &#x27;s/^SELINUX=enforcing$/SELINUX=disabled/&#x27; /etc/selinux/config</span><br></pre></td></tr></table></figure>
 
 <h4 id="集群中所有计算机之间具有完全的网络连接"><a href="#集群中所有计算机之间具有完全的网络连接" class="headerlink" title="集群中所有计算机之间具有完全的网络连接"></a>集群中所有计算机之间具有完全的网络连接</h4><p>配置集群所有节点的防火墙，确保所有集群节点之间具有完全的网络连接。</p>
+<ul>
+<li>放通节点之间的通信</li>
+<li>确保防火墙允许 <code>FORWARD</code> 链的流量<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubernetes nodes</span></span><br><span class="line">-A INPUT -m comment --comment &quot;kubernetes nodes&quot; -s 172.31.5.58 -j ACCEPT</span><br><span class="line">-A INPUT -m comment --comment &quot;kubernetes nodes&quot; -s 172.31.5.68 -j ACCEPT</span><br><span class="line">-A INPUT -m comment --comment &quot;kubernetes nodes&quot; -s 172.31.0.230 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT -m comment --comment &quot;k8s ingress http,https&quot;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubernetes services network</span></span><br><span class="line">-A INPUT -m comment --comment &quot;kubernetes services network&quot; -s 10.0.0.0/8 -j ACCEPT</span><br><span class="line"></span><br><span class="line">...</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
+</ul>
+<p>集群通信 ( iptables ) 矩阵说明：</p>
+<table>
+<thead>
+<tr>
+<th>Protocol</th>
+<th>iptables table</th>
+<th>ipables chain</th>
+<th>Port Range</th>
+<th>Purpose</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>UDP</td>
+<td>filter</td>
+<td>INPUT</td>
+<td>8472</td>
+<td>flannel</td>
+<td>network</td>
+</tr>
+<tr>
+<td>TCP</td>
+<td>filter</td>
+<td>INPUT</td>
+<td>6443</td>
+<td>Kubernetes API server</td>
+<td>ALL node</td>
+</tr>
+<tr>
+<td>TCP</td>
+<td>filter</td>
+<td>INPUT</td>
+<td>2379-2380</td>
+<td>etcd server client API</td>
+<td>kube-apiserver,etcd</td>
+</tr>
+<tr>
+<td>TCP</td>
+<td>filter</td>
+<td>INPUT</td>
+<td>10250</td>
+<td>kubelet API</td>
+<td>Control plane, Self ,kubectl exec</td>
+</tr>
+<tr>
+<td>TCP</td>
+<td>filter</td>
+<td>INPUT</td>
+<td>10251</td>
+<td>kube-scheduler</td>
+<td>self</td>
+</tr>
+<tr>
+<td>TCP</td>
+<td>filter</td>
+<td>INPUT</td>
+<td>10252</td>
+<td>kube-controller-manager</td>
+<td>self</td>
+</tr>
+<tr>
+<td>TCP</td>
+<td>filter</td>
+<td>INPUT</td>
+<td>30000-32767</td>
+<td>NodePortService</td>
+<td>All</td>
+</tr>
+</tbody></table>
+<ul>
+<li>不同节点之间的 <code>Pod</code> 通信需要经过 <code>flannel</code> 的 <code>8472/udp</code> </li>
+<li><code>nodePort</code> 类型的 <code>service</code> ，默认可用的 <code>nodePort</code> 端口范围为 <code>30000-32767</code>，根据实际情况配置</li>
+</ul>
 <h4 id="禁止swap分区"><a href="#禁止swap分区" class="headerlink" title="禁止swap分区"></a>禁止swap分区</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">swapoff -a</span><br></pre></td></tr></table></figure>
 
 <h4 id="配置主机名"><a href="#配置主机名" class="headerlink" title="配置主机名"></a>配置主机名</h4><p>节点之中不可以有重复的主机名、MAC 地址或 product_uuid</p>
@@ -398,7 +475,6 @@
 <p>以下 2 处新增配置 <code>nodeName: ops-kubernetes1</code>，其中 <code>ops-kubernetes1</code> 为 master 节点名称，可以通过 <code>kubectl get nodes</code> 查看</p>
 <figure class="highlight shell"><figcaption><span>recommended.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  securityContext:</span><br><span class="line">    seccompProfile:</span><br><span class="line">      type: RuntimeDefault</span><br><span class="line">  nodeName: ops-kubernetes1</span><br><span class="line">  containers:</span><br><span class="line">    - name: kubernetes-dashboard</span><br><span class="line">      image: kubernetesui/dashboard:v2.6.1</span><br><span class="line">      imagePullPolicy: Always</span><br><span class="line">      ports:</span><br><span class="line">        - containerPort: 8443</span><br><span class="line">          protocol: TCP</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<figure class="highlight shell"><figcaption><span>recommended.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  securityContext:</span><br><span class="line">    seccompProfile:</span><br><span class="line">      type: RuntimeDefault</span><br><span class="line">  nodeName: ops-kubernetes1</span><br><span class="line">  containers:</span><br><span class="line">    - name: dashboard-metrics-scraper</span><br><span class="line">      image: kubernetesui/metrics-scraper:v1.0.8</span><br><span class="line">      ports:</span><br><span class="line">        - containerPort: 8000</span><br><span class="line">          protocol: TCP</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p>以上 2 处修改主要是配置 <code>kubernetes-dashboard</code> 运行在 master 节点上，否则可能运行在其他节点上，会因为网络问题导致 <code>kubernetes-dashboard</code> 无法正常启动，查看日志会报以下错误：</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kubernetes-dashboard kubernetes-dashboard-66c887f759-5rbbb</span></span><br><span class="line">2022/09/14 06:59:17 Starting overwatch</span><br><span class="line">2022/09/14 06:59:17 Using namespace: kubernetes-dashboard</span><br><span class="line">2022/09/14 06:59:17 Using in-cluster config to connect to apiserver</span><br><span class="line">2022/09/14 06:59:17 Using secret token for csrf signing</span><br><span class="line">2022/09/14 06:59:17 Initializing csrf token from kubernetes-dashboard-csrf secret</span><br><span class="line">panic: Get &quot;https://10.96.0.1:443/api/v1/namespaces/kubernetes-dashboard/secrets/kubernetes-dashboard-csrf&quot;: dial tcp 10.96.0.1:443: connect: no route to host</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p>关键日志 ： <code>panic: Get &quot;https://10.96.0.1:443/api/v1/namespaces/kubernetes-dashboard/secrets/kubernetes-dashboard-csrf&quot;: dial tcp 10.96.0.1:443: connect: no route to host </code></p>
