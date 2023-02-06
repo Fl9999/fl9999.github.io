@@ -7936,6 +7936,77 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Centos7 部署 strongSwan VPN</title>
+    <url>/202302061115/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>VPN 协议有 <code>pptp</code>, <code>l2tp</code>, <code>ipsec</code> 等等. 安全性逐级提高, 这里选择安全性最高的 <code>ipsec</code></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 5.4.221-1</li>
+<li>iptables</li>
+<li>strongswan 5.7.2</li>
+</ul>
+<h1 id="安装部署-strongSwan-VPN"><a href="#安装部署-strongSwan-VPN" class="headerlink" title="安装部署 strongSwan VPN"></a>安装部署 strongSwan VPN</h1><h2 id="安装-strongSwan"><a href="#安装-strongSwan" class="headerlink" title="安装 strongSwan"></a>安装 strongSwan</h2><p><code>strongSwan</code> 的发行版已包含在 EPEL 源中</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install strongswan</span><br><span class="line"></span><br><span class="line">systemctl enable strongswan --now</span><br></pre></td></tr></table></figure>
+<h2 id="生成证书"><a href="#生成证书" class="headerlink" title="生成证书"></a>生成证书</h2><p>拨入 VPN 服务器需要使用证书来认证。我们可以使用 Strongswan 自带的 PKI 工具来生成 CA 证书，服务器证书及密钥。所有这些证书文件都保存在 <code>/etc/strongswan/ipsec.d/</code> 目录下。</p>
+<h3 id="生成-CA-证书"><a href="#生成-CA-证书" class="headerlink" title="生成 CA 证书"></a>生成 CA 证书</h3><p>生成一个私钥，作为 CA 的私钥</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --gen --type rsa --size 4096 --outform pem &gt; /etc/strongswan/ipsec.d/private/ca-key.pem</span><br></pre></td></tr></table></figure>
+<p>接下来使用 CA 密钥生成 CA 证书，下面命令行中 <code>VPN root CA</code> 是签发机构名称，可以替换成任何字符串。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --self --in /etc/strongswan/ipsec.d/private/ca-key.pem \</span><br><span class="line">           --dn &quot;CN=root CA&quot; --ca --lifetime 3650 \</span><br><span class="line">           --outform pem &gt; /etc/strongswan/ipsec.d/cacerts/ca-cert.cer</span><br></pre></td></tr></table></figure>
+<p>命令行参数说明</p>
+<ul>
+<li><code>--self</code>  - 表示自签证书</li>
+<li><code>--in</code>  - 输入的私钥</li>
+<li><code>--dn</code>  - 证书别名</li>
+<li><code>--ca</code>  - 表示生成 CA</li>
+<li><code>--lifetime</code> - 证书有效期</li>
+</ul>
+<h3 id="生成服务器证书"><a href="#生成服务器证书" class="headerlink" title="生成服务器证书"></a>生成服务器证书</h3><p>首先生成服务器私钥</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --gen --type rsa --size 4096 --outform pem &gt; \</span><br><span class="line">         /etc/strongswan/ipsec.d/private/server-key.pem	</span><br></pre></td></tr></table></figure>
+
+<p>使用服务器密钥，产生服务器公钥</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --pub --in /etc/strongswan/ipsec.d/private/server-key.pem \</span><br><span class="line">           --outform pem &gt; /etc/strongswan/ipsec.d/certs/server-cert.pem</span><br></pre></td></tr></table></figure>
+<p>然后用刚才生成的服务器密钥，CA 密钥和证书，签发服务器证书。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --issue --lifetime 3600 \</span><br><span class="line">               --cacert /etc/strongswan/ipsec.d/cacerts/ca-cert.cer \</span><br><span class="line">			   --cakey /etc/strongswan/ipsec.d/private/ca-key.pem \</span><br><span class="line">			   --in /etc/strongswan/ipsec.d/certs/server-cert.pem \</span><br><span class="line">			   --dn &quot;C=CN, O=IT, CN=v.csms.tech&quot; --san=&quot;v.csms.tech&quot; \</span><br><span class="line">			   --flag serverAuth --flag ikeIntermediate \</span><br><span class="line">			   --outform pem &gt; /etc/strongswan/ipsec.d/certs/server.selfsigned.cert.pem</span><br></pre></td></tr></table></figure>
+<p>命令行参数说明 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[CentOS 7 配置 IPSec-IKEv1, IKEv2, L2TP VPN, 适用于 ios, os x, windows, linux](http://linux.it.net.cn/m/view.php?aid=21496)">[1]</span></a></sup></p>
+<ul>
+<li><code>--issue</code>, <code>--cacert</code> 和 <code>--cakey</code>, <code>--in</code> 就是表明要用刚才自签的 CA 证书来签这个服务器证书。</li>
+<li><code>--dn</code>, <code>--san</code>, <code>--flag</code> 是一些客户端方面的特殊要求：<ul>
+<li>iOS 客户端要求 CN 也就是通用名必须是你的服务器的 URL 或 IP 地址;</li>
+<li>Android 和 iOS 都要求服务器别名（<code>serverAltName</code>）就是服务器的 URL 或 IP 地址，即 <code>--san</code>。</li>
+<li>Windows 7 不但要求了上面，还要求必须显式说明这个服务器证书的用途（用于与服务器进行认证），<code>--flag serverAuth</code></li>
+<li>非 iOS 的 Mac OS X 要求了 <code>IP 安全网络密钥互换居（IP Security IKE Intermediate）</code>这种增强型密钥用法（EKU），<code>--flag ikdeIntermediate</code></li>
+</ul>
+</li>
+</ul>
+<h3 id="生成客户端证书"><a href="#生成客户端证书" class="headerlink" title="生成客户端证书"></a>生成客户端证书</h3><p>生成客户端使用的私钥</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --gen --outform pem &gt; /etc/strongswan/ipsec.d/private/client-key.pem</span><br></pre></td></tr></table></figure>
+<p>根据客户端私钥生成客户端公钥</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --pub \</span><br><span class="line">               --in /etc/strongswan/ipsec.d/private/client-key.pem \</span><br><span class="line">               --outform pem &gt; /etc/strongswan/ipsec.d/certs/client-cert.pem</span><br></pre></td></tr></table></figure>
+<p>使用自签的 CA 证书来签发客户端证书</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">strongswan pki --issue --lifetime 3600 --cacert /etc/strongswan/ipsec.d/cacerts/ca-cert.cer \</span><br><span class="line">               --cakey /etc/strongswan/ipsec.d/private/ca-key.pem \</span><br><span class="line">			   --in /etc/strongswan/ipsec.d/certs/client-cert.pem \</span><br><span class="line">			   --dn &quot;C=CN, O=IT, CN=v.csms.tech&quot; \</span><br><span class="line">			   --outform pem &gt; /etc/strongswan/ipsec.d/certs/client.selfsigned.cert.pem</span><br></pre></td></tr></table></figure>
+
+<p>生成 pkcs12 证书</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">openssl pkcs12 -export -inkey /etc/strongswan/ipsec.d/private/client-key.pem -in /etc/strongswan/ipsec.d/certs/client.selfsigned.cert.pem -name &quot;strongSwan Client Cert&quot; -certfile /etc/strongswan/ipsec.d/cacerts/ca-cert.cer -caname &quot;strongSwan CA&quot; -out /etc/strongswan/ipsec.d/certs/client.selfsigned.cert.p12</span><br></pre></td></tr></table></figure>
+<h2 id="配置-VPN"><a href="#配置-VPN" class="headerlink" title="配置 VPN"></a>配置 VPN</h2><h3 id="开启内核转发"><a href="#开启内核转发" class="headerlink" title="开启内核转发"></a>开启内核转发</h3><p><code>/etc/sysctl.conf</code> 新增以下配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">net.ipv4.ip_forward = 1</span><br><span class="line">net.ipv6.conf.all.forwarding=1</span><br></pre></td></tr></table></figure>
+<p>执行以下命令使配置生效</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sysctl -p</span><br></pre></td></tr></table></figure>
+<h3 id="配置-iptables-防火墙"><a href="#配置-iptables-防火墙" class="headerlink" title="配置 iptables 防火墙"></a>配置 iptables 防火墙</h3><p>防火墙添加以下规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">允许 ISAMKP 数据包</span></span><br><span class="line">iptables -A INPUT -p udp --dport 500 -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许 IPSec NAT Traversal 数据包</span></span><br><span class="line">iptables -A INPUT -p udp --dport 4500 -j ACCEPT </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nat转换</span></span><br><span class="line">iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="comment">#允许转发</span></span></span><br><span class="line">iptables -A FORWARD -s 10.0.0.0/24 -j ACCEPT </span><br><span class="line">iptables -A FORWARD -d 10.0.0.0/24 -j ACCEPT</span><br></pre></td></tr></table></figure>
+<p>或者参考以下内容修改防火墙配置文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*nat</span><br><span class="line">:PREROUTING ACCEPT [0:0]</span><br><span class="line">:INPUT ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [0:0]</span><br><span class="line">:POSTROUTING ACCEPT [0:0]</span><br><span class="line">-A POSTROUTING -s 10.0.0.0/24 -o eth0 -j MASQUERADE</span><br><span class="line">COMMIT</span><br><span class="line"></span><br><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD DROP [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">####允许本机访问外网</span></span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##回环网卡配置</span></span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">####vpn</span></span></span><br><span class="line">-A INPUT -p udp --dport 500 -j ACCEPT</span><br><span class="line">-A INPUT -p udp --dport 4500 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">-A FORWARD -s 10.0.0.0/24 -j ACCEPT</span><br><span class="line">-A FORWARD -d 10.0.0.0/24 -j ACCEPT</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure>
+<h3 id="修改-strongSwan-配置"><a href="#修改-strongSwan-配置" class="headerlink" title="修改 strongSwan 配置"></a>修改 strongSwan 配置</h3><p>修改配置文件 <code>/etc/strongswan/ipsec.conf</code></p>
+<figure class="highlight shell"><figcaption><span>/etc/strongswan/ipsec.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="http://linux.it.net.cn/m/view.php?aid=21496">CentOS 7 配置 IPSec-IKEv1, IKEv2, L2TP VPN, 适用于 ios, os x, windows, linux</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>vsftpd 服务常见错误</title>
     <url>/202207261304/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="530-Login-incorrect"><a href="#530-Login-incorrect" class="headerlink" title="530 Login incorrect"></a>530 Login incorrect</h3><p><strong>报错信息</strong>： 登录时报错 <code>530 Login incorrect</code><br><strong>错误原因</strong>：</p>
