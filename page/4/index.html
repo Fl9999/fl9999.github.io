@@ -192,6 +192,241 @@
   
 
   <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
+    <link itemprop="mainEntityOfPage" href="http://csms.tech/202210261456/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="../../images/avatar.gif">
+      <meta itemprop="name" content="COSMOS">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="L B T">
+      <meta itemprop="description" content="得 能 莫 忘">
+    </span>
+
+    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
+      <meta itemprop="name" content="undefined | L B T">
+      <meta itemprop="description" content="">
+    </span>
+      <header class="post-header">
+        <h2 class="post-title" itemprop="name headline">
+          <a href="../../202210261456/" class="post-title-link" itemprop="url">Jenkins + gitlab 自动构建</a>
+        </h2>
+
+        <div class="post-meta-container">
+          <div class="post-meta">
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-calendar"></i>
+      </span>
+      <span class="post-meta-item-text">发表于</span>
+      
+
+      <time title="创建时间：2022-10-26 14:56:13 / 修改时间：11:31:07" itemprop="dateCreated datePublished" datetime="2022-10-26T14:56:13+08:00">2022-10-26</time>
+    </span>
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-folder"></i>
+      </span>
+      <span class="post-meta-item-text">上层目录</span>
+        <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+          <a href="../../categories/Tools/" itemprop="url" rel="index"><span itemprop="name">Tools</span></a>
+        </span>
+    </span>
+
+  
+</div>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+          <h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Jenkins jenkinsci&#x2F;blueocean:2.346.3</li>
+<li>GitLab Community Edition 13.9.6</li>
+<li>Docker 19.03.15</li>
+</ul>
+<p>本文档记录 GitLab 上面的代码更新时，使用 Jenkins 自动构建 Docker 镜像的过程。 </p>
+<h1 id="配置过程"><a href="#配置过程" class="headerlink" title="配置过程"></a>配置过程</h1><h2 id="使用-docker-启动-Jenkins-容器"><a href="#使用-docker-启动-Jenkins-容器" class="headerlink" title="使用 docker 启动 Jenkins 容器"></a>使用 docker 启动 Jenkins 容器</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d -p 8080:8080 --name jenkins \</span><br><span class="line">          -v /var/run/docker.sock:/var/run/docker.sock  \</span><br><span class="line">          -v /data/JenkinsData_blueocean/:/var/jenkins_home/ \</span><br><span class="line">          -u root \</span><br><span class="line">          jenkinsci/blueocean</span><br></pre></td></tr></table></figure>
+
+<h2 id="Jenkins-配置"><a href="#Jenkins-配置" class="headerlink" title="Jenkins 配置"></a>Jenkins 配置</h2><p>以下分别记录使用 <code>freestyle</code> 和 <code>Pipeline</code> 类型的构建镜像的配置过程</p>
+<h3 id="创建-freestyle-类型的-Item-构建镜像"><a href="#创建-freestyle-类型的-Item-构建镜像" class="headerlink" title="创建 freestyle 类型的 Item 构建镜像"></a>创建 <code>freestyle</code> 类型的 Item 构建镜像</h3><p>在 <code>源码管理（Source Code Management）</code> 中配置 git 地址，并配置认证</p>
+<blockquote>
+<p>默认情况下，在构建时，Jenkins 会先从配置的 Git 地址拉取代码到 Jenkins 目录： <code>/var/jenkins_home/workspace/$&#123;PROJECT_NAME&#125;</code></p>
+</blockquote>
+<p>在 <code>构建（Build）</code> 中 <code>Add build step</code> ，选择构建类型为 <code>Execute shell</code>，此处构建的示例项目代码结构如下，其中 Dockerfile 路径为 <code>k8s/server/Dockerfile</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">.:</span><br><span class="line">index.html	k8s</span><br><span class="line"></span><br><span class="line">./k8s:</span><br><span class="line">server</span><br><span class="line"></span><br><span class="line">./k8s/server:</span><br><span class="line">Dockerfile</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>使用如下 shell 脚本</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">DATA=`date +%Y%m%d%H%M`</span><br><span class="line"></span><br><span class="line">DIR=&#x27;.&#x27;</span><br><span class="line"></span><br><span class="line">LOG=$&#123;DIR&#125;/docker_build_result.log</span><br><span class="line"></span><br><span class="line">DOCKER_REGISTRY=&#x27;harbor.a.com&#x27;</span><br><span class="line"></span><br><span class="line">DOCKER_REGISTRY_PROJECT=&#x27;test&#x27;</span><br><span class="line"></span><br><span class="line">PROJECT=&#x27;test_project&#x27;</span><br><span class="line">ENV=&#x27;uat&#x27;</span><br><span class="line"></span><br><span class="line">docker build -t $&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125; -f k8s/server/Dockerfile $&#123;DIR&#125; | tee $&#123;LOG&#125;</span><br><span class="line"></span><br><span class="line">docker tag $&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125; $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125;</span><br><span class="line"></span><br><span class="line">docker login -u admin -p Harbor12345 $&#123;DOCKER_REGISTRY&#125;</span><br><span class="line"></span><br><span class="line">docker push $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125;</span><br><span class="line"></span><br><span class="line">RESULT=`cat $&#123;LOG&#125; | tail -n 1`</span><br><span class="line"></span><br><span class="line">grep &quot;Successfully tagged &quot; $&#123;LOG&#125;</span><br><span class="line"></span><br><span class="line">exit $?</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_71.png"></p>
+<blockquote>
+<p>其中的 <code>$&#123;Branch&#125;</code> 来自 <strong>参数化的构建</strong><br><img src="https://i.csms.tech/img_69.png"></p>
+</blockquote>
+          <!--noindex-->
+            <div class="post-button">
+              <a class="btn" href="../../202210261456/#more" rel="contents">
+                阅读全文 &raquo;
+              </a>
+            </div>
+          <!--/noindex-->
+        
+      
+    </div>
+
+    
+    
+    
+
+    <footer class="post-footer">
+        <div class="post-eof"></div>
+      
+    </footer>
+  </article>
+</div>
+
+
+
+
+    
+
+
+<div class="post-block">
+  
+  
+
+  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
+    <link itemprop="mainEntityOfPage" href="http://csms.tech/202210250956/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="../../images/avatar.gif">
+      <meta itemprop="name" content="COSMOS">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="L B T">
+      <meta itemprop="description" content="得 能 莫 忘">
+    </span>
+
+    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
+      <meta itemprop="name" content="undefined | L B T">
+      <meta itemprop="description" content="">
+    </span>
+      <header class="post-header">
+        <h2 class="post-title" itemprop="name headline">
+          <a href="../../202210250956/" class="post-title-link" itemprop="url">Kubernetes 网络数据包抓包分析</a>
+        </h2>
+
+        <div class="post-meta-container">
+          <div class="post-meta">
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-calendar"></i>
+      </span>
+      <span class="post-meta-item-text">发表于</span>
+      
+
+      <time title="创建时间：2022-10-25 09:56:41 / 修改时间：09:56:47" itemprop="dateCreated datePublished" datetime="2022-10-25T09:56:41+08:00">2022-10-25</time>
+    </span>
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-folder"></i>
+      </span>
+      <span class="post-meta-item-text">上层目录</span>
+        <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+          <a href="../../categories/kubernetes/" itemprop="url" rel="index"><span itemprop="name">kubernetes</span></a>
+        </span>
+    </span>
+
+  
+</div>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+          <h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+          <!--noindex-->
+            <div class="post-button">
+              <a class="btn" href="../../202210250956/#more" rel="contents">
+                阅读全文 &raquo;
+              </a>
+            </div>
+          <!--/noindex-->
+        
+      
+    </div>
+
+    
+    
+    
+
+    <footer class="post-footer">
+        <div class="post-eof"></div>
+      
+    </footer>
+  </article>
+</div>
+
+
+
+
+    
+
+
+<div class="post-block">
+  
+  
+
+  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
     <link itemprop="mainEntityOfPage" href="http://csms.tech/202210241051/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -2026,211 +2261,6 @@
 <h3 id="python3-sdk-操作"><a href="#python3-sdk-操作" class="headerlink" title="python3 sdk 操作"></a>python3 sdk 操作</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> wcs.commons.config <span class="keyword">import</span> Config</span><br><span class="line"><span class="keyword">from</span> wcs.services.client <span class="keyword">import</span> Client</span><br><span class="line"></span><br><span class="line">config_file = <span class="string">&quot;/root/.wcscfg&quot;</span></span><br><span class="line">cfg = Config(config_file)</span><br><span class="line">cli = Client(cfg)</span><br><span class="line">bucketName = <span class="string">&quot;TestBucket&quot;</span></span><br><span class="line">buckList = cli.bucket_list(bucketName, marker=<span class="string">&#x27;&#x27;</span>)    <span class="comment"># 列出bucket中的文件列表，每次最多获取1000个，第一页 `marker=&#x27;&#x27;`, 请求第一页的响应中marker的值为新的页的marker，可通过新的marker继续发起请求</span></span><br></pre></td></tr></table></figure>
 
 <h4 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h4><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a target="_blank" rel="noopener" href="https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk">参考链接</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>
-      
-    </div>
-
-    
-    
-    
-
-    <footer class="post-footer">
-        <div class="post-eof"></div>
-      
-    </footer>
-  </article>
-</div>
-
-
-
-
-    
-
-
-<div class="post-block">
-  
-  
-
-  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
-    <link itemprop="mainEntityOfPage" href="http://csms.tech/36f703dc/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="../../images/avatar.gif">
-      <meta itemprop="name" content="COSMOS">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="L B T">
-      <meta itemprop="description" content="得 能 莫 忘">
-    </span>
-
-    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
-      <meta itemprop="name" content="undefined | L B T">
-      <meta itemprop="description" content="">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          <a href="../../36f703dc/" class="post-title-link" itemprop="url">rsyncd 服务</a>
-        </h2>
-
-        <div class="post-meta-container">
-          <div class="post-meta">
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-calendar"></i>
-      </span>
-      <span class="post-meta-item-text">发表于</span>
-
-      <time title="创建时间：2021-07-12 12:21:26" itemprop="dateCreated datePublished" datetime="2021-07-12T12:21:26+08:00">2021-07-12</time>
-    </span>
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-calendar-check"></i>
-      </span>
-      <span class="post-meta-item-text">更新于</span>
-      <time title="修改时间：2022-09-01 11:18:43" itemprop="dateModified" datetime="2022-09-01T11:18:43+08:00">2022-09-01</time>
-    </span>
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-folder"></i>
-      </span>
-      <span class="post-meta-item-text">上层目录</span>
-        <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-          <a href="../../categories/Linux/" itemprop="url" rel="index"><span itemprop="name">Linux</span></a>
-        </span>
-          ，
-        <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-          <a href="../../categories/Linux/%E5%B8%B8%E7%94%A8%E6%9C%8D%E5%8A%A1/" itemprop="url" rel="index"><span itemprop="name">常用服务</span></a>
-        </span>
-    </span>
-
-  
-</div>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-          <h3 id="命令格式"><a href="#命令格式" class="headerlink" title="命令格式"></a>命令格式</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">rsync [OPTION]... SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]host:DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST:SRC DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST::SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]HOST::DEST</span><br><span class="line">rsync [OPTION]... rsync://[USER@]HOST[:PORT]/SRC [DEST]</span><br></pre></td></tr></table></figure>
-
-<p><code>:</code>   ssh 方式进行备份，ssh 非默认端口使用选项 <code>-e</code> 指定端口, <code>-e &#39;ssh -p 30000&#39;</code></p>
-<p><code>::</code>   socket 方式进行备份，<code>rsync</code> 以服务方式监听，<code>SRC/DEST</code> 为配置中定义的模块 <code>[]</code></p>
-<blockquote>
-<ul>
-<li><code>rsync</code> 命令使用中，如果源参数的末尾有斜线，只会复制指定目录的内容，而不复制目录本身，没有斜线，则会复制目录本身，包括目录</li>
-<li>客户端免密登录时，需要在客户端建立密码文件： <code>/etc/rsync.passwd</code>，文件中只保存密码，权限为600，用选项 <code>--password-file</code> 指明存放密码的文件位置</li>
-</ul>
-</blockquote>
-          <!--noindex-->
-            <div class="post-button">
-              <a class="btn" href="../../36f703dc/#more" rel="contents">
-                阅读全文 &raquo;
-              </a>
-            </div>
-          <!--/noindex-->
-        
-      
-    </div>
-
-    
-    
-    
-
-    <footer class="post-footer">
-        <div class="post-eof"></div>
-      
-    </footer>
-  </article>
-</div>
-
-
-
-
-    
-
-
-<div class="post-block">
-  
-  
-
-  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
-    <link itemprop="mainEntityOfPage" href="http://csms.tech/202208301738/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="../../images/avatar.gif">
-      <meta itemprop="name" content="COSMOS">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="L B T">
-      <meta itemprop="description" content="得 能 莫 忘">
-    </span>
-
-    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
-      <meta itemprop="name" content="undefined | L B T">
-      <meta itemprop="description" content="">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          <a href="../../202208301738/" class="post-title-link" itemprop="url">docker compose 简介</a>
-        </h2>
-
-        <div class="post-meta-container">
-          <div class="post-meta">
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-calendar"></i>
-      </span>
-      <span class="post-meta-item-text">发表于</span>
-
-      <time title="创建时间：2022-08-30 15:36:14" itemprop="dateCreated datePublished" datetime="2022-08-30T15:36:14+08:00">2022-08-30</time>
-    </span>
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-calendar-check"></i>
-      </span>
-      <span class="post-meta-item-text">更新于</span>
-      <time title="修改时间：2022-08-31 11:15:20" itemprop="dateModified" datetime="2022-08-31T11:15:20+08:00">2022-08-31</time>
-    </span>
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-folder"></i>
-      </span>
-      <span class="post-meta-item-text">上层目录</span>
-        <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-          <a href="../../categories/Docker/" itemprop="url" rel="index"><span itemprop="name">Docker</span></a>
-        </span>
-    </span>
-
-  
-</div>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-          <p><code>Compose</code> 项目是 <code>Docker</code> 官方的开源项目，负责实现对 <code>Docker 容器集群</code> 的快速编排。</p>
-<p><code>Compose</code> 定位是 <strong>「定义和运行多个 <code>Docker</code> 容器的应用（Defining and running multi-container Docker applications）」</strong>，其前身是开源项目 <code>Fig</code>。</p>
-<p>使用一个 <a href="/202208050928/" title="Dockerfile">Dockerfile</a> 模板文件，可以让用户很方便的定义一个单独的应用容器。然而，在日常工作中，经常会碰到需要多个容器相互配合来完成某项任务的情况。例如要实现一个 Web 项目，除了 Web 服务容器本身，往往还需要再加上后端的数据库服务容器，甚至还包括负载均衡容器等。  </p>
-<p><code>Compose</code> 恰好满足了这样的需求。它允许用户通过一个单独的 <code>docker-compose.yml</code> 模板文件（<code>YAML</code> 格式）来定义一组相关联的应用容器为一个项目（<code>project</code>）。<br><code>Compose</code> 中有两个重要的概念：</p>
-<ul>
-<li><code>服务 (service)</code> ： 一个应用的容器，实际上可以包括若干运行相同镜像的容器实例。  </li>
-<li><code>项目 (project)</code> ： 由一组关联的应用容器组成的一个完整业务单元，在 <code>docker-compose.yml</code> 文件中定义。</li>
-</ul>
-<p><code>Compose</code> 的默认管理对象是项目，通过子命令对项目中的一组容器进行便捷地生命周期管理。<br><code>Compose</code> 项目由 <code>Python</code> 编写，实现上调用了 <code>Docker</code> 服务提供的 <code>API</code> 来对容器进行管理。因此，只要所操作的平台支持 <code>Docker API</code>，就可以在其上利用 <code>Compose</code> 来进行编排管理。</p>
-          <!--noindex-->
-            <div class="post-button">
-              <a class="btn" href="../../202208301738/#more" rel="contents">
-                阅读全文 &raquo;
-              </a>
-            </div>
-          <!--/noindex-->
-        
       
     </div>
 
