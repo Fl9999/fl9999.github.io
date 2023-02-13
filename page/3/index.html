@@ -192,6 +192,104 @@
   
 
   <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
+    <link itemprop="mainEntityOfPage" href="http://csms.tech/202212141608/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="../../images/avatar.gif">
+      <meta itemprop="name" content="COSMOS">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="L B T">
+      <meta itemprop="description" content="得 能 莫 忘">
+    </span>
+
+    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
+      <meta itemprop="name" content="undefined | L B T">
+      <meta itemprop="description" content="">
+    </span>
+      <header class="post-header">
+        <h2 class="post-title" itemprop="name headline">
+          <a href="../../202212141608/" class="post-title-link" itemprop="url">K8S 上安装 Prometheus 并监控 K8S 集群</a>
+        </h2>
+
+        <div class="post-meta-container">
+          <div class="post-meta">
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-calendar"></i>
+      </span>
+      <span class="post-meta-item-text">发表于</span>
+      
+
+      <time title="创建时间：2022-12-14 16:09:03 / 修改时间：16:09:10" itemprop="dateCreated datePublished" datetime="2022-12-14T16:09:03+08:00">2022-12-14</time>
+    </span>
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-folder"></i>
+      </span>
+      <span class="post-meta-item-text">上层目录</span>
+        <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+          <a href="../../categories/kubernetes/" itemprop="url" rel="index"><span itemprop="name">kubernetes</span></a>
+        </span>
+    </span>
+
+  
+</div>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+          <h1 id="版本信息"><a href="#版本信息" class="headerlink" title="版本信息"></a>版本信息</h1><ul>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="Prometheus-部署步骤"><a href="#Prometheus-部署步骤" class="headerlink" title="Prometheus 部署步骤"></a>Prometheus 部署步骤</h1><h2 id="为-Prometheus-创建专用的-Namespace，此处创建-prometheus"><a href="#为-Prometheus-创建专用的-Namespace，此处创建-prometheus" class="headerlink" title="为 Prometheus 创建专用的 Namespace，此处创建 prometheus"></a>为 Prometheus 创建专用的 Namespace，此处创建 <code>prometheus</code></h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create namespace prometheus</span><br></pre></td></tr></table></figure>
+
+<h2 id="创建集群角色"><a href="#创建集群角色" class="headerlink" title="创建集群角色"></a>创建集群角色</h2><p>Prometheus 使用 Kubernetes API 从 Nodes、Pods、Deployments 等等中读取所有可用的指标。因此，我们需要创建一个包含 read access 所需 API 组的 RBAC 策略，并将该策略绑定到新建的 <code>prometheus</code> 命名空间。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[如何部署 Prometheus 监控K8S](https://zhuanlan.zhihu.com/p/456205833)">[1]</span></a></sup></p>
+<ol>
+<li>创建一个名为 <code>prometheusClusterRole.yaml</code>的文件，并复制以下 RBAC 角色。<blockquote>
+<p>在下面给出的角色中，可以看到，我们已经往 <code>nodes</code>, <code>services endpoints</code>, <code>pods</code> 和 <code>ingresses</code> 中添加了 <code>get</code>，<code>list</code> 以及 <code>watch</code> 权限。角色绑定被绑定到监控命名空间。如果有任何要从其他对象中检索指标的用例，则需要将其添加到此集群角色中。</p>
+</blockquote>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">apiVersion: rbac.authorization.k8s.io/v1</span><br><span class="line">kind: ClusterRole</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus</span><br><span class="line">rules:</span><br><span class="line">- apiGroups: [&quot;&quot;]</span><br><span class="line">  resources:</span><br><span class="line">  - nodes</span><br><span class="line">  - nodes/proxy</span><br><span class="line">  - services</span><br><span class="line">  - endpoints</span><br><span class="line">  - pods</span><br><span class="line">  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]</span><br><span class="line">- apiGroups:</span><br><span class="line">  - extensions</span><br><span class="line">  resources:</span><br><span class="line">  - ingresses</span><br><span class="line">  verbs: [&quot;get&quot;, &quot;list&quot;, &quot;watch&quot;]</span><br><span class="line">- nonResourceURLs: [&quot;/metrics&quot;]</span><br><span class="line">  verbs: [&quot;get&quot;]</span><br><span class="line">---</span><br><span class="line">apiVersion: rbac.authorization.k8s.io/v1</span><br><span class="line">kind: ClusterRoleBinding</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus</span><br><span class="line">roleRef:</span><br><span class="line">  apiGroup: rbac.authorization.k8s.io</span><br><span class="line">  kind: ClusterRole</span><br><span class="line">  name: prometheus</span><br><span class="line">subjects:</span><br><span class="line">- kind: ServiceAccount</span><br><span class="line">  name: default</span><br><span class="line">  namespace: prometheus</span><br></pre></td></tr></table></figure></li>
+<li>使用下面的命令创建角色<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f prometheusClusterRole.yaml</span><br></pre></td></tr></table></figure></li>
+</ol>
+          <!--noindex-->
+            <div class="post-button">
+              <a class="btn" href="../../202212141608/#more" rel="contents">
+                阅读全文 &raquo;
+              </a>
+            </div>
+          <!--/noindex-->
+        
+      
+    </div>
+
+    
+    
+    
+
+    <footer class="post-footer">
+        <div class="post-eof"></div>
+      
+    </footer>
+  </article>
+</div>
+
+
+
+
+    
+
+
+<div class="post-block">
+  
+  
+
+  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
     <link itemprop="mainEntityOfPage" href="http://csms.tech/202212071353/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -2249,169 +2347,6 @@
 <h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package"><a href="#The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package" class="headerlink" title="The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package"></a>The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package</h2><p><strong>解救方法</strong></p>
 <p>修改对应 <code>yum</code> 源的配置文件，将其中的配置 <code>gpgcheck=1</code> 改为 <code>gpgcheck=0</code>，以此跳过 key 验证</p>
 
-      
-    </div>
-
-    
-    
-    
-
-    <footer class="post-footer">
-        <div class="post-eof"></div>
-      
-    </footer>
-  </article>
-</div>
-
-
-
-
-    
-
-
-<div class="post-block">
-  
-  
-
-  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
-    <link itemprop="mainEntityOfPage" href="http://csms.tech/202211021332/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="../../images/avatar.gif">
-      <meta itemprop="name" content="COSMOS">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="L B T">
-      <meta itemprop="description" content="得 能 莫 忘">
-    </span>
-
-    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
-      <meta itemprop="name" content="undefined | L B T">
-      <meta itemprop="description" content="">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          <a href="../../202211021332/" class="post-title-link" itemprop="url">Apollo 配置中心服务使用说明</a>
-        </h2>
-
-        <div class="post-meta-container">
-          <div class="post-meta">
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-calendar"></i>
-      </span>
-      <span class="post-meta-item-text">发表于</span>
-      
-
-      <time title="创建时间：2022-11-02 13:33:12 / 修改时间：13:33:18" itemprop="dateCreated datePublished" datetime="2022-11-02T13:33:12+08:00">2022-11-02</time>
-    </span>
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-folder"></i>
-      </span>
-      <span class="post-meta-item-text">上层目录</span>
-        <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
-          <a href="../../categories/Tools/" itemprop="url" rel="index"><span itemprop="name">Tools</span></a>
-        </span>
-    </span>
-
-  
-</div>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-          <h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 kernel 5.4</li>
-<li>Apollo 2.0.1</li>
-<li>Mysql 5.7</li>
-<li>Java 1.8</li>
-</ul>
-<h1 id="安装部署"><a href="#安装部署" class="headerlink" title="安装部署"></a>安装部署</h1><h2 id="分布式部署"><a href="#分布式部署" class="headerlink" title="分布式部署"></a>分布式部署</h2><h3 id="部署服务器信息说明"><a href="#部署服务器信息说明" class="headerlink" title="部署服务器信息说明"></a>部署服务器信息说明</h3><table>
-<thead>
-<tr>
-<th>环境</th>
-<th>服务器</th>
-<th>服务</th>
-<th>端口</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-portal</td>
-<td>8070</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>数据库 ApolloPortalDB</td>
-<td>3306</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>数据库ApolloConfigDB</td>
-<td>3306</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.82.2</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.82.2</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>数据库ApolloConfigDB</td>
-<td>3306</td>
-</tr>
-</tbody></table>
-<p>其中 <code>172.31.88.1</code>、<code>172.31.82.2</code> 为 <code>pro</code> 环境的高可用节点。<code>172.31.83.3</code> 为 <code>uat</code> 环境的单节点。</p>
-<p><code>apollo-portal</code> 和 <code>ApolloPortalDB</code> 部署在 <code>pro</code> 环境，<code>uat</code> 环境共用 <code>apollo-portal</code> 和 <code>ApolloPortalDB</code>。</p>
-          <!--noindex-->
-            <div class="post-button">
-              <a class="btn" href="../../202211021332/#more" rel="contents">
-                阅读全文 &raquo;
-              </a>
-            </div>
-          <!--/noindex-->
-        
       
     </div>
 
