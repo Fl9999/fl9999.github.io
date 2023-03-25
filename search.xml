@@ -497,58 +497,6 @@ width: 35%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>hexo markdown常用语法</title>
     <url>/2215beeb/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="url-链接"><a href="#url-链接" class="headerlink" title="url 链接"></a>url 链接</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">[这是一个链接](https://csms.tech [title])</span><br></pre></td></tr></table></figure>
@@ -677,6 +625,58 @@ width: 20%;
       <tags>
         <tag>Hexo</tag>
         <tag>Markdown</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -1703,27 +1703,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>django-bootstrap5 使用</title>
-    <url>/202303221624/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python3.11</li>
-<li>Django4</li>
-</ul>
-<h1 id="django-bootstrap5-安装配置"><a href="#django-bootstrap5-安装配置" class="headerlink" title="django-bootstrap5 安装配置"></a>django-bootstrap5 安装配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install django-bootstrap5</span><br></pre></td></tr></table></figure>
-
-<p>在项目配置文件 <code>settings.py</code> 中添加应用名</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">INSTALLED_APPS = [</span><br><span class="line">    ...</span><br><span class="line">    &#x27;django_bootstrap5&#x27;,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-
-<h1 id="bootstrap5-使用"><a href="#bootstrap5-使用" class="headerlink" title="bootstrap5 使用"></a>bootstrap5 使用</h1>]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Django</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Django admin 配置</title>
     <url>/202209021312/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Django 自带的 <code>Admin Site</code> 管理页面可以方便用户快速构建一个简单的后台管理系统，少量代码即可快速实现对数据库中的数据进行展示、修改、保存的可视化页面和功能。当需要对后台展示的数据进行配置时，只需要在 <code>app</code> 的代码文件 <code>admin.py</code> 中进行相应配置即可。</p>
@@ -1788,6 +1767,59 @@ width: 20%;
 
 <h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Related-Field-got-invalid-lookup-icontains"><a href="#Related-Field-got-invalid-lookup-icontains" class="headerlink" title="Related Field got invalid lookup: icontains"></a>Related Field got invalid lookup: icontains</h2><p><a href="https://stackoverflow.com/questions/24569687/searching-by-related-fields-in-django-admin">此问题说明示例</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/ref/contrib/admin/actions/#admin-actions">管理 actions</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/ref/contrib/admin/#modeladmin-options">ModelAdmin 对象</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/ref/contrib/admin/filters/#using-a-simplelistfilter">Using a SimpleListFilter</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/ref/contrib/admin/#inlinemodeladmin-objects">InlineModelAdmin </a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/ref/contrib/admin/#logentry-objects">LogEntry 对象</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/ref/contrib/admin/#django.contrib.admin.ModelAdmin.get_list_display">get_list_display</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Django admin 模板分析及使用</title>
+    <url>/202303241020/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11</li>
+<li>Django 4.1</li>
+</ul>
+<h1 id="admin-模板解析"><a href="#admin-模板解析" class="headerlink" title="admin 模板解析"></a>admin 模板解析</h1><p>Django 模板之间存在各种复杂的继承关系，最基础的模板为 <code>base.html</code>，文件位于 <code>python3.11/site-packages/django/contrib/admin/templates/admin/base.html</code>。下面以 Admin 页面中的各个模块来解析实现对应模块的模板及代码。</p>
+<h2 id="title"><a href="#title" class="headerlink" title="title"></a>title</h2><p><code>title</code> 指网页标题，以 Admin 站点的首页为例，首页的模板文件 <code>index.html</code> 中未定义 <code>title</code> 信息，而是继承自 <code>base_site.html</code></p>
+<figure class="highlight python"><figcaption><span>base_site.html</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;% extends <span class="string">&quot;admin/base.html&quot;</span> %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block title %&#125;&#123;% <span class="keyword">if</span> subtitle %&#125;&#123;&#123; subtitle &#125;&#125; | &#123;% endif %&#125;&#123;&#123; title &#125;&#125; | &#123;&#123; site_title|default:_(<span class="string">&#x27;Django site admin&#x27;</span>) &#125;&#125;&#123;% endblock </span><br><span class="line">%&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>base_site.html</code> 模板继承了模板 <code>base.html</code>，并使用 <code>&#123;% block title %&#125;</code> 标签复写了继承自 <code>base.html</code> 模板的 <code>title</code> 信息。默认显示 <code>Django site admin</code>，如果应用的 <code>admin.py</code> 中定义了 <code>admin.site.site_title</code>，则显示其内容</p>
+<figure class="highlight python"><figcaption><span>base.html</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;% load i18n static %&#125;&lt;!DOCTYPE html&gt;</span><br><span class="line">&#123;% get_current_language <span class="keyword">as</span> LANGUAGE_CODE %&#125;&#123;% get_current_language_bidi <span class="keyword">as</span> LANGUAGE_BIDI %&#125;</span><br><span class="line">&lt;html lang=<span class="string">&quot;&#123;&#123; LANGUAGE_CODE|default:&quot;</span>en-us<span class="string">&quot; &#125;&#125;&quot;</span> <span class="built_in">dir</span>=<span class="string">&quot;&#123;&#123; LANGUAGE_BIDI|yesno:&#x27;rtl,ltr,auto&#x27; &#125;&#125;&quot;</span>&gt;</span><br><span class="line">&lt;head&gt;</span><br><span class="line">&lt;title&gt;&#123;% block title %&#125;&#123;% endblock %&#125;&lt;/title&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>基础模板 <code>base.html</code> 中 <code>title</code> 信息默认为空。</p>
+<h2 id="Django-管理或站点标题"><a href="#Django-管理或站点标题" class="headerlink" title="Django 管理或站点标题"></a>Django 管理或站点标题</h2><p>Admin 管理页面最顶部左上角会展示默认的 <code>Django 管理</code> 或者站点标题，如果应用的 <code>admin.py</code> 中配置了 <code>admin.site.site_header</code>，则显示站点标题，这是一个链接，点击后会跳转首页。<br><img src="https://i.csms.tech/img_130.png"></p>
+<p>这部分的实现是通过继承 <code>base_site.html</code> 实现，其中的 <code>&#123;% block branding %&#125;</code> 定义了这部分内容。</p>
+<figure class="highlight python"><figcaption><span>base_site.html</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;% extends <span class="string">&quot;admin/base.html&quot;</span> %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block title %&#125;&#123;% <span class="keyword">if</span> subtitle %&#125;&#123;&#123; subtitle &#125;&#125; | &#123;% endif %&#125;&#123;&#123; title &#125;&#125; | &#123;&#123; site_title|default:_(<span class="string">&#x27;Django site admin&#x27;</span>) &#125;&#125;&#123;% endblock %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block branding %&#125;</span><br><span class="line">&lt;h1 <span class="built_in">id</span>=<span class="string">&quot;site-name&quot;</span>&gt;&lt;a href=<span class="string">&quot;&#123;% url &#x27;admin:index&#x27; %&#125;&quot;</span>&gt;&#123;&#123; site_header|default:_(<span class="string">&#x27;Django administration&#x27;</span>) &#125;&#125;&lt;/a&gt;&lt;/h1&gt;</span><br><span class="line">&#123;% endblock %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block nav-<span class="keyword">global</span> %&#125;&#123;% endblock %&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="用户欢迎信息"><a href="#用户欢迎信息" class="headerlink" title="用户欢迎信息"></a>用户欢迎信息</h2><p>Django admin 站点默认会显示如下的欢饮信息及修改密码、注销等链接<br><img src="https://i.csms.tech/img_131.png"><br>此处的配置位于 <code>base.html</code> 中的 <code>&#123;% block usertools %&#125;</code> 块内，<code>&#123;% block usertools %&#125;</code> 块位于 <code> &#123;% block header %&#125;</code> 块内。</p>
+<figure class="highlight python"><figcaption><span>base.html</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;% block header %&#125;</span><br><span class="line">&lt;div <span class="built_in">id</span>=<span class="string">&quot;header&quot;</span>&gt;</span><br><span class="line">    &lt;div <span class="built_in">id</span>=<span class="string">&quot;branding&quot;</span>&gt;</span><br><span class="line">    &#123;% block branding %&#125;&#123;% endblock %&#125;</span><br><span class="line">    &lt;/div&gt;</span><br><span class="line">    &#123;% block usertools %&#125;</span><br><span class="line"> &#123;% <span class="keyword">if</span> has_permission %&#125;</span><br><span class="line">    &lt;div <span class="built_in">id</span>=<span class="string">&quot;user-tools&quot;</span>&gt;</span><br><span class="line">        &#123;% block welcome-msg %&#125;</span><br><span class="line">            &#123;% translate <span class="string">&#x27;Welcome,&#x27;</span> %&#125;</span><br><span class="line">            &lt;strong&gt;&#123;% firstof user.get_short_name user.get_username %&#125;&lt;/strong&gt;.</span><br><span class="line">        &#123;% endblock %&#125;</span><br><span class="line">        &#123;% block userlinks %&#125;</span><br><span class="line">            &#123;% <span class="keyword">if</span> site_url %&#125;</span><br><span class="line">                &lt;a href=<span class="string">&quot;&#123;&#123; site_url &#125;&#125;&quot;</span>&gt;&#123;% translate <span class="string">&#x27;View site&#x27;</span> %&#125;&lt;/a&gt; /</span><br><span class="line">            &#123;% endif %&#125;</span><br><span class="line">            &#123;% <span class="keyword">if</span> user.is_active <span class="keyword">and</span> user.is_staff %&#125;</span><br><span class="line">                &#123;% url <span class="string">&#x27;django-admindocs-docroot&#x27;</span> <span class="keyword">as</span> docsroot %&#125;</span><br><span class="line">                &#123;% <span class="keyword">if</span> docsroot %&#125;</span><br><span class="line">                    &lt;a href=<span class="string">&quot;&#123;&#123; docsroot &#125;&#125;&quot;</span>&gt;&#123;% translate <span class="string">&#x27;Documentation&#x27;</span> %&#125;&lt;/a&gt; /</span><br><span class="line">                &#123;% endif %&#125;</span><br><span class="line">            &#123;% endif %&#125;</span><br><span class="line">            &#123;% <span class="keyword">if</span> user.has_usable_password %&#125;</span><br><span class="line">            &lt;a href=<span class="string">&quot;&#123;% url &#x27;admin:password_change&#x27; %&#125;&quot;</span>&gt;&#123;% translate <span class="string">&#x27;Change password&#x27;</span> %&#125;&lt;/a&gt; /</span><br><span class="line">            &#123;% endif %&#125;</span><br><span class="line">            &lt;a href=<span class="string">&quot;&#123;% url &#x27;admin:logout&#x27; %&#125;&quot;</span>&gt;&#123;% translate <span class="string">&#x27;Log out&#x27;</span> %&#125;&lt;/a&gt;</span><br><span class="line">        &#123;% endblock %&#125;</span><br><span class="line">    &lt;/div&gt;</span><br><span class="line"> &#123;% endif %&#125; </span><br><span class="line">    &#123;% endblock %&#125;</span><br><span class="line">    &#123;% block nav-<span class="keyword">global</span> %&#125;&#123;% endblock %&#125;</span><br><span class="line">&lt;/div&gt;</span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>
+
+<h1 id="自定义页面"><a href="#自定义页面" class="headerlink" title="自定义页面"></a>自定义页面</h1><h2 id="自定义和-Django-admin-风格一样的页面"><a href="#自定义和-Django-admin-风格一样的页面" class="headerlink" title="自定义和 Django admin 风格一样的页面"></a>自定义和 Django admin 风格一样的页面</h2><p>如果要自定义自己的页面，并实现和 Django admin 一致的风格，比如一样的 branding 和用户欢迎信息，可以使用如下代码实现</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% extends &quot;admin/base_site.html&quot; %&#125;</span><br><span class="line">&#123;% load i18n static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block title %&#125;</span><br><span class="line">My Customize Site</span><br><span class="line">&#123;% endblock %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrastyle %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% endblock %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block branding %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">h1</span> <span class="attr">id</span>=<span class="string">&quot;site-name&quot;</span>&gt;</span><span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;admin:index&#x27; %&#125;&quot;</span>&gt;</span>My Customize Site<span class="tag">&lt;/<span class="name">a</span>&gt;</span><span class="tag">&lt;/<span class="name">h1</span>&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block usertools %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">div</span> <span class="attr">id</span>=<span class="string">&quot;user-tools&quot;</span>&gt;</span></span><br><span class="line">            &#123;% block welcome-msg %&#125;</span><br><span class="line">                &#123;% translate &#x27;Welcome,&#x27; %&#125;</span><br><span class="line">                <span class="tag">&lt;<span class="name">strong</span>&gt;</span>&#123;% firstof user.get_short_name user.get_username %&#125;<span class="tag">&lt;/<span class="name">strong</span>&gt;</span>.</span><br><span class="line">            &#123;% endblock %&#125;</span><br><span class="line">            &#123;% block userlinks %&#125;</span><br><span class="line">                &#123;% if site_url %&#125;</span><br><span class="line">                    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;&#123; site_url &#125;&#125;&quot;</span>&gt;</span>&#123;% translate &#x27;View site&#x27; %&#125;<span class="tag">&lt;/<span class="name">a</span>&gt;</span> /</span><br><span class="line">                &#123;% endif %&#125;</span><br><span class="line">                &#123;% if user.is_active and user.is_staff %&#125;</span><br><span class="line">                    &#123;% url &#x27;django-admindocs-docroot&#x27; as docsroot %&#125;</span><br><span class="line">                    &#123;% if docsroot %&#125;</span><br><span class="line">                        <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;&#123; docsroot &#125;&#125;&quot;</span>&gt;</span>&#123;% translate &#x27;Documentation&#x27; %&#125;<span class="tag">&lt;/<span class="name">a</span>&gt;</span> /</span><br><span class="line">                    &#123;% endif %&#125;</span><br><span class="line">                &#123;% endif %&#125;</span><br><span class="line">                &#123;% if user.has_usable_password %&#125;</span><br><span class="line">                <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;admin:password_change&#x27; %&#125;&quot;</span>&gt;</span>&#123;% translate &#x27;Change password&#x27; %&#125;<span class="tag">&lt;/<span class="name">a</span>&gt;</span> /</span><br><span class="line">                &#123;% endif %&#125;</span><br><span class="line">                <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;admin:logout&#x27; %&#125;&quot;</span>&gt;</span>&#123;% translate &#x27;Log out&#x27; %&#125;<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">            &#123;% endblock %&#125;</span><br><span class="line">        <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line"></span><br><span class="line">&#123;% endblock %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block breadcrumbs %&#125;&#123;% endblock %&#125;</span><br><span class="line">&#123;% block content %&#125;</span><br><span class="line">hello world</span><br><span class="line">&#123;% endblock %&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>django-bootstrap5 使用</title>
+    <url>/202303221624/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python3.11</li>
+<li>Django4</li>
+</ul>
+<h1 id="django-bootstrap5-安装配置"><a href="#django-bootstrap5-安装配置" class="headerlink" title="django-bootstrap5 安装配置"></a>django-bootstrap5 安装配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install django-bootstrap5</span><br></pre></td></tr></table></figure>
+
+<p>在项目配置文件 <code>settings.py</code> 中添加应用名</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">INSTALLED_APPS = [</span><br><span class="line">    ...</span><br><span class="line">    &#x27;django_bootstrap5&#x27;,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<h1 id="bootstrap5-使用"><a href="#bootstrap5-使用" class="headerlink" title="bootstrap5 使用"></a>bootstrap5 使用</h1>]]></content>
       <categories>
         <category>Python</category>
         <category>Django</category>
@@ -2357,6 +2389,46 @@ width: 20%;
       </categories>
       <tags>
         <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Django 模板语言</title>
+    <url>/202303241517/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11</li>
+<li>Django 4.1</li>
+</ul>
+<h1 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h1><p>在 Django 4.1 中，使用静态文件的方法与之前的版本相同。以下是使用静态文件的步骤：</p>
+<ol>
+<li><p>在 <code>settings.py</code> 中设置静态文件目录：</p>
+ <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">STATIC_URL = <span class="string">&#x27;/static/&#x27;</span></span><br><span class="line">STATICFILES_DIRS = [</span><br><span class="line">    BASE_DIR / <span class="string">&quot;static&quot;</span>,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>STATIC_URL</code> 是静态文件 URL 的前缀。</li>
+<li><code>STATICFILES_DIRS</code> 是一个列表，其中包含要在其中查找静态文件的目录。</li>
+</ul>
+</li>
+<li><p>在 HTML 文件中使用静态文件</p>
+ <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Static File Example<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> <span class="attr">type</span>=<span class="string">&quot;text/css&quot;</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;css/style.css&#x27; %&#125;&quot;</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">img</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;images/logo.png&#x27; %&#125;&quot;</span> <span class="attr">alt</span>=<span class="string">&quot;My logo&quot;</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;js/script.js&#x27; %&#125;&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<p> 在上面的示例中，我们使用了 Django 模板语言的 <code>&#123;% static %&#125;</code> 标记来引用静态文件。<code>&#123;% load static %&#125;</code> 指令必须在使用 <code>&#123;% static %&#125;</code> 标记之前加载，以确保 Django 能够正确解析它们。</p>
+</li>
+<li><p>运行 <code>collectstatic</code> 命令：<br>  当您准备部署您的 Django 应用程序时，您需要将静态文件收集到一个单独的目录中，以便可以轻松地在生产服务器上提供它们。您可以使用 Django 的 <code>collectstatic</code> 命令来完成此操作。在命令行中运行以下命令：</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py collectstatic</span><br></pre></td></tr></table></figure>
+
+<p> Django 将在 <code>STATIC_ROOT</code> 目录中创建一个新的静态文件目录，并将您的静态文件从 <code>STATICFILES_DIRS</code> 中指定的目录复制到该目录中。您可以在 <code>settings.py</code> 文件中设置 <code>STATIC_ROOT</code> 目录的路径</p>
+</li>
+</ol>
+<h1 id="DTL-语法"><a href="#DTL-语法" class="headerlink" title="DTL 语法"></a>DTL 语法</h1><h2 id="load-static"><a href="#load-static" class="headerlink" title="load static"></a>load static</h2><p><a href="#%E5%9C%A8-HTML-%E6%96%87%E4%BB%B6%E4%B8%AD%E4%BD%BF%E7%94%A8%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6">参考说明</a></p>
+<h2 id="block-super"><a href="#block-super" class="headerlink" title="block.super"></a>block.super</h2><p>用来从父 block 中继承选项</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrahead %&#125;</span><br><span class="line">&#123;&#123; block.super &#125;&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/bootstrap.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/base.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+        <tag>Python</tag>
       </tags>
   </entry>
   <entry>
@@ -3199,28 +3271,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>docker 运行 mysql</title>
-    <url>/202301181604/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Docker 19.03.15</li>
-<li>Mysql 5.7</li>
-</ul>
-<h1 id="配置步骤"><a href="#配置步骤" class="headerlink" title="配置步骤"></a>配置步骤</h1><h2 id="下载镜像"><a href="#下载镜像" class="headerlink" title="下载镜像"></a>下载镜像</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker pull mysql:5.7.31</span><br></pre></td></tr></table></figure>
-
-<h2 id="启动容器"><a href="#启动容器" class="headerlink" title="启动容器"></a>启动容器</h2><p>启动容器前先在本地创建 Mysql 数据目录以用来持久化 Mysql 数据，如果需要配置文件，可以在本地创建好配置文件挂载到容器的 <code>/etc/mysql/my.cnf</code>，无需配置文件的话，则只需要将持久化的本地数据目录挂载到容器默认的数据目录 <code>/var/lib/mysql</code>，本示例中 Mysql 本地持久化数据目录为 <code>/opt/docker_mysql_home/data/</code>。使用以下命令启动容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d --name mysql -v /opt/docker_mysql_home/data/:/var/lib/mysql/ -p 3306:3306 \</span><br><span class="line">              -e MYSQL_ROOT_PASSWORD=123456 mysql:5.7.31</span><br></pre></td></tr></table></figure>
-<p><code>-e MYSQL_ROOT_PASSWORD=123456</code>  通过环境变量配置 Mysql 初始化后的密码</p>
-<p>容器启动后，通过以下命令连接数据库</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysql -h 127.0.0.1 -uroot -p</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Docker 部署 OpenLDAP + phpLDAPadmin 教程</title>
     <url>/202210131557/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
@@ -3256,6 +3306,28 @@ width: 20%;
         <tag>Docker</tag>
         <tag>OpenLDAP</tag>
         <tag>phpLDAPadmin</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>docker 运行 mysql</title>
+    <url>/202301181604/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Docker 19.03.15</li>
+<li>Mysql 5.7</li>
+</ul>
+<h1 id="配置步骤"><a href="#配置步骤" class="headerlink" title="配置步骤"></a>配置步骤</h1><h2 id="下载镜像"><a href="#下载镜像" class="headerlink" title="下载镜像"></a>下载镜像</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker pull mysql:5.7.31</span><br></pre></td></tr></table></figure>
+
+<h2 id="启动容器"><a href="#启动容器" class="headerlink" title="启动容器"></a>启动容器</h2><p>启动容器前先在本地创建 Mysql 数据目录以用来持久化 Mysql 数据，如果需要配置文件，可以在本地创建好配置文件挂载到容器的 <code>/etc/mysql/my.cnf</code>，无需配置文件的话，则只需要将持久化的本地数据目录挂载到容器默认的数据目录 <code>/var/lib/mysql</code>，本示例中 Mysql 本地持久化数据目录为 <code>/opt/docker_mysql_home/data/</code>。使用以下命令启动容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d --name mysql -v /opt/docker_mysql_home/data/:/var/lib/mysql/ -p 3306:3306 \</span><br><span class="line">              -e MYSQL_ROOT_PASSWORD=123456 mysql:5.7.31</span><br></pre></td></tr></table></figure>
+<p><code>-e MYSQL_ROOT_PASSWORD=123456</code>  通过环境变量配置 Mysql 初始化后的密码</p>
+<p>容器启动后，通过以下命令连接数据库</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysql -h 127.0.0.1 -uroot -p</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -4902,7 +4974,7 @@ width: 20%;
     <title>kubernetes 安装配置</title>
     <url>/202209121102/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/">Kubernetes 官网文档</a></p>
-<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
 <li>Centos 7 5.4.212-1</li>
 <li>Docker 20.10.18</li>
 <li>containerd.io-1.6.8</li>
@@ -4910,13 +4982,13 @@ width: 20%;
 <li>kubeadm-1.24.7</li>
 <li>kubelet-1.24.7</li>
 </ul>
-<h3 id="kubernetes-环境安装前配置"><a href="#kubernetes-环境安装前配置" class="headerlink" title="kubernetes 环境安装前配置"></a>kubernetes 环境安装前配置</h3><h4 id="升级内核版本"><a href="#升级内核版本" class="headerlink" title="升级内核版本"></a>升级内核版本</h4><p>Centos 7 默认的内核版本 3.10 在运行 kubernetes 时存在不稳定性，建议升级内核版本到新版本</p>
+<h1 id="kubernetes-环境安装前配置"><a href="#kubernetes-环境安装前配置" class="headerlink" title="kubernetes 环境安装前配置"></a>kubernetes 环境安装前配置</h1><h2 id="升级内核版本"><a href="#升级内核版本" class="headerlink" title="升级内核版本"></a>升级内核版本</h2><p>Centos 7 默认的内核版本 3.10 在运行 kubernetes 时存在不稳定性，建议升级内核版本到新版本</p>
 <a href="/202209140931/" title="Centos 7 升级内核">Centos 7 升级内核</a>
 
-<h4 id="关闭-SELinux"><a href="#关闭-SELinux" class="headerlink" title="关闭 SELinux"></a>关闭 SELinux</h4><p>kubernetes 目前未实现对 SELinux 的支持，因此必须要关闭 SELinux</p>
+<h2 id="关闭-SELinux"><a href="#关闭-SELinux" class="headerlink" title="关闭 SELinux"></a>关闭 SELinux</h2><p>kubernetes 目前未实现对 SELinux 的支持，因此必须要关闭 SELinux</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo setenforce 0</span><br><span class="line">sudo sed -i &#x27;s/^SELINUX=enforcing$/SELINUX=disabled/&#x27; /etc/selinux/config</span><br></pre></td></tr></table></figure>
 
-<h4 id="集群中所有计算机之间具有完全的网络连接"><a href="#集群中所有计算机之间具有完全的网络连接" class="headerlink" title="集群中所有计算机之间具有完全的网络连接"></a>集群中所有计算机之间具有完全的网络连接</h4><p>配置集群所有节点的防火墙，确保所有集群节点之间具有完全的网络连接。</p>
+<h2 id="集群中所有计算机之间具有完全的网络连接"><a href="#集群中所有计算机之间具有完全的网络连接" class="headerlink" title="集群中所有计算机之间具有完全的网络连接"></a>集群中所有计算机之间具有完全的网络连接</h2><p>配置集群所有节点的防火墙，确保所有集群节点之间具有完全的网络连接。</p>
 <ul>
 <li>放通节点之间的通信</li>
 <li>确保防火墙允许 <code>FORWARD</code> 链的流量<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubernetes nodes</span></span><br><span class="line">-A INPUT -m comment --comment &quot;kubernetes nodes&quot; -s 172.31.5.58 -j ACCEPT</span><br><span class="line">-A INPUT -m comment --comment &quot;kubernetes nodes&quot; -s 172.31.5.68 -j ACCEPT</span><br><span class="line">-A INPUT -m comment --comment &quot;kubernetes nodes&quot; -s 172.31.0.230 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT -m comment --comment &quot;k8s ingress http,https&quot;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">...</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
@@ -4996,21 +5068,21 @@ width: 20%;
 <li>不同节点之间的 <code>Pod</code> 通信需要经过 <code>flannel</code> 的 <code>8472/udp</code> </li>
 <li><code>nodePort</code> 类型的 <code>service</code> ，默认可用的 <code>nodePort</code> 端口范围为 <code>30000-32767</code>，根据实际情况配置</li>
 </ul>
-<h4 id="禁止swap分区"><a href="#禁止swap分区" class="headerlink" title="禁止swap分区"></a>禁止swap分区</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">swapoff -a</span><br></pre></td></tr></table></figure>
+<h2 id="禁止swap分区"><a href="#禁止swap分区" class="headerlink" title="禁止swap分区"></a>禁止swap分区</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">swapoff -a</span><br></pre></td></tr></table></figure>
 
-<h4 id="配置主机名"><a href="#配置主机名" class="headerlink" title="配置主机名"></a>配置主机名</h4><p>节点之中不可以有重复的主机名、MAC 地址或 product_uuid</p>
+<h2 id="配置主机名"><a href="#配置主机名" class="headerlink" title="配置主机名"></a>配置主机名</h2><p>节点之中不可以有重复的主机名、MAC 地址或 product_uuid</p>
 <p>配置集群中的 3 台主机名分别为 <code>kubernetes1</code>，<code>kubernetes2</code>，<code>kubernetes3</code>，本示例中 <code>kubernetes1</code> 作为 master </p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">hostnamectl set-hostname kubernetes1</span><br></pre></td></tr></table></figure>
 
 <p>添加主机名和 ip 解析到 <code>/etc/hosts</code> 文件</p>
 <figure class="highlight shell"><figcaption><span>/etc/hosts</span></figcaption><table><tr><td class="code"><pre><span class="line">172.31.10.19 kubernetes1</span><br><span class="line">172.31.9.241 kubernetes2</span><br><span class="line">172.31.14.115 kubernetes3</span><br></pre></td></tr></table></figure>
 
-<h4 id="为-kube-proxy-开启-ipvs"><a href="#为-kube-proxy-开启-ipvs" class="headerlink" title="为 kube-proxy 开启 ipvs"></a>为 kube-proxy 开启 ipvs</h4><p><a href="https://blog.fleeto.us/post/iptables-or-ipvs/">kube-proxy 模式对比：iptables 还是 IPVS</a></p>
+<h2 id="为-kube-proxy-开启-ipvs"><a href="#为-kube-proxy-开启-ipvs" class="headerlink" title="为 kube-proxy 开启 ipvs"></a>为 kube-proxy 开启 ipvs</h2><p><a href="https://blog.fleeto.us/post/iptables-or-ipvs/">kube-proxy 模式对比：iptables 还是 IPVS</a></p>
 <p><a href="https://cloud.tencent.com/developer/article/1890887">kube-proxy中使用ipvs与iptables的比较</a></p>
 <p>此配置为<strong>可选操作</strong>，在不启用 ipvs 模式的情况下，kube-proxy 会使用 iptables 模式</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cat &gt; /etc/sysconfig/modules/ipvs.modules &lt;&lt;EOF</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/bash</span></span><br><span class="line">modprobe -- ip_vs</span><br><span class="line">modprobe -- ip_vs_rr</span><br><span class="line">modprobe -- ip_vs_wrr</span><br><span class="line">modprobe -- ip_vs_sh</span><br><span class="line">modprobe -- nf_conntrack_ipv4</span><br><span class="line">EOF</span><br><span class="line"></span><br><span class="line">chmod 755 /etc/sysconfig/modules/ipvs.modules &amp;&amp; bash /etc/sysconfig/modules/ipvs.modules </span><br></pre></td></tr></table></figure>
 
-<h4 id="转发-IPv4-并让-iptables-看到桥接流量"><a href="#转发-IPv4-并让-iptables-看到桥接流量" class="headerlink" title="转发 IPv4 并让 iptables 看到桥接流量"></a>转发 IPv4 并让 iptables 看到桥接流量</h4><p>以下操作需要在 kubernetes 集群中的所有节点操作<br>通过运行 <code>lsmod | grep br_netfilter</code> 来验证 <code>br_netfilter</code> 模块是否已加载。</p>
+<h2 id="转发-IPv4-并让-iptables-看到桥接流量"><a href="#转发-IPv4-并让-iptables-看到桥接流量" class="headerlink" title="转发 IPv4 并让 iptables 看到桥接流量"></a>转发 IPv4 并让 iptables 看到桥接流量</h2><p>以下操作需要在 kubernetes 集群中的所有节点操作<br>通过运行 <code>lsmod | grep br_netfilter</code> 来验证 <code>br_netfilter</code> 模块是否已加载。</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">lsmod | grep br_netfilter</span></span><br><span class="line">br_netfilter           22256  0 </span><br><span class="line">bridge                151336  1 br_netfilter</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p>若要显式加载此模块，请运行以下命令</p>
 <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">sudo modprobe overlay</span><br><span class="line">sudo modprobe br_netfilter</span><br></pre></td></tr></table></figure>
@@ -5028,16 +5100,16 @@ width: 20%;
 
 <!-- more -->
 
-<h4 id="安装-Docker-Engine"><a href="#安装-Docker-Engine" class="headerlink" title="安装 Docker Engine"></a>安装 Docker Engine</h4><p>以下操作需要在 kubernetes 集群中的所有节点操作<br>参考以下链接，在每个节点上安装 Docker Engine<br><a href="https://docs.docker.com/engine/install/centos/">Centos 安装 Docker Engine 官网参考文档</a></p>
+<h2 id="安装-Docker-Engine"><a href="#安装-Docker-Engine" class="headerlink" title="安装 Docker Engine"></a>安装 Docker Engine</h2><p>以下操作需要在 kubernetes 集群中的所有节点操作<br>参考以下链接，在每个节点上安装 Docker Engine<br><a href="https://docs.docker.com/engine/install/centos/">Centos 安装 Docker Engine 官网参考文档</a></p>
 <a href="/202208041317/" title="docker 安装及常用命令介绍">docker 安装及常用命令介绍</a>
 
-<h4 id="安装-cri-dockerd"><a href="#安装-cri-dockerd" class="headerlink" title="安装 cri-dockerd"></a>安装 cri-dockerd</h4><p>Docker Engine 没有实现 CRI，因此 Kubernetes 无法直接使用 Docker Engine，需要先安装 cri-dockerd，以让 Kubernetes 可以通过 Kubernetes 的 CRI 操作 Docker。</p>
+<h2 id="安装-cri-dockerd"><a href="#安装-cri-dockerd" class="headerlink" title="安装 cri-dockerd"></a>安装 cri-dockerd</h2><p>Docker Engine 没有实现 CRI，因此 Kubernetes 无法直接使用 Docker Engine，需要先安装 cri-dockerd，以让 Kubernetes 可以通过 Kubernetes 的 CRI 操作 Docker。</p>
 <p>以下操作需要在 kubernetes 集群中的所有节点操作 </p>
 <p>按照源代码仓库中的说明安装 <a href="https://github.com/Mirantis/cri-dockerd">cri-dockerd</a></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">git clone https://github.com/Mirantis/cri-dockerd.git</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Run these commands as root</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##Install GO###</span></span></span><br><span class="line">wget https://storage.googleapis.com/golang/getgo/installer_linux</span><br><span class="line">chmod +x ./installer_linux</span><br><span class="line">./installer_linux</span><br><span class="line">source ~/.bash_profile</span><br><span class="line"></span><br><span class="line">cd cri-dockerd</span><br><span class="line">mkdir bin</span><br><span class="line">go build -o bin/cri-dockerd</span><br><span class="line">mkdir -p /usr/local/bin</span><br><span class="line">install -o root -g root -m 0755 bin/cri-dockerd /usr/local/bin/cri-dockerd</span><br><span class="line">cp -a packaging/systemd/* /etc/systemd/system</span><br><span class="line">sed -i -e &#x27;s,/usr/bin/cri-dockerd,/usr/local/bin/cri-dockerd,&#x27; /etc/systemd/system/cri-docker.service</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 使用 iptables 替换 firewalld</span></span></span><br><span class="line">sed -i -e &#x27;s,firewalld.service,iptables.service,&#x27; /etc/systemd/system/cri-docker.service</span><br><span class="line">systemctl daemon-reload</span><br><span class="line">systemctl enable --now cri-docker.service</span><br><span class="line">systemctl enable --now cri-docker.socket</span><br></pre></td></tr></table></figure>
 
 <p>对于 <code>cri-dockerd</code>，默认情况下，CRI 套接字是 <code>/run/cri-dockerd.sock</code></p>
-<h3 id="Kubernetes-安装配置"><a href="#Kubernetes-安装配置" class="headerlink" title="Kubernetes 安装配置"></a>Kubernetes 安装配置</h3><h4 id="安装-kubeadm、kubelet-和-kubectl"><a href="#安装-kubeadm、kubelet-和-kubectl" class="headerlink" title="安装 kubeadm、kubelet 和 kubectl"></a>安装 kubeadm、kubelet 和 kubectl</h4><p>需要在每台机器上安装以下的软件包：</p>
+<h1 id="Kubernetes-安装配置"><a href="#Kubernetes-安装配置" class="headerlink" title="Kubernetes 安装配置"></a>Kubernetes 安装配置</h1><h2 id="安装-kubeadm、kubelet-和-kubectl"><a href="#安装-kubeadm、kubelet-和-kubectl" class="headerlink" title="安装 kubeadm、kubelet 和 kubectl"></a>安装 kubeadm、kubelet 和 kubectl</h2><p>需要在每台机器上安装以下的软件包：</p>
 <ul>
 <li><p><code>kubeadm</code> ： 用来初始化集群的指令。</p>
 </li>
@@ -5054,10 +5126,10 @@ width: 20%;
 <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">sudo systemctl enable --now kubelet</span><br></pre></td></tr></table></figure>
 <p>kubelet 现在每隔几秒就会重启，因为它陷入了一个等待 <code>kubeadm</code> 指令的死循环。</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl status kubelet</span></span><br><span class="line">● kubelet.service - kubelet: The Kubernetes Node Agent</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/kubelet.service; enabled; vendor preset: disabled)</span><br><span class="line">  Drop-In: /usr/lib/systemd/system/kubelet.service.d</span><br><span class="line">           └─10-kubeadm.conf</span><br><span class="line">   Active: activating (auto-restart) (Result: exit-code) since Mon 2022-09-12 14:35:58 CST; 7s ago</span><br><span class="line">     Docs: https://kubernetes.io/docs/</span><br><span class="line">  Process: 2056 ExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS (code=exited, status=1/FAILURE)</span><br><span class="line"> Main PID: 2056 (code=exited, status=1/FAILURE)</span><br><span class="line"></span><br><span class="line">Sep 12 14:35:58 ip-172-31-14-115.us-west-1.compute.internal systemd[1]: Unit kubelet.service entered failed state.</span><br><span class="line">Sep 12 14:35:58 ip-172-31-14-115.us-west-1.compute.internal systemd[1]: kubelet.service failed.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h4 id="初始化控制平面节点"><a href="#初始化控制平面节点" class="headerlink" title="初始化控制平面节点"></a>初始化控制平面节点</h4><h5 id="创建单控制平面集群"><a href="#创建单控制平面集群" class="headerlink" title="创建单控制平面集群"></a>创建单控制平面集群</h5><p>控制平面节点是运行控制平面组件的机器， 包括 etcd （集群数据库） 和 API Server （命令行工具 kubectl 与之通信）。</p>
+<h2 id="初始化控制平面节点"><a href="#初始化控制平面节点" class="headerlink" title="初始化控制平面节点"></a>初始化控制平面节点</h2><h3 id="创建单控制平面集群"><a href="#创建单控制平面集群" class="headerlink" title="创建单控制平面集群"></a>创建单控制平面集群</h3><p>控制平面节点是运行控制平面组件的机器， 包括 etcd （集群数据库） 和 API Server （命令行工具 kubectl 与之通信）。</p>
 <ol>
 <li><p>初始化控制平面节点</p>
-<p> 要初始化控制平面节点，请在 master 节点上（<code>kubernetes1</code>）运行以下命令，<a href="(https://csms.tech%3C!--swig%EF%BF%BC84--%3E#%E5%88%9B%E5%BB%BA%E9%9B%86%E7%BE%A4)">命令参数说明</a>：</p>
+<p> 要初始化控制平面节点，请在 master 节点上（<code>kubernetes1</code>）运行以下命令，<a href="(https://csms.tech%3C!--swig%EF%BF%BC86--%3E#%E5%88%9B%E5%BB%BA%E9%9B%86%E7%BE%A4)">命令参数说明</a>：</p>
  <figure class="highlight shell"><figcaption><span>kubernetes1</span></figcaption><table><tr><td class="code"><pre><span class="line">kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock</span><br></pre></td></tr></table></figure>
 <ul>
 <li><code>--pod-network-cidr=10.244.0.0/16</code> 指定 pod 使用的网络段，后面配置网络（CNI）时配置的网段要和此处一致</li>
@@ -5077,7 +5149,7 @@ width: 20%;
 <p> 加入集群成功后，在 master 上查看所有节点</p>
  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">NAME              STATUS     ROLES           AGE   VERSION</span><br><span class="line">kubernetes1   Ready      control-plane   36m   v1.25.0</span><br><span class="line">kubernetes2   NotReady   &lt;none&gt;          21s   v1.25.0</span><br><span class="line">kubernetes3   NotReady   &lt;none&gt;          18s   v1.25.0</span><br></pre></td></tr></table></figure></li>
 </ol>
-<h5 id="创建高可用控制平面的集群"><a href="#创建高可用控制平面的集群" class="headerlink" title="创建高可用控制平面的集群"></a>创建高可用控制平面的集群</h5><p>创建 <a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/ha-topology/#stacked-etcd-topology"><code>堆叠（Stacked）etcd 拓扑</code></a> 的高可用控制平面集群</p>
+<h3 id="创建高可用控制平面的集群"><a href="#创建高可用控制平面的集群" class="headerlink" title="创建高可用控制平面的集群"></a>创建高可用控制平面的集群</h3><p>创建 <a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/ha-topology/#stacked-etcd-topology"><code>堆叠（Stacked）etcd 拓扑</code></a> 的高可用控制平面集群</p>
 <p><code>堆叠（Stacked）etcd 拓扑</code> 主要有以下特点：</p>
 <ul>
 <li><code>etcd</code> 分布式数据存储集群堆叠在 <code>kubeadm</code> 管理的控制平面节点上，作为控制平面的一个组件运行。</li>
@@ -5108,7 +5180,7 @@ width: 20%;
 <p> 在工作节点上执行以下命令，添加工作节点到集群中。在 CRI 是 <code>cri-dockerd</code> 的场景下，要添加 <code>--cri-socket=unix:///var/run/cri-dockerd.sock</code>。它看起来应该像这样：</p>
  <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">kubeadm join kube-apiserver.uat.148962587001:6443 \</span><br><span class="line">        --token 0nf24o.fb98ll5qkhpcxd70 \</span><br><span class="line">        --discovery-token-ca-cert-hash sha256:a5d589a3476777df757e38334b035a93811d94e75131e3d9cc1d7efad22fc793 \</span><br><span class="line">        --cri-socket=unix:///var/run/cri-dockerd.sock</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
 </ol>
-<h4 id="安装-kube-flannel"><a href="#安装-kube-flannel" class="headerlink" title="安装 kube-flannel"></a>安装 kube-flannel</h4><p>Kubernetes 安装时已经安装了网络相关驱动，位于 <code>/opt/cni/bin/flannel</code>，此时只需要根据相关配置文件生成 <code>kube-flannel</code> 的 pod 即可</p>
+<h3 id="安装-kube-flannel"><a href="#安装-kube-flannel" class="headerlink" title="安装 kube-flannel"></a>安装 kube-flannel</h3><p>Kubernetes 安装时已经安装了网络相关驱动，位于 <code>/opt/cni/bin/flannel</code>，此时只需要根据相关配置文件生成 <code>kube-flannel</code> 的 pod 即可</p>
 <p>请在 master 节点上（<code>kubernetes1</code>）运行以下命令创建 <code>kube-flannel</code> 相关 POD</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml</span></span><br><span class="line"></span><br><span class="line">namespace/kube-flannel created</span><br><span class="line">clusterrole.rbac.authorization.k8s.io/flannel created</span><br><span class="line">clusterrolebinding.rbac.authorization.k8s.io/flannel created</span><br><span class="line">serviceaccount/flannel created</span><br><span class="line">configmap/kube-flannel-cfg created</span><br><span class="line">daemonset.apps/kube-flannel-ds created</span><br></pre></td></tr></table></figure>
 <p>使用默认的 <code>kube-flannel.yml</code>，默认的 Network 为 <code>10.244.0.0/16</code>，要变更默认网段，更改 <code>kube-flannel.yml</code> 中的以下内容即可：</p>
@@ -5118,7 +5190,7 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A</span></span><br><span class="line">NAMESPACE      NAME                                      READY   STATUS    RESTARTS   AGE</span><br><span class="line">kube-flannel   kube-flannel-ds-rg969                     1/1     Running   0          20s</span><br><span class="line">kube-system    coredns-565d847f94-dc8tl                  0/1     Running   0          22m</span><br><span class="line">kube-system    coredns-565d847f94-zqctg                  0/1     Running   0          22m</span><br><span class="line">kube-system    etcd-kubernetes1                      1/1     Running   0          22m</span><br><span class="line">kube-system    kube-apiserver-kubernetes1            1/1     Running   0          22m</span><br><span class="line">kube-system    kube-controller-manager-kubernetes1   1/1     Running   0          22m</span><br><span class="line">kube-system    kube-proxy-6kwdx                          1/1     Running   0          22m</span><br><span class="line">kube-system    kube-scheduler-kubernetes1            1/1     Running   0          22m</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
 
-<h4 id="安装-dashboard"><a href="#安装-dashboard" class="headerlink" title="安装 dashboard"></a>安装 dashboard</h4><p><a href="https://github.com/kubernetes/dashboard">kubernetes-dashboard 项目地址</a></p>
+<h1 id="安装-dashboard"><a href="#安装-dashboard" class="headerlink" title="安装 dashboard"></a>安装 dashboard</h1><p><a href="https://github.com/kubernetes/dashboard">kubernetes-dashboard 项目地址</a></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://raw.githubusercontent.com/kubernetes/dashboard/v2.6.1/aio/deploy/recommended.yaml</span><br></pre></td></tr></table></figure>
 
 <p>修改 <code>recommended.yaml</code> 以下内容</p>
@@ -5157,18 +5229,18 @@ width: 20%;
 <p>将生成的 <code>Token</code> 输入浏览器进行验证，验证成功后可以登入 Dashboard<br><img src="https://i.csms.tech/img_57.png"></p>
 <p>默认的 token 有效期很短，要修改 token 的有限时间，可以在登陆 Dashboard 后，编辑 <code>kubernetes-dashboard</code> 的 <code>Deployment</code><br><img src="https://i.csms.tech/img_58.png"></p>
 <p>在 <code>spec:template:spec:containers:args</code> 下新增 <code>- &#39;--token-ttl=2592000&#39;</code><br><img src="https://i.csms.tech/img_59.png"></p>
-<h4 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h4><p>安装 <code>Kubernetes Metrics Server</code> 可以支持使用 <code>kubectl top</code> 命令来查看集群使用的资源情况。 <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Kubernetes Metrics Server](https://github.com/kubernetes-sigs/metrics-server)">[5]</span></a></sup></p>
+<h1 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h1><p>安装 <code>Kubernetes Metrics Server</code> 可以支持使用 <code>kubectl top</code> 命令来查看集群使用的资源情况。 <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Kubernetes Metrics Server](https://github.com/kubernetes-sigs/metrics-server)">[5]</span></a></sup></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</span><br><span class="line">mv components.yaml kubernetes-mitrics-server.yaml</span><br><span class="line">kubectl apply -f kubernetes-mitrics-server.yaml</span><br></pre></td></tr></table></figure>
 <p>部署后为了解决证书问题，可以临时配置不使用安全证书进行通信，修改 <code>metrics-server</code> 的 <code>Deployment</code>，在 <code>metrics-server</code> 启动时添加参数 <code>--kubelet-insecure-tls</code></p>
 <figure class="highlight shell"><figcaption><span>kubernetes-mitrics-server.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    - --kubelet-insecure-tls</span><br></pre></td></tr></table></figure>
 
-<h3 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h3><h4 id="Found-multiple-CRI-endpoints-on-the-host"><a href="#Found-multiple-CRI-endpoints-on-the-host" class="headerlink" title="Found multiple CRI endpoints on the host"></a>Found multiple CRI endpoints on the host</h4><p><strong>错误场景</strong> ： 执行以下命令将节点加入集群时报错</p>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Found-multiple-CRI-endpoints-on-the-host"><a href="#Found-multiple-CRI-endpoints-on-the-host" class="headerlink" title="Found multiple CRI endpoints on the host"></a>Found multiple CRI endpoints on the host</h2><p><strong>错误场景</strong> ： 执行以下命令将节点加入集群时报错</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubeadm <span class="built_in">join</span> 172.31.10.19:6443 --token 8ca35s.butdpihinkdczvqb --discovery-token-ca-cert-hash sha256:b2793f9a6bea44a64640f99042</span></span><br><span class="line"></span><br><span class="line">Found multiple CRI endpoints on the host. Please define which one do you wish to use by setting the &#x27;criSocket&#x27; field in the kubeadm configuration file: unix:///var/run/containerd/containerd.sock, unix:///var/run/cri-dockerd.sock</span><br><span class="line">To see the stack trace of this error execute with --v=5 or higher</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p><strong>报错原因</strong> ： 在没有明确指定 Kubernetes 要使用的 CRI 情况下，会自动扫描主机上面安装的 CRI，如果出现多个可用的 CRI，会报错并提示确定使用哪个 CRI。</p>
 <p><strong>解决方法</strong> ： 使用如下命令，指定要使用的 CRI</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubeadm join 172.31.10.19:6443 --token 8ca35s.butdpihinkdczvqb --discovery-token-ca-cert-hash sha256:b2793f9a6bea44a64640f99042f11c4ff6 \ </span><br><span class="line">        --cri-socket=unix:///var/run/cri-dockerd.sock</span><br></pre></td></tr></table></figure>
 
-<h4 id="kube-flannel-状态为-CrashLoopBackOff"><a href="#kube-flannel-状态为-CrashLoopBackOff" class="headerlink" title="kube-flannel 状态为 CrashLoopBackOff"></a>kube-flannel 状态为 CrashLoopBackOff</h4><p><strong>错误场景</strong> ：<br><code>kube-flannel</code> 一直重启，状态为 <code>CrashLoopBackOff</code></p>
+<h2 id="kube-flannel-状态为-CrashLoopBackOff"><a href="#kube-flannel-状态为-CrashLoopBackOff" class="headerlink" title="kube-flannel 状态为 CrashLoopBackOff"></a>kube-flannel 状态为 CrashLoopBackOff</h2><p><strong>错误场景</strong> ：<br><code>kube-flannel</code> 一直重启，状态为 <code>CrashLoopBackOff</code></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods --all-namespaces</span></span><br><span class="line">NAMESPACE      NAME                                      READY   STATUS              RESTARTS         AGE</span><br><span class="line">kube-flannel   kube-flannel-ds-7q2hp                     0/1     CrashLoopBackOff    40 (3m39s ago)   3h4m</span><br><span class="line">kube-flannel   kube-flannel-ds-k8wd6                     0/1     CrashLoopBackOff    35 (53s ago)     76m</span><br><span class="line">kube-flannel   kube-flannel-ds-x6ck2                     0/1     CrashLoopBackOff    18 (106s ago)    69m</span><br><span class="line">kube-system    coredns-565d847f94-b4sgn                  0/1     ContainerCreating   0                3h40m</span><br><span class="line">kube-system    coredns-565d847f94-ml6k5                  0/1     ContainerCreating   0                3h40m</span><br><span class="line">kube-system    etcd-kubernetes1                      1/1     Running             0                3h40m</span><br><span class="line">kube-system    kube-apiserver-kubernetes1            1/1     Running             0                3h40m</span><br><span class="line">kube-system    kube-controller-manager-kubernetes1   1/1     Running             0                3h40m</span><br><span class="line">kube-system    kube-proxy-9vwxl                          1/1     Running             0                76m</span><br><span class="line">kube-system    kube-proxy-qxsc7                          1/1     Running             0                69m</span><br><span class="line">kube-system    kube-proxy-v5msf                          1/1     Running             0                3h40m</span><br><span class="line">kube-system    kube-scheduler-kubernetes1            1/1     Running             0                3h40m</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p><strong>排查步骤</strong> ：<br>查看日志</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs kube-flannel-ds-7q2hp -n kube-flannel</span></span><br><span class="line">Defaulted container &quot;kube-flannel&quot; out of: kube-flannel, install-cni-plugin (init), install-cni (init)</span><br><span class="line">I0913 06:42:19.799473       1 main.go:207] CLI flags config: &#123;etcdEndpoints:http://127.0.0.1:4001,http://127.0.0.1:2379 etcdPrefix:/coreos.com/network etcdKeyfile: etcdCertfile: etcdCAFile: etcdUsername: etcdPassword: version:false kubeSubnetMgr:true kubeApiUrl: kubeAnnotationPrefix:flannel.alpha.coreos.com kubeConfigFile: iface:[] ifaceRegex:[] ipMasq:true ifaceCanReach: subnetFile:/run/flannel/subnet.env publicIP: publicIPv6: subnetLeaseRenewMargin:60 healthzIP:0.0.0.0 healthzPort:0 iptablesResyncSeconds:5 iptablesForwardRules:true netConfPath:/etc/kube-flannel/net-conf.json setNodeNetworkUnavailable:true&#125;</span><br><span class="line">W0913 06:42:19.799563       1 client_config.go:614] Neither --kubeconfig nor --master was specified.  Using the inClusterConfig.  This might not work.</span><br><span class="line">I0913 06:42:19.903750       1 kube.go:120] Waiting 10m0s for node controller to sync</span><br><span class="line">I0913 06:42:19.903882       1 kube.go:401] Starting kube subnet manager</span><br><span class="line">I0913 06:42:20.903967       1 kube.go:127] Node controller sync successful</span><br><span class="line">I0913 06:42:20.903995       1 main.go:227] Created subnet manager: Kubernetes Subnet Manager - kubernetes1</span><br><span class="line">I0913 06:42:20.904004       1 main.go:230] Installing signal handlers</span><br><span class="line">I0913 06:42:20.904152       1 main.go:467] Found network config - Backend type: vxlan</span><br><span class="line">I0913 06:42:20.904195       1 match.go:206] Determining IP address of default interface</span><br><span class="line">I0913 06:42:20.904542       1 match.go:259] Using interface with name eth0 and address 172.31.10.19</span><br><span class="line">I0913 06:42:20.904570       1 match.go:281] Defaulting external address to interface address (172.31.10.19)</span><br><span class="line">I0913 06:42:20.904651       1 vxlan.go:138] VXLAN config: VNI=1 Port=0 GBP=false Learning=false DirectRouting=false</span><br><span class="line">E0913 06:42:20.904962       1 main.go:330] Error registering network: failed to acquire lease: node &quot;kubernetes1&quot; pod cidr not assigned</span><br><span class="line">I0913 06:42:20.905100       1 main.go:447] Stopping shutdownHandler...</span><br><span class="line">W0913 06:42:20.905251       1 reflector.go:436] github.com/flannel-io/flannel/subnet/kube/kube.go:402: watch of *v1.Node ended with: an error on the server (&quot;unable to decode an event from the watch stream: context canceled&quot;) has prevented the request from succeeding</span><br><span class="line"></span><br></pre></td></tr></table></figure>
@@ -5182,7 +5254,7 @@ width: 20%;
 <p>重新查看所有 pod 状态</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A</span></span><br><span class="line">NAMESPACE      NAME                                      READY   STATUS    RESTARTS         AGE</span><br><span class="line">kube-flannel   kube-flannel-ds-7q2hp                     1/1     Running   62 (2m20s ago)   4h43m</span><br><span class="line">kube-flannel   kube-flannel-ds-k8wd6                     1/1     Running   55 (4m33s ago)   175m</span><br><span class="line">kube-flannel   kube-flannel-ds-x6ck2                     1/1     Running   38 (2m43s ago)   168m</span><br><span class="line">kube-system    coredns-565d847f94-b4sgn                  0/1     Running   0                5h19m</span><br><span class="line">kube-system    coredns-565d847f94-ml6k5                  0/1     Running   0                5h19m</span><br><span class="line">kube-system    etcd-kubernetes1                      1/1     Running   0                5h19m</span><br><span class="line">kube-system    kube-apiserver-kubernetes1            1/1     Running   0                5h19m</span><br><span class="line">kube-system    kube-controller-manager-kubernetes1   1/1     Running   0                2m39s</span><br><span class="line">kube-system    kube-proxy-9vwxl                          1/1     Running   0                175m</span><br><span class="line">kube-system    kube-proxy-qxsc7                          1/1     Running   0                168m</span><br><span class="line">kube-system    kube-proxy-v5msf                          1/1     Running   0                5h19m</span><br><span class="line">kube-system    kube-scheduler-kubernetes1            1/1     Running   0                5h19m</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<h4 id="master-节点状态为-NotReady"><a href="#master-节点状态为-NotReady" class="headerlink" title="master 节点状态为 NotReady"></a>master 节点状态为 NotReady</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">NAME              STATUS     ROLES                  AGE    VERSION</span><br><span class="line">k8s-work1         Ready      &lt;none&gt;                 99m    v1.21.2</span><br><span class="line">k8s-master        NotReady   control-plane,master   102m   v1.21.2</span><br><span class="line">k8s-work2         Ready      &lt;none&gt;                 99m    v1.21.2</span><br></pre></td></tr></table></figure>
+<h2 id="master-节点状态为-NotReady"><a href="#master-节点状态为-NotReady" class="headerlink" title="master 节点状态为 NotReady"></a>master 节点状态为 NotReady</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">NAME              STATUS     ROLES                  AGE    VERSION</span><br><span class="line">k8s-work1         Ready      &lt;none&gt;                 99m    v1.21.2</span><br><span class="line">k8s-master        NotReady   control-plane,master   102m   v1.21.2</span><br><span class="line">k8s-work2         Ready      &lt;none&gt;                 99m    v1.21.2</span><br></pre></td></tr></table></figure>
 
 <p>查看节点详细信息</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe node k8s-master</span></span><br><span class="line"></span><br><span class="line">Conditions:</span><br><span class="line">  Type             Status    LastHeartbeatTime                 LastTransitionTime                Reason              Message</span><br><span class="line">  ----             ------    -----------------                 ------------------                ------              -------</span><br><span class="line">  MemoryPressure   Unknown   Tue, 11 Oct 2022 14:54:19 +0800   Tue, 11 Oct 2022 14:57:46 +0800   NodeStatusUnknown   Kubelet stopped posting node status.</span><br><span class="line">  DiskPressure     Unknown   Tue, 11 Oct 2022 14:54:19 +0800   Tue, 11 Oct 2022 14:57:46 +0800   NodeStatusUnknown   Kubelet stopped posting node status.</span><br><span class="line">  PIDPressure      Unknown   Tue, 11 Oct 2022 14:54:19 +0800   Tue, 11 Oct 2022 14:57:46 +0800   NodeStatusUnknown   Kubelet stopped posting node status.</span><br><span class="line">  Ready            Unknown   Tue, 11 Oct 2022 14:54:19 +0800   Tue, 11 Oct 2022 14:57:46 +0800   NodeStatusUnknown   Kubelet stopped posting node status.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
@@ -5197,7 +5269,7 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">hostname status</span></span><br><span class="line"></span><br><span class="line">   Static hostname: k8s-master</span><br><span class="line">Transient hostname: k8s-admin</span><br><span class="line">         Icon name: computer-vm</span><br><span class="line">           Chassis: vm</span><br><span class="line">        Machine ID: b1527a5456aab241a74a8a3dc31395c0</span><br><span class="line">           Boot ID: f8428003692349298cf2bb9efae8a664</span><br><span class="line">    Virtualization: kvm</span><br><span class="line">  Operating System: CentOS Linux 7 (Core)</span><br><span class="line">       CPE OS Name: cpe:/o:centos:centos:7</span><br><span class="line">            Kernel: Linux 3.10.0-1160.76.1.el7.x86_64</span><br><span class="line">      Architecture: x86-64</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
 <p>根据 <code>kubelet</code> 日志，Kubenetes 节点名称和主机名不一致。修改节点主机名。</p>
-<h4 id="集群之外的服务器使用-kubectl-报错"><a href="#集群之外的服务器使用-kubectl-报错" class="headerlink" title="集群之外的服务器使用 kubectl 报错"></a>集群之外的服务器使用 kubectl 报错</h4><p><strong>问题场景</strong>：</p>
+<h2 id="集群之外的服务器使用-kubectl-报错"><a href="#集群之外的服务器使用-kubectl-报错" class="headerlink" title="集群之外的服务器使用 kubectl 报错"></a>集群之外的服务器使用 kubectl 报错</h2><p><strong>问题场景</strong>：</p>
 <p>将集群的管理配置文件 (<code>/etc/kubernetes/admin.conf</code>) 拷贝到集群之外的服务器，并命名为指定文件 <code>~/.kube/config</code>，修改 <code>~/.kube/config</code> 中 <code>server</code> 的 IP 为 Kubernetes API Server 的实际 IP，使用 <code>kubectl</code> 命令时，报错 <code>Unable to connect to the server: x509: certificate is valid for 10.96.0.1, 10.150.0.21, not </code>。</p>
 <p><strong>问题原因</strong>：</p>
 <p>报错表示，当使用安全端口 6443 访问 Kubernetes API Server 时，默认证书中的 DNS 包含了 API Server 服务的 CLUSTER-IP 和 服务器的 IP ，如果是云主机，则为云服务器的私有 IP，不包含其公网 IP，如果使用公网 IP 访问 6443 端口，会报此错误</p>
@@ -5235,7 +5307,13 @@ width: 20%;
 </ol>
 </li>
 </ul>
-<h3 id="其他常用配置"><a href="#其他常用配置" class="headerlink" title="其他常用配置"></a>其他常用配置</h3><h4 id="将-CRI-由-containerd-变更为-Docker"><a href="#将-CRI-由-containerd-变更为-Docker" class="headerlink" title="将 CRI 由 containerd 变更为 Docker"></a>将 CRI 由 <code>containerd</code> 变更为 <code>Docker</code></h4><p>编辑 <code>/var/lib/kubelet/kubeadm-flags.env</code> 文件，在该文件中可以添加 <code>kubelet</code> 启动参数，将 <code>--container-runtime-endpoint</code> 标志，设置为 <code>unix:///var/run/cri-dockerd.sock</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 kubelet 使用 cri-dockerd](https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/migrate-dockershim-dockerd/#configure-the-kubelet-to-use-cri-dockerd)">[1]</span></a></sup></p>
+<h1 id="其他常用配置"><a href="#其他常用配置" class="headerlink" title="其他常用配置"></a>其他常用配置</h1><h2 id="新增节点"><a href="#新增节点" class="headerlink" title="新增节点"></a>新增节点</h2><p>要为集群新增 worker 节点，参考以下步骤</p>
+<ol>
+<li>加入前准备工作<br><a href="#kubernetes-%E7%8E%AF%E5%A2%83%E5%AE%89%E8%A3%85%E5%89%8D%E9%85%8D%E7%BD%AE">参考安装步骤，配置新节点</a></li>
+<li>在集群的 master 节点执行以下命令，获取加入集群的命令<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubeadm token create --print-join-command</span></span><br><span class="line">kubeadm join cluster:6443 --token cuxvrexi24aejb --discovery-token-ca-cert-hash sha256:9e5b71bc392</span><br></pre></td></tr></table></figure></li>
+<li>在新节点上执行加入集群的命令 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubeadm join cluster:6443 --token cuxvrexi24aejb --discovery-token-ca-cert-hash sha256:9e5b71bc392</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="将-CRI-由-containerd-变更为-Docker"><a href="#将-CRI-由-containerd-变更为-Docker" class="headerlink" title="将 CRI 由 containerd 变更为 Docker"></a>将 CRI 由 <code>containerd</code> 变更为 <code>Docker</code></h2><p>编辑 <code>/var/lib/kubelet/kubeadm-flags.env</code> 文件，在该文件中可以添加 <code>kubelet</code> 启动参数，将 <code>--container-runtime-endpoint</code> 标志，设置为 <code>unix:///var/run/cri-dockerd.sock</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 kubelet 使用 cri-dockerd](https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/migrate-dockershim-dockerd/#configure-the-kubelet-to-use-cri-dockerd)">[1]</span></a></sup></p>
 <figure class="highlight shell"><figcaption><span>/var/lib/kubelet/kubeadm-flags.env</span></figcaption><table><tr><td class="code"><pre><span class="line">KUBELET_KUBEADM_ARGS=&quot;--container-runtime=remote --container-runtime-endpoint=unix:///var/run/cri-dockerd.sock --pod-infra-container-image=registry.k8s.io/pause:3.8&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p><code>kubeadm</code> 工具将节点上的套接字存储为控制面上 <code>Node</code> 对象的注解。 要为每个被影响的节点更改此套接字：</p>
 <ol>
@@ -5254,7 +5332,7 @@ width: 20%;
 <p>查看 node 使用的 CRI</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME              STATUS   ROLES           AGE    VERSION   INTERNAL-IP    EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME</span><br><span class="line">kubernetes1   Ready    control-plane   7d2h   v1.25.0   172.31.5.58    &lt;none&gt;        CentOS Linux 7 (Core)   5.4.212-1.el7.elrepo.x86_64   docker://20.10.18</span><br><span class="line">kubernetes2   Ready    &lt;none&gt;          7d1h   v1.25.0   172.31.5.68    &lt;none&gt;        CentOS Linux 7 (Core)   5.4.212-1.el7.elrepo.x86_64   docker://20.10.18</span><br><span class="line">kubernetes3   Ready    &lt;none&gt;          7d1h   v1.25.0   172.31.0.230   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.212-1.el7.elrepo.x86_64   docker://20.10.18</span><br></pre></td></tr></table></figure>
 
-<h4 id="修改-Service-可使用的-nodePort-端口范围"><a href="#修改-Service-可使用的-nodePort-端口范围" class="headerlink" title="修改 Service 可使用的 nodePort 端口范围"></a>修改 Service 可使用的 nodePort 端口范围</h4><p>默认情况下，<code>Service</code> 中可使用的 <code>nodePort</code> 端口的默认范围为 <code>30000-32767</code>，要修改此配置，参考以下步骤。</p>
+<h2 id="修改-Service-可使用的-nodePort-端口范围"><a href="#修改-Service-可使用的-nodePort-端口范围" class="headerlink" title="修改 Service 可使用的 nodePort 端口范围"></a>修改 Service 可使用的 nodePort 端口范围</h2><p>默认情况下，<code>Service</code> 中可使用的 <code>nodePort</code> 端口的默认范围为 <code>30000-32767</code>，要修改此配置，参考以下步骤。</p>
 <p>Master 节点上编辑 kube-apiserver 的 <code>Pod</code> 配置文件 <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>，在 <code>.spec.containers.command</code> 下添加以下内容</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- --service-node-port-range=1-65535</span><br></pre></td></tr></table></figure>
 <p><img src="https://i.csms.tech/img_60.png"></p>
@@ -5266,7 +5344,7 @@ width: 20%;
 <p>接下来我们再使用命令查看日志，就可以看到 dns 解析的记录，无需重启 coredns</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -f -n kube-system coredns-558bd4d5db-z6mst</span></span><br><span class="line">...</span><br><span class="line">[INFO] 10.244.2.23:39830 - 37988 &quot;A IN raw.githubusercontent.com.google.internal. udp 59 false 512&quot; NXDOMAIN qr,aa,rd,ra 164 0.000065843s</span><br><span class="line">[INFO] 10.244.2.23:56581 - 52144 &quot;A IN raw.githubusercontent.com. udp 43 false 512&quot; NOERROR qr,aa,rd,ra 207 0.000133489s</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<h4 id="添加-Harbor-私有镜像仓库的认证信息"><a href="#添加-Harbor-私有镜像仓库的认证信息" class="headerlink" title="添加 Harbor 私有镜像仓库的认证信息"></a>添加 Harbor 私有镜像仓库的认证信息</h4><p>在命令行上提供凭证来创建 Secret <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[在命令行上提供凭证来创建 Secret](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/pull-image-private-registry/#create-a-secret-by-providing-credentials-on-the-command-line)">[3]</span></a></sup></p>
+<h2 id="添加-Harbor-私有镜像仓库的认证信息"><a href="#添加-Harbor-私有镜像仓库的认证信息" class="headerlink" title="添加 Harbor 私有镜像仓库的认证信息"></a>添加 Harbor 私有镜像仓库的认证信息</h2><p>在命令行上提供凭证来创建 Secret <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[在命令行上提供凭证来创建 Secret](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/pull-image-private-registry/#create-a-secret-by-providing-credentials-on-the-command-line)">[3]</span></a></sup></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create secret docker-registry $&#123;secretname&#125; \</span><br><span class="line">  --namespace default</span><br><span class="line">  --docker-server=https://index.docker.io/v1/ \</span><br><span class="line">  --docker-username=&lt;你的用户名&gt; \</span><br><span class="line">  --docker-password=&lt;你的密码&gt; \</span><br><span class="line">  --docker-email=&lt;你的邮箱地址&gt;</span><br></pre></td></tr></table></figure>
 <ul>
 <li><code>&lt;your-registry-server&gt;</code> 是你的私有 Docker 仓库全限定域名（FQDN）。 DockerHub 使用 <code>https://index.docker.io/v1/</code>。</li>
@@ -5281,10 +5359,10 @@ width: 20%;
 
 <p><code>.dockerconfigjson</code> 字段的值是 Docker 凭证的 base64 表示。要了解 <code>dockerconfigjson</code> 字段中的内容，请将 Secret 数据转换为可读格式：</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get secret <span class="variable">$&#123;secretname&#125;</span> --output=<span class="string">&quot;jsonpath=&#123;.data.\.dockerconfigjson&#125;&quot;</span> | <span class="built_in">base64</span> --decode</span></span><br><span class="line">&#123;&quot;auths&quot;:&#123;&quot;https://harbor1.my.com&quot;:&#123;&quot;username&quot;:&quot;admin&quot;,&quot;password&quot;:&quot;password&quot;,&quot;email&quot;:&quot;docker@q.com&quot;,&quot;auth&quot;:&quot;YWRdsUQ==&quot;&#125;&#125;&#125;</span><br></pre></td></tr></table></figure>
-<h4 id="Pod-添加-hosts"><a href="#Pod-添加-hosts" class="headerlink" title="Pod 添加 hosts"></a>Pod 添加 hosts</h4><p>有时需要在启动 Pod 时为其 <code>/etc/hosts</code> 中添加解析，以覆盖对主机名的解析，此时可以通过 <code>PodSpec</code> 的 <code>HostAliases</code> 字段来 <strong>添加这些自定义条目</strong> <sup id="fnref:4"><a href="#fn:4" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[使用 HostAliases 向 Pod /etc/hosts 文件添加条目](https://kubernetes.io/zh-cn/docs/tasks/network/customize-hosts-file-for-pods/)">[4]</span></a></sup></p>
+<h2 id="Pod-添加-hosts"><a href="#Pod-添加-hosts" class="headerlink" title="Pod 添加 hosts"></a>Pod 添加 hosts</h2><p>有时需要在启动 Pod 时为其 <code>/etc/hosts</code> 中添加解析，以覆盖对主机名的解析，此时可以通过 <code>PodSpec</code> 的 <code>HostAliases</code> 字段来 <strong>添加这些自定义条目</strong> <sup id="fnref:4"><a href="#fn:4" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[使用 HostAliases 向 Pod /etc/hosts 文件添加条目](https://kubernetes.io/zh-cn/docs/tasks/network/customize-hosts-file-for-pods/)">[4]</span></a></sup></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: hostaliases-pod</span><br><span class="line">spec:</span><br><span class="line">  restartPolicy: Never</span><br><span class="line">  hostAliases:</span><br><span class="line">  - ip: &quot;127.0.0.1&quot;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &quot;foo.local&quot;</span><br><span class="line">    - &quot;bar.local&quot;</span><br><span class="line">  - ip: &quot;10.1.2.3&quot;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &quot;foo.remote&quot;</span><br><span class="line">    - &quot;bar.remote&quot;</span><br><span class="line">  containers:</span><br><span class="line">  - name: cat-hosts</span><br><span class="line">    image: busybox:1.28</span><br><span class="line">    command:</span><br><span class="line">    - cat</span><br><span class="line">    args:</span><br><span class="line">    - &quot;/etc/hosts&quot;</span><br></pre></td></tr></table></figure>
 
-<h4 id="配置-Pod-中的时区和时间"><a href="#配置-Pod-中的时区和时间" class="headerlink" title="配置 Pod 中的时区和时间"></a>配置 Pod 中的时区和时间</h4><p><a href="https://www.cnblogs.com/ssgeek/p/15192028.html">关于 OS 中的时间及时区的说明</a></p>
+<h2 id="配置-Pod-中的时区和时间"><a href="#配置-Pod-中的时区和时间" class="headerlink" title="配置 Pod 中的时区和时间"></a>配置 Pod 中的时区和时间</h2><p><a href="https://www.cnblogs.com/ssgeek/p/15192028.html">关于 OS 中的时间及时区的说明</a></p>
 <p>通常情况下，我们的环境中，宿主机都是配置为 CST 时间（东八区），而使用的基础镜像中的默认时间都是 UTC 时间，而不是本地时间，通常需要确保系统中所有的时间格式一致，需将容器中的时间也修改为 CST 时间。</p>
 <p>为此可使用以下方法中的一种来实现</p>
 <ul>
@@ -5298,15 +5376,15 @@ width: 20%;
 <p>  <code>TZ</code> 环境变量用于设置时区。它由各种时间函数用于计算相对于全球标准时间 UTC（以前称为格林威治标准时间 GMT）的时间。格式由操作系统指定</p>
   <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">  ...</span><br><span class="line">containers:</span><br><span class="line">- name: xxx</span><br><span class="line">  ...</span><br><span class="line">  env:</span><br><span class="line">  - name: TZ</span><br><span class="line">    value: Asia/Shanghai</span><br></pre></td></tr></table></figure></li>
 </ul>
-<h4 id="配置节点允许启动的最大-Pod-数"><a href="#配置节点允许启动的最大-Pod-数" class="headerlink" title="配置节点允许启动的最大 Pod 数"></a>配置节点允许启动的最大 Pod 数</h4><p>在 K8S 集群中，默认每个 Worker 节点最大可创建 110 个 Pod，实际可以根据节点资源情况调整范围。</p>
+<h2 id="配置节点允许启动的最大-Pod-数"><a href="#配置节点允许启动的最大-Pod-数" class="headerlink" title="配置节点允许启动的最大 Pod 数"></a>配置节点允许启动的最大 Pod 数</h2><p>在 K8S 集群中，默认每个 Worker 节点最大可创建 110 个 Pod，实际可以根据节点资源情况调整范围。</p>
 <p>在 Woker 节点上，可创建的最大的 Pod 数量是作为 Kubelet 的启动参数出现的，因此修改 Kubelet 服务的配置文件增加 <code>--max-pod</code> 参数即可。</p>
 <p>修改 <code>kubelet</code> 服务的启动文件 <code>/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf</code>，添加以下环境变量</p>
 <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">Environment=&quot;KUBELET_NODE_MAX_PODS=--max-pods=200&quot;</span><br></pre></td></tr></table></figure>
 <p>将新加的环境变量追加到 <code>/usr/bin/kubelet</code> 中</p>
 <figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"> Note: This dropin only works with kubeadm and kubelet v1.11+</span><br><span class="line">[Service]</span><br><span class="line">Environment=&quot;KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf&quot;</span><br><span class="line">Environment=&quot;KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml&quot;</span><br><span class="line">Environment=&quot;KUBELET_EVICT_NODEFS_THRESHOLD_ARGS=--eviction-hard=nodefs.available&lt;5%&quot;</span><br><span class="line">Environment=&quot;KUBELET_NODE_MAX_PODS=--max-pods=200&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">This is a file that <span class="string">&quot;kubeadm init&quot;</span> and <span class="string">&quot;kubeadm join&quot;</span> generates at runtime, populating the KUBELET_KUBEADM_ARGS variable dynamically</span></span><br><span class="line">EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">This is a file that the user can use <span class="keyword">for</span> overrides of the kubelet args as a last resort. Preferably, the user should use</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">the .NodeRegistration.KubeletExtraArgs object <span class="keyword">in</span> the configuration files instead. KUBELET_EXTRA_ARGS should be sourced from this file.</span></span><br><span class="line">EnvironmentFile=-/etc/sysconfig/kubelet</span><br><span class="line">ExecStart=</span><br><span class="line">ExecStart=/usr/bin/kubelet $KUBELET_KUBECONFIG_ARGS $KUBELET_CONFIG_ARGS $KUBELET_KUBEADM_ARGS $KUBELET_EXTRA_ARGS $KUBELET_EVICT_NODEFS_THRESHOLD_ARGS $KUBELET_NODE_MAX_PODS</span><br></pre></td></tr></table></figure>
 
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/">Kubernetes 官网文档</a><br><a href="https://github.com/Mirantis/cri-dockerd">cri-dockerd 安装链接</a><br><a href="https://juejin.cn/post/6844904148001882120">Centos7 集群部署k8s 版本v1.17.4及Dashboard </a><br><a href="https://github.com/kubernetes/dashboard/tree/master/docs">kubernetes-dashboard 配置官网说明</a><br><a href="https://kubernetes.io/zh-cn/docs/tasks/access-application-cluster/web-ui-dashboard/">部署和访问 Kubernetes 仪表板（Dashboard）</a></p>
-<h3 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h3><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/migrate-dockershim-dockerd/#configure-the-kubelet-to-use-cri-dockerd">配置 kubelet 使用 cri-dockerd</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/high-availability/#%E4%B8%BA-kube-apiserver-%E5%88%9B%E5%BB%BA%E8%B4%9F%E8%BD%BD%E5%9D%87%E8%A1%A1%E5%99%A8">为 kube-apiserver 创建负载均衡器</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/pull-image-private-registry/#create-a-secret-by-providing-credentials-on-the-command-line">在命令行上提供凭证来创建 Secret</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/network/customize-hosts-file-for-pods/">使用 HostAliases 向 Pod /etc/hosts 文件添加条目</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">Kubernetes Metrics Server</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/">Kubernetes 官网文档</a><br><a href="https://github.com/Mirantis/cri-dockerd">cri-dockerd 安装链接</a><br><a href="https://juejin.cn/post/6844904148001882120">Centos7 集群部署k8s 版本v1.17.4及Dashboard </a><br><a href="https://github.com/kubernetes/dashboard/tree/master/docs">kubernetes-dashboard 配置官网说明</a><br><a href="https://kubernetes.io/zh-cn/docs/tasks/access-application-cluster/web-ui-dashboard/">部署和访问 Kubernetes 仪表板（Dashboard）</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/migrate-dockershim-dockerd/#configure-the-kubelet-to-use-cri-dockerd">配置 kubelet 使用 cri-dockerd</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/high-availability/#%E4%B8%BA-kube-apiserver-%E5%88%9B%E5%BB%BA%E8%B4%9F%E8%BD%BD%E5%9D%87%E8%A1%A1%E5%99%A8">为 kube-apiserver 创建负载均衡器</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/pull-image-private-registry/#create-a-secret-by-providing-credentials-on-the-command-line">在命令行上提供凭证来创建 Secret</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/network/customize-hosts-file-for-pods/">使用 HostAliases 向 Pod /etc/hosts 文件添加条目</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">Kubernetes Metrics Server</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
