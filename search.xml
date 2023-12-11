@@ -7289,7 +7289,68 @@ width: 20%;
 <p>出现此情况是因为 <code>/etc/kubernetes/manifests/kube-controller-manager.yaml</code> 和 <code>/etc/kubernetes/manifests/kube-scheduler.yaml</code> 设置的默认端口是 <code>0</code>，修改此配置文件，注释 <code>- --port=0</code> 即可（修改此配置文件后，系统会自动加载配置，无需重启），等待大概一分钟后重新查看，状态正常</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl get componentstatuses</span></span><br><span class="line">Warning: v1 ComponentStatus is deprecated in v1.19+</span><br><span class="line">NAME                 STATUS    MESSAGE             ERROR</span><br><span class="line">scheduler            Healthy   ok                  </span><br><span class="line">controller-manager   Healthy   ok                  </span><br><span class="line">etcd-0               Healthy   &#123;&quot;health&quot;:&quot;true&quot;&#125;</span><br></pre></td></tr></table></figure>
 
-<h1 id="Kubernetes-集群证书相关问题"><a href="#Kubernetes-集群证书相关问题" class="headerlink" title="Kubernetes 集群证书相关问题"></a>Kubernetes 集群证书相关问题</h1><h2 id="Found-multiple-CRI-endpoints-on-the-host"><a href="#Found-multiple-CRI-endpoints-on-the-host" class="headerlink" title="Found multiple CRI endpoints on the host"></a>Found multiple CRI endpoints on the host</h2><p>使用 <code>kubeadm</code> 重置集群证书时报错，具体操作如下</p>
+<h1 id="Kubernetes-集群证书相关问题"><a href="#Kubernetes-集群证书相关问题" class="headerlink" title="Kubernetes 集群证书相关问题"></a>Kubernetes 集群证书相关问题</h1><h2 id="Kubernetes-相关证书"><a href="#Kubernetes-相关证书" class="headerlink" title="Kubernetes 相关证书"></a>Kubernetes 相关证书</h2><p>Kubernetes 集群中使用了多种证书来保证各种组件间的安全通信。以下是 Kubernetes 中使用的主要证书：</p>
+<blockquote>
+<p><em><strong>证书默认存放路径</strong></em> <code>/etc/kubernetes/pki</code>，以下文件相对路径基于此默认存放路径</p>
+</blockquote>
+<h3 id="Kubernetes-集群证书"><a href="#Kubernetes-集群证书" class="headerlink" title="Kubernetes 集群证书"></a>Kubernetes 集群证书</h3><ul>
+<li><p><em><strong>kubernetes CA 证书</strong></em></p>
+<p>Kubernetes CA 证书用于签发集群中的其他证书，例如 <code>kube-apiserver</code> 服务器证书、<code>kubelet</code> 证书、<code>controller-manager</code> 证书等。</p>
+<ul>
+<li><code>ca.crt</code>  CA 的公钥证书。</li>
+<li><code>ca.key</code>  CA 的私钥。</li>
+</ul>
+<p>在使用 <code>kubeadm</code> 初始化 Kubernetes 集群时，CA 证书通常会自动生成。</p>
+</li>
+<li><p><em><strong>kube-apiserver 组件证书</strong></em></p>
+<p>加密 Kubernetes API 服务器的 HTTPS 接口。</p>
+<ul>
+<li><code>apiserver.crt</code></li>
+<li><code>apiserver.key</code></li>
+</ul>
+<p>证书的 SANs 中包含了 Kubernetes API 服务器的 IP 地址、DNS 名称等。要更新 SANs 的值，使用命令 <code>kubeadm init phase certs apiserver</code>，<a href="https://csms.tech/202209121102/#集群之外的服务器使用-kubectl-报错">参考示例</a></p>
+<p>要单独更新 <code>kube-apiserver</code> 的证书，参考命令 <code>kubeadm certs renew </code></p>
+</li>
+<li><p>Kube Proxy、Controller Manager 和 Scheduler 默认不使用 TLS 和 API Server 进行身份验证，而是使用 Kubernetes Service Account。</p>
+</li>
+<li><p><em><strong>Kubelet  组件证书</strong></em></p>
+<p>加密 Kubelet 与 API 服务器的通信。kubelet 使用这些证书来安全地与 Kubernetes API 服务器通信。这包括节点状态的报告、Pod 的创建和管理等。当 kubelet 首次加入集群时，它会使用这些证书进行 TLS 认证。API 服务器通过这些证书验证节点的身份，并基于此授予相应的权限。</p>
+<p>Kubernetes 支持自动证书轮换，这意味着 kubelet 会在证书接近过期时自动请求新的证书。这个过程是自动的，确保了长期运行的集群保持安全。</p>
+<p>通常为节点的 <code>/var/lib/kubelet/pki/kubelet-client-current.pem</code> 和对应的 Key 文件。</p>
+</li>
+<li><p><em><strong>Service Account Keys</strong></em>  </p>
+<p>在初始化 Kubernetes 集群时，这些密钥通常由 <code>kubeadm</code> 或相似的工具自动生成。</p>
+<ul>
+<li><code>sa.key</code> 用于签发新的 Service Account JWT Tokens。通常由集群管理员或自动化工具（如 <code>kubeadm</code>）安全地生成和管理。</li>
+<li><code>sa.pub</code>（<strong>非 TLS 证书，而是密钥对</strong>）。  由 Kubernetes API 服务器用来验证 Token 的合法性。与私钥配对使用。</li>
+</ul>
+<p>在 Kubernetes 中，Service Account Keys 是一对公钥和私钥，用于验证和签发 Service Account Tokens。这些令牌允许 Pod 以特定的 Service Account 身份与 Kubernetes API 服务器进行认证和授权。</p>
+</li>
+<li><p><em><strong>apiserver-kubelet-client</strong></em></p>
+<p>这对证书和密钥用于 API 服务器请求集群中每个节点上的 <code>kubelet</code> 时的安全通信。API 服务器使用这些证书与 <code>kubelet</code> 通信，进行诸如启动 Pod、获取节点状态等操作。</p>
+<ul>
+<li><code>apiserver-kubelet-client.crt</code></li>
+<li><code>apiserver-kubelet-client.key</code></li>
+</ul>
+</li>
+</ul>
+<h3 id="etcd-集群证书"><a href="#etcd-集群证书" class="headerlink" title="etcd 集群证书"></a>etcd 集群证书</h3><ul>
+<li><p><em><strong>etcd CA 证书</strong></em></p>
+<p>Etcd CA 证书用于签发 etcd 集群相关的证书，如 <code>etcd</code> 服务器证书、<code>etcd</code> 客户端证书、Peer 实体证书等。</p>
+<ul>
+<li><code>etcd/ca.crt</code></li>
+<li><code>etcd/ca.key</code></li>
+</ul>
+</li>
+<li><p><em><strong>apiserver-etcd-client</strong></em></p>
+<p> 这对证书和密钥用于 Kubernetes API 服务器请求 <code>etcd</code> 数据库时的加密通信</p>
+<ul>
+<li><code>apiserver-etcd-client.crt </code></li>
+<li><code>apiserver-etcd-client.key</code></li>
+</ul>
+</li>
+</ul>
+<h2 id="Found-multiple-CRI-endpoints-on-the-host"><a href="#Found-multiple-CRI-endpoints-on-the-host" class="headerlink" title="Found multiple CRI endpoints on the host"></a>Found multiple CRI endpoints on the host</h2><p>使用 <code>kubeadm</code> 重置集群证书时报错，具体操作如下</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sudo kubeadm init phase certs all</span></span><br><span class="line">Found multiple CRI endpoints on the host. Please define which one do you wish to use by setting the &#x27;criSocket&#x27; field in the kubeadm configuration file: unix:///var/run/containerd/containerd.sock, unix:///var/run/cri-dockerd.sock</span><br><span class="line">To see the stack trace of this error execute with --v=5 or higher</span><br></pre></td></tr></table></figure>
 <p>原因为系统上存在多个可用的 CRI，需要手动配置使用哪一个。这通常是在 <code>kubeadm</code> 配置文件中设置 <code>criSocket</code> 字段来完成。如果集群正在使用 <code>containerd</code> 作为容器运行时，参考以下配置解决</p>
 <ol>
