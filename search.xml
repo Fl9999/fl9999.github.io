@@ -546,6 +546,58 @@ width: 35%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>hexo markdown常用语法</title>
     <url>/2215beeb/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="url-链接"><a href="#url-链接" class="headerlink" title="url 链接"></a>url 链接</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">[这是一个链接](https://csms.tech [title])</span><br></pre></td></tr></table></figure>
@@ -677,55 +729,27 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
+    <title>TCP 协议</title>
+    <url>/202211251549/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="TCP-协议抓包分析"><a href="#TCP-协议抓包分析" class="headerlink" title="TCP 协议抓包分析"></a>TCP 协议抓包分析</h1><h2 id="TCP-通信过程中-seq-和-ACK-值说明"><a href="#TCP-通信过程中-seq-和-ACK-值说明" class="headerlink" title="TCP 通信过程中 seq 和 ACK 值说明"></a>TCP 通信过程中 seq 和 ACK 值说明</h2><p><img src="https://i.csms.tech/img_96.png"></p>
 <ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+<li><p>TCP 连接通信过程中，client 和 server 端各自维护自己的 <code>seq</code>。后面一个数据包的 <code>seq</code> 是前面一个数据包的 <code>seq</code> 加上前面一个数据包的大小。表示发送的字节位置。 </p>
+<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 0，则当前要发送的数据包的 <code>seq = 0</code></p>
+<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 20，则当前要发送的数据包的 <code>seq = 120</code></p>
+</li>
+<li><p>TCP 连接通信过程中，client 和 server 端要发送给对方的包的 <code>ACK</code> 的值为：收到的包的 <code>seq</code> + 收到的包的 <code>Len</code>，此值告知发送方，接收方希望接收到的下一个包的序列号。</p>
+<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 0</code> 的包，接收方需要发送的 <code>ACK = 100 + 1</code></p>
+<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 20</code> 的包，接收方需要发送的 <code>ACK = 100 + 20</code></p>
+</li>
 </ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://xiaolincoding.com/network/3_tcp/tcp_tcpdump.html#%E6%98%BE%E5%BD%A2-%E4%B8%8D%E5%8F%AF%E8%A7%81-%E7%9A%84%E7%BD%91%E7%BB%9C%E5%8C%85">TCP 实战抓包分析</a></p>
+<p><a href="https://www.cnblogs.com/163yun/p/9552368.html">wireshark抓包分析——TCP&#x2F;IP协议</a></p>
+]]></content>
       <categories>
-        <category>Mysql</category>
+        <category>TCPIP</category>
       </categories>
       <tags>
-        <tag>Mysql</tag>
+        <tag>TCP</tag>
       </tags>
   </entry>
   <entry>
@@ -823,30 +847,6 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>TCP 协议</title>
-    <url>/202211251549/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="TCP-协议抓包分析"><a href="#TCP-协议抓包分析" class="headerlink" title="TCP 协议抓包分析"></a>TCP 协议抓包分析</h1><h2 id="TCP-通信过程中-seq-和-ACK-值说明"><a href="#TCP-通信过程中-seq-和-ACK-值说明" class="headerlink" title="TCP 通信过程中 seq 和 ACK 值说明"></a>TCP 通信过程中 seq 和 ACK 值说明</h2><p><img src="https://i.csms.tech/img_96.png"></p>
-<ul>
-<li><p>TCP 连接通信过程中，client 和 server 端各自维护自己的 <code>seq</code>。后面一个数据包的 <code>seq</code> 是前面一个数据包的 <code>seq</code> 加上前面一个数据包的大小。表示发送的字节位置。 </p>
-<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 0，则当前要发送的数据包的 <code>seq = 0</code></p>
-<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 20，则当前要发送的数据包的 <code>seq = 120</code></p>
-</li>
-<li><p>TCP 连接通信过程中，client 和 server 端要发送给对方的包的 <code>ACK</code> 的值为：收到的包的 <code>seq</code> + 收到的包的 <code>Len</code>，此值告知发送方，接收方希望接收到的下一个包的序列号。</p>
-<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 0</code> 的包，接收方需要发送的 <code>ACK = 100 + 1</code></p>
-<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 20</code> 的包，接收方需要发送的 <code>ACK = 100 + 20</code></p>
-</li>
-</ul>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://xiaolincoding.com/network/3_tcp/tcp_tcpdump.html#%E6%98%BE%E5%BD%A2-%E4%B8%8D%E5%8F%AF%E8%A7%81-%E7%9A%84%E7%BD%91%E7%BB%9C%E5%8C%85">TCP 实战抓包分析</a></p>
-<p><a href="https://www.cnblogs.com/163yun/p/9552368.html">wireshark抓包分析——TCP&#x2F;IP协议</a></p>
-]]></content>
-      <categories>
-        <category>TCPIP</category>
-      </categories>
-      <tags>
-        <tag>TCP</tag>
       </tags>
   </entry>
   <entry>
@@ -2690,6 +2690,27 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>django-bootstrap5 使用</title>
+    <url>/202303221624/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python3.11</li>
+<li>Django4</li>
+</ul>
+<h1 id="django-bootstrap5-安装配置"><a href="#django-bootstrap5-安装配置" class="headerlink" title="django-bootstrap5 安装配置"></a>django-bootstrap5 安装配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install django-bootstrap5</span><br></pre></td></tr></table></figure>
+
+<p>在项目配置文件 <code>settings.py</code> 中添加应用名</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">INSTALLED_APPS = [</span><br><span class="line">    ...</span><br><span class="line">    &#x27;django_bootstrap5&#x27;,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<h1 id="bootstrap5-使用"><a href="#bootstrap5-使用" class="headerlink" title="bootstrap5 使用"></a>bootstrap5 使用</h1>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Django admin 模板分析及使用</title>
     <url>/202303241020/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -2719,27 +2740,6 @@ width: 20%;
       <tags>
         <tag>Django</tag>
         <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>django-bootstrap5 使用</title>
-    <url>/202303221624/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python3.11</li>
-<li>Django4</li>
-</ul>
-<h1 id="django-bootstrap5-安装配置"><a href="#django-bootstrap5-安装配置" class="headerlink" title="django-bootstrap5 安装配置"></a>django-bootstrap5 安装配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install django-bootstrap5</span><br></pre></td></tr></table></figure>
-
-<p>在项目配置文件 <code>settings.py</code> 中添加应用名</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">INSTALLED_APPS = [</span><br><span class="line">    ...</span><br><span class="line">    &#x27;django_bootstrap5&#x27;,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-
-<h1 id="bootstrap5-使用"><a href="#bootstrap5-使用" class="headerlink" title="bootstrap5 使用"></a>bootstrap5 使用</h1>]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Django</tag>
       </tags>
   </entry>
   <entry>
@@ -2848,249 +2848,6 @@ width: 20%;
 <li><p><code>request.get_host()</code> : 返回请求的主机部分。</p>
 </li>
 </ul>
-]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Django</tag>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>django logging 模块</title>
-    <url>/202208151622/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>python 3.10</li>
-<li>django 4.0</li>
-</ul>
-<h1 id="Python-logging-模块说明"><a href="#Python-logging-模块说明" class="headerlink" title="Python logging 模块说明"></a>Python logging 模块说明</h1><p><code>Django</code> 使用 <code>Python</code> 内置的 <code>logging</code> 模块处理系统日志，一份 <code>Python logging</code> 配置由下面四个部分组成：</p>
-<ul>
-<li>Loggers</li>
-<li>Handlers</li>
-<li>Filters</li>
-<li>Formatters</li>
-</ul>
-<h2 id="Loggers"><a href="#Loggers" class="headerlink" title="Loggers"></a>Loggers</h2><p><code>logger</code> 是日志系统的入口。每个 <code>logger</code> 都是命名了的 <code>bucket</code>， 消息写入 <code>bucket</code> 以便进一步处理<br><code>logger</code> 可以配置 <code>日志级别</code>。日志级别描述了由该 <code>logger</code> 处理的消息的严重性。<code>Python</code> 定义了下面几种日志级别：</p>
-<ul>
-<li><code>DEBUG</code>：排查故障时使用的低级别系统信息</li>
-<li><code>INFO</code>：一般的系统信息</li>
-<li><code>WARNING</code>：描述系统发生了一些小问题的信息</li>
-<li><code>ERROR</code>：描述系统发生了大问题的信息</li>
-<li><code>CRITICAL</code>：描述系统发生严重问题的信息</li>
-</ul>
-<p>每一条写入 <code>logger</code> 的消息都是一条 <code>日志记录</code>。每一条日志记录也包含 <code>日志级别</code>，代表对应消息的严重程度。日志记录还包含有用的元数据，来描述被记录了日志的事件细节，例如堆栈跟踪或者错误码。  </p>
-<p>当 <code>logger</code> 处理一条消息时，会将自己的 <code>日志级别</code> 和这条消息的 <code>日志级别</code> 做对比。如果消息的日志级别匹配或者高于 <code>logger</code> 的日志级别，它就会被进一步处理。否则这条消息就会被忽略掉。  </p>
-<p>当 <code>logger</code> 确定了一条消息需要处理之后，会把它传给 <code>Handler</code>。</p>
-<span id="more"></span>
-
-<h2 id="Handlers"><a href="#Handlers" class="headerlink" title="Handlers"></a>Handlers</h2><p><code>Handler</code> 是决定如何处理 <code>logger</code> 中每一条消息的引擎。它描述特定的日志行为，比如把消息输出到<code>屏幕(stdout)</code>、<code>文件</code>或<code>网络 socket</code>。<br>和 <code>logger</code> 一样，<code>handler</code> 也有 <code>日志级别</code> 的概念。如果一条日志记录的级别不匹配或者低于 <code>handler</code> 的日志级别，对应的消息会被 <code>handler</code> 忽略。</p>
-<p>一个 <code>logger</code> 可以有多个 <code>handler</code>，每一个 <code>handler</code> 可以有不同的日志级别。这样就可以根据消息的重要性不同，来提供不同格式的输出。例如，你可以添加一个 <code>handler</code> 把 <code>ERROR</code> 和 <code>CRITICAL</code> 消息发送短消息，再添加另一个 <code>handler</code> 把所有的消息（包括 <code>ERROR</code> 和 <code>CRITICAL</code> 消息）保存到文件里以便日后分析。</p>
-<h2 id="Filters"><a href="#Filters" class="headerlink" title="Filters"></a>Filters</h2><p>在日志记录从 <code>logger</code> 传到 <code>handler</code> 的过程中，使用 <code>Filter</code> 来做额外的控制。<br>默认情况下，只要级别匹配，任何日志消息都会被处理。不过，也可以通过添加 <code>filter</code> 来给日志处理的过程增加额外条件。例如，可以添加一个 <code>filter</code> 只允许某个特定来源的 <code>ERROR</code> 消息输出。  </p>
-<p><code>Filter</code> 还被用来在日志输出之前对日志记录做修改。例如，可以写一个 <code>filter</code>，当满足一定条件时，把日志记录从 <code>ERROR</code> 降到 <code>WARNING</code> 级别。  </p>
-<p><code>Filter</code> 在 <code>logger</code> 和 <code>handler</code> 中都可以添加；多个 <code>filter</code> 可以链接起来使用，来做多重过滤操作。</p>
-<h2 id="Formatters"><a href="#Formatters" class="headerlink" title="Formatters"></a>Formatters</h2><p>日志记录最终是需要以文本来呈现的。<code>Formatter</code> 描述了文本的格式。一个 <code>formatter</code> 通常由包含 <a href="https://docs.python.org/3/library/logging.html#logrecord-attributes"><code>LogRecord attributes</code></a> 的 <code>Python 格式化字符串</code> 组成，不过你也可以为特定的格式来配置自定义的 formatter。</p>
-<h1 id="Python-logging-模块使用方式介绍"><a href="#Python-logging-模块使用方式介绍" class="headerlink" title="Python logging 模块使用方式介绍"></a>Python logging 模块使用方式介绍</h1><p><code>logging</code> 模块提供了两种记录日志的方式：</p>
-<ul>
-<li>第一种方式是使用 <code>logging</code> 提供的模块级别的方法</li>
-<li>第二种方式是使用 <code>Logging</code> 日志系统的四大组件</li>
-</ul>
-<h2 id="logging-模块级别方法使用说明"><a href="#logging-模块级别方法使用说明" class="headerlink" title="logging 模块级别方法使用说明"></a>logging 模块级别方法使用说明</h2><p><code>logging</code> 提供的模块级别常用方法有：  </p>
-<table>
-<thead>
-<tr>
-<th>方法名</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>logging.basicConfig(**kwargs)</code></td>
-<td>对 <code>root logger</code> 进行一次性配置</td>
-<td></td>
-</tr>
-<tr>
-<td><code>logging.debug(msg, args, *kwargs)</code></td>
-<td>记录级别为 <code>DEBUG</code> 的日志</td>
-<td><code>logging.debug(&#39;debug msg&#39;)</code></td>
-</tr>
-<tr>
-<td><code>logging.info(msg, args, *kwargs)</code></td>
-<td>记录级别为 <code>INFO</code> 的日志</td>
-<td></td>
-</tr>
-<tr>
-<td><code>logging.warning(msg, args, *kwargs)	</code></td>
-<td>记录级别为 <code>WARNING</code> 的日志</td>
-<td></td>
-</tr>
-<tr>
-<td><code>logging.error(msg, args, *kwargs)	</code></td>
-<td>记录级别为 <code>ERROR</code> 的日志</td>
-<td></td>
-</tr>
-<tr>
-<td><code>logging.critical(msg, args, *kwargs)	</code></td>
-<td>记录级别为 <code>CRITICAL</code> 的日志</td>
-<td></td>
-</tr>
-<tr>
-<td><code>logging.log(level, args, *kwargs)	</code></td>
-<td>记录级别为 <code>level</code> 的日志</td>
-<td><code>logging.log(logging.DEBUG, &#39;debug msg&#39;)</code></td>
-</tr>
-</tbody></table>
-<h3 id="logging-basicConfig-方法说明"><a href="#logging-basicConfig-方法说明" class="headerlink" title="logging.basicConfig() 方法说明"></a>logging.basicConfig() 方法说明</h3><p>该方法用于为 <code>logging</code> 日志系统做一些基本配置，<code>logging.basicConfig()</code> 函数是一个一次性的简单配置工具使，也就是说只有在第一次调用该函数时会起作用，后续再次调用该函数时完全不会产生任何操作的，多次调用的设置并不是累加操作。方法定义如下：</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">logging.basicConfig(**kwargs)</span><br></pre></td></tr></table></figure>
-
-<p>该方法可接收的关键字参数如下：</p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>filename</code></td>
-<td>写入日志的文件名</td>
-</tr>
-<tr>
-<td><code>filemode</code></td>
-<td>打开日志文件的模式，默认为 <code>a</code>，该选项在 <code>filename</code> 指定时才生效</td>
-</tr>
-<tr>
-<td><code>format</code></td>
-<td>日志格式字符串, 指定日志输出时所包含的字段信息以及它们的顺序</td>
-</tr>
-<tr>
-<td><code>datefmt</code></td>
-<td>指定日期&#x2F;时间格式。该选项要在 <code>format</code> 中包含时间字段 <code>%(asctime)s</code> 时才有效</td>
-</tr>
-<tr>
-<td><code>level</code></td>
-<td>指定日志级别</td>
-</tr>
-<tr>
-<td><code>stream</code></td>
-<td>指定日志输出目标 stream，如 <code>sys.stdout</code>、<code>sys.stderr</code>以及 <code>网络stream</code>。需要说明的是，<code>stream</code> 和 <code>filename </code>不能同时提供，否则会引发 <code>ValueError</code> 异常</td>
-</tr>
-<tr>
-<td><code>style</code></td>
-<td><code>Python 3.2</code> 中新添加的配置项。指定 <code>format</code> 格式字符串的风格，可取值为 <code>%</code>、<code>&#123;</code> 和 <code>$</code>，默认为 <code>%</code></td>
-</tr>
-<tr>
-<td><code>handlers</code></td>
-<td><code>Python 3.3</code> 中新添加的配置项。该选项如果被指定，它应该是一个创建了多个 <code>Handler</code> 的可迭代对象，这些 <code>handler</code> 将会被添加到 <code>root logger</code> 。需要说明的是：<code>filename</code>、s<code>tream</code> 和 <code>handlers</code> 这三个配置项只能有一个存在，不能同时出现2个或3个，否则会引发 <code>ValueError</code> 异常。</td>
-</tr>
-</tbody></table>
-<p><code>logging</code> 模块中定义好的可以用于 <code>format</code> 日志格式字符串的字段主要有  </p>
-<table>
-<thead>
-<tr>
-<th>字段名称</th>
-<th>使用格式</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>asctime</code></td>
-<td><code>%(asctime)s</code></td>
-<td>日志事件发生的时间(可读时间)，如：2003-07-08 16:49:45,896</td>
-</tr>
-<tr>
-<td><code>created</code></td>
-<td><code>%(created)f	</code></td>
-<td>日志事件发生的时间(时间戳)</td>
-</tr>
-<tr>
-<td><code>levelname</code></td>
-<td><code>%(levelname)s</code></td>
-<td>日志级别</td>
-</tr>
-<tr>
-<td><code>levelno</code></td>
-<td><code>%(levelno)s	</code></td>
-<td>日志记录的数字形式的日志级别（10, 20, 30, 40, 50）</td>
-</tr>
-<tr>
-<td><code>name</code></td>
-<td><code>%(name)s	</code></td>
-<td>所使用的日志器名称，默认是 <code>root</code>，因为默认使用的是 <code>rootLogger</code></td>
-</tr>
-<tr>
-<td><code>message</code></td>
-<td><code>%(message)s	</code></td>
-<td>日志记录的文本内容</td>
-</tr>
-<tr>
-<td><code>pathname</code></td>
-<td><code>%(pathname)s	</code></td>
-<td>调用日志记录方法的源码文件的全路径</td>
-</tr>
-<tr>
-<td><code>filename</code></td>
-<td><code>%(filename)s	</code></td>
-<td><code>pathname</code> 的文件名部分，包含文件后缀</td>
-</tr>
-<tr>
-<td><code>module</code></td>
-<td><code>%(module)s	</code></td>
-<td>filename的名称部分，不包含后缀</td>
-</tr>
-<tr>
-<td><code>lineno</code></td>
-<td><code>%(lineno)d	</code></td>
-<td>调用日志记录方法的源代码所在的行号</td>
-</tr>
-<tr>
-<td><code>funcName</code></td>
-<td><code>%(funcName)s	</code></td>
-<td>调用日志记录方法的函数名</td>
-</tr>
-<tr>
-<td><code>process</code></td>
-<td><code>%(process)d	</code></td>
-<td>进程ID</td>
-</tr>
-<tr>
-<td><code>processName</code></td>
-<td><code>%(processName)s	</code></td>
-<td>进程名称，Python 3.1新增</td>
-</tr>
-<tr>
-<td><code>thread</code></td>
-<td><code>%(thread)d	</code></td>
-<td>线程ID</td>
-</tr>
-<tr>
-<td><code>threadName</code></td>
-<td><code>%(thread)s	</code></td>
-<td>线程名称</td>
-</tr>
-</tbody></table>
-<h3 id="logging-模块级别方法中的-kwargs-参数说明"><a href="#logging-模块级别方法中的-kwargs-参数说明" class="headerlink" title="logging 模块级别方法中的 kwargs 参数说明"></a>logging 模块级别方法中的 kwargs 参数说明</h3><p><code>logging.debug()</code>, <code>logging.info()</code> 等方法的定义中，除了 <code>msg</code> 和 <code>args</code> 参数外，还有一个 <code>**kwargs</code> 参数。它们支持3个关键字参数: <code>exc_info</code>, <code>stack_info</code>, <code>extra</code></p>
-<ul>
-<li><code>exc_info</code> : 布尔值，如果该参数的值设置为 <code>True</code>，则会将异常异常信息添加到日志消息中。如果没有异常信息则添加 <code>None</code> 到日志信息中。</li>
-<li><code>stack_info</code> : 布尔值，默认值为 <code>False</code>。如果该参数的值设置为 <code>True</code>，栈信息将会被添加到日志信息中。</li>
-<li><code>extra</code> : 这是一个字典（<code>dict</code>）参数，它可以用来自定义消息格式中所包含的字段，但是它的 <code>key</code> 不能与 <code>logging</code> 模块定义的字段冲突</li>
-</ul>
-<p><code>exc_info</code> 使用示例：</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">try</span>:</span><br><span class="line"><span class="meta">... </span>    <span class="number">1</span> / <span class="number">0</span></span><br><span class="line"><span class="meta">... </span><span class="keyword">except</span>:</span><br><span class="line"><span class="meta">... </span>    logging.error(<span class="string">&#x27;except occor&#x27;</span>, exc_info=<span class="literal">True</span>)</span><br><span class="line"><span class="meta">... </span></span><br><span class="line">ERROR:root:<span class="keyword">except</span> occor</span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File <span class="string">&quot;&lt;stdin&gt;&quot;</span>, line <span class="number">2</span>, <span class="keyword">in</span> &lt;module&gt;</span><br><span class="line">ZeroDivisionError: division by zero</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>stack_info</code> 使用示例：</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">try</span>:</span><br><span class="line"><span class="meta">... </span>    <span class="number">1</span> / <span class="number">0</span></span><br><span class="line"><span class="meta">... </span><span class="keyword">except</span>:</span><br><span class="line"><span class="meta">... </span>    logging.error(<span class="string">&#x27;except&#x27;</span>, stack_info=<span class="literal">True</span>)</span><br><span class="line"><span class="meta">... </span></span><br><span class="line">ERROR:root:<span class="keyword">except</span></span><br><span class="line">Stack (most recent call last):</span><br><span class="line">  File <span class="string">&quot;&lt;stdin&gt;&quot;</span>, line <span class="number">4</span>, <span class="keyword">in</span> &lt;module&gt;</span><br></pre></td></tr></table></figure>
-
-<h1 id="Django-配置-logging"><a href="#Django-配置-logging" class="headerlink" title="Django 配置 logging"></a>Django 配置 logging</h1><p>在 <code>Django</code> 配置文件( <code>settings.py</code> ) 中添加以下配置  </p>
-<figure class="highlight django"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="language-xml">LOGGING = &#123;</span></span><br><span class="line"><span class="language-xml">    &#x27;version&#x27;: 1,</span></span><br><span class="line"><span class="language-xml">    &#x27;disable_existing_loggers&#x27;: False,</span></span><br><span class="line"><span class="language-xml">    &#x27;formatters&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">        &#x27;verbose&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;format&#x27;: &#x27;[%(asctime)s][%(levelname)s][%(pathname)s %(module)s %(lineno)s %(process)d %(thread)d] %(message)s&#x27;</span></span><br><span class="line"><span class="language-xml">        &#125;</span></span><br><span class="line"><span class="language-xml">    &#125;,</span></span><br><span class="line"><span class="language-xml">    &#x27;handlers&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">        &#x27;file&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;class&#x27;: &#x27;logging.handlers.RotatingFileHandler&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;filename&#x27;: &#x27;default.log&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;maxBytes&#x27;: 1024 * 1024 * 5,</span></span><br><span class="line"><span class="language-xml">            &#x27;backupCount&#x27;: 5,</span></span><br><span class="line"><span class="language-xml">            &#x27;formatter&#x27;: &#x27;verbose&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">        &#x27;console&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;class&#x27;: &#x27;logging.StreamHandler&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;formatter&#x27;: &#x27;verbose&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">        &#x27;django.server&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;class&#x27;: &#x27;logging.StreamHandler&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;formatter&#x27;: &#x27;verbose&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">    &#125;,</span></span><br><span class="line"><span class="language-xml">    &#x27;loggers&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">        &#x27;django&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;handlers&#x27;: [&#x27;console&#x27;, &#x27;file&#x27;],</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">        &#x27;django.server&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;handlers&#x27;: [&#x27;django.server&#x27;],</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;propagate&#x27;: False,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">    &#125;</span></span><br><span class="line"><span class="language-xml">&#125;</span></span><br></pre></td></tr></table></figure>
-
-<p>代码中可以通过以下方式写入日志到对应 <code>logger</code>:  </p>
-<figure class="highlight python"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="keyword">import</span> logging</span><br><span class="line">logger = logging.getLogger(`django.server`)</span><br><span class="line">logger.info(<span class="string">&#x27;aaa&#x27;</span>)</span><br></pre></td></tr></table></figure>
-
-<p> <code>loggers</code> 类型 为 <code>django</code> 将处理所有类型的日志</p>
-<h2 id="Django-简单使用示例"><a href="#Django-简单使用示例" class="headerlink" title="Django 简单使用示例"></a>Django 简单使用示例</h2><p>以下配置为 Django 中使用 <code>logging</code> 模块的简单示例，配置后在 Django 项目代码中直接使用 <code>logging</code> 方法即可写入日志</p>
-<figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">LOGGING = &#123;</span><br><span class="line">    <span class="string">&#x27;version&#x27;</span>: <span class="number">1</span>,</span><br><span class="line">    <span class="string">&#x27;disable_existing_loggers&#x27;</span>: <span class="literal">False</span>,</span><br><span class="line">    <span class="string">&#x27;formatters&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;verbose&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;format&#x27;</span>: <span class="string">&#x27;[%(asctime)s][%(levelname)s][%(pathname)s %(module)s %(lineno)s %(process)d %(thread)d] %(message)s&#x27;</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="string">&#x27;handlers&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;file&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;level&#x27;</span>: <span class="string">&#x27;INFO&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;class&#x27;</span>: <span class="string">&#x27;logging.handlers.RotatingFileHandler&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;filename&#x27;</span>: <span class="string">&#x27;default.log&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;maxBytes&#x27;</span>: <span class="number">1024</span> * <span class="number">1024</span> * <span class="number">5</span>,</span><br><span class="line">            <span class="string">&#x27;backupCount&#x27;</span>: <span class="number">5</span>,</span><br><span class="line">            <span class="string">&#x27;formatter&#x27;</span>: <span class="string">&#x27;verbose&#x27;</span>,</span><br><span class="line">        &#125;,</span><br><span class="line">        <span class="string">&#x27;console&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;class&#x27;</span>: <span class="string">&#x27;logging.StreamHandler&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;formatter&#x27;</span>: <span class="string">&#x27;verbose&#x27;</span>,</span><br><span class="line">        &#125;,</span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="string">&#x27;root&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;handlers&#x27;</span>: [<span class="string">&#x27;file&#x27;</span>, <span class="string">&#x27;console&#x27;</span>],</span><br><span class="line">        <span class="string">&#x27;level&#x27;</span>: <span class="string">&#x27;DEBUG&#x27;</span>,</span><br><span class="line">    &#125;,</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.djangoproject.com/zh-hans/4.0/topics/logging/">django logging 模块官网说明</a></p>
 ]]></content>
       <categories>
         <category>Python</category>
@@ -3348,6 +3105,249 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>django logging 模块</title>
+    <url>/202208151622/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>python 3.10</li>
+<li>django 4.0</li>
+</ul>
+<h1 id="Python-logging-模块说明"><a href="#Python-logging-模块说明" class="headerlink" title="Python logging 模块说明"></a>Python logging 模块说明</h1><p><code>Django</code> 使用 <code>Python</code> 内置的 <code>logging</code> 模块处理系统日志，一份 <code>Python logging</code> 配置由下面四个部分组成：</p>
+<ul>
+<li>Loggers</li>
+<li>Handlers</li>
+<li>Filters</li>
+<li>Formatters</li>
+</ul>
+<h2 id="Loggers"><a href="#Loggers" class="headerlink" title="Loggers"></a>Loggers</h2><p><code>logger</code> 是日志系统的入口。每个 <code>logger</code> 都是命名了的 <code>bucket</code>， 消息写入 <code>bucket</code> 以便进一步处理<br><code>logger</code> 可以配置 <code>日志级别</code>。日志级别描述了由该 <code>logger</code> 处理的消息的严重性。<code>Python</code> 定义了下面几种日志级别：</p>
+<ul>
+<li><code>DEBUG</code>：排查故障时使用的低级别系统信息</li>
+<li><code>INFO</code>：一般的系统信息</li>
+<li><code>WARNING</code>：描述系统发生了一些小问题的信息</li>
+<li><code>ERROR</code>：描述系统发生了大问题的信息</li>
+<li><code>CRITICAL</code>：描述系统发生严重问题的信息</li>
+</ul>
+<p>每一条写入 <code>logger</code> 的消息都是一条 <code>日志记录</code>。每一条日志记录也包含 <code>日志级别</code>，代表对应消息的严重程度。日志记录还包含有用的元数据，来描述被记录了日志的事件细节，例如堆栈跟踪或者错误码。  </p>
+<p>当 <code>logger</code> 处理一条消息时，会将自己的 <code>日志级别</code> 和这条消息的 <code>日志级别</code> 做对比。如果消息的日志级别匹配或者高于 <code>logger</code> 的日志级别，它就会被进一步处理。否则这条消息就会被忽略掉。  </p>
+<p>当 <code>logger</code> 确定了一条消息需要处理之后，会把它传给 <code>Handler</code>。</p>
+<span id="more"></span>
+
+<h2 id="Handlers"><a href="#Handlers" class="headerlink" title="Handlers"></a>Handlers</h2><p><code>Handler</code> 是决定如何处理 <code>logger</code> 中每一条消息的引擎。它描述特定的日志行为，比如把消息输出到<code>屏幕(stdout)</code>、<code>文件</code>或<code>网络 socket</code>。<br>和 <code>logger</code> 一样，<code>handler</code> 也有 <code>日志级别</code> 的概念。如果一条日志记录的级别不匹配或者低于 <code>handler</code> 的日志级别，对应的消息会被 <code>handler</code> 忽略。</p>
+<p>一个 <code>logger</code> 可以有多个 <code>handler</code>，每一个 <code>handler</code> 可以有不同的日志级别。这样就可以根据消息的重要性不同，来提供不同格式的输出。例如，你可以添加一个 <code>handler</code> 把 <code>ERROR</code> 和 <code>CRITICAL</code> 消息发送短消息，再添加另一个 <code>handler</code> 把所有的消息（包括 <code>ERROR</code> 和 <code>CRITICAL</code> 消息）保存到文件里以便日后分析。</p>
+<h2 id="Filters"><a href="#Filters" class="headerlink" title="Filters"></a>Filters</h2><p>在日志记录从 <code>logger</code> 传到 <code>handler</code> 的过程中，使用 <code>Filter</code> 来做额外的控制。<br>默认情况下，只要级别匹配，任何日志消息都会被处理。不过，也可以通过添加 <code>filter</code> 来给日志处理的过程增加额外条件。例如，可以添加一个 <code>filter</code> 只允许某个特定来源的 <code>ERROR</code> 消息输出。  </p>
+<p><code>Filter</code> 还被用来在日志输出之前对日志记录做修改。例如，可以写一个 <code>filter</code>，当满足一定条件时，把日志记录从 <code>ERROR</code> 降到 <code>WARNING</code> 级别。  </p>
+<p><code>Filter</code> 在 <code>logger</code> 和 <code>handler</code> 中都可以添加；多个 <code>filter</code> 可以链接起来使用，来做多重过滤操作。</p>
+<h2 id="Formatters"><a href="#Formatters" class="headerlink" title="Formatters"></a>Formatters</h2><p>日志记录最终是需要以文本来呈现的。<code>Formatter</code> 描述了文本的格式。一个 <code>formatter</code> 通常由包含 <a href="https://docs.python.org/3/library/logging.html#logrecord-attributes"><code>LogRecord attributes</code></a> 的 <code>Python 格式化字符串</code> 组成，不过你也可以为特定的格式来配置自定义的 formatter。</p>
+<h1 id="Python-logging-模块使用方式介绍"><a href="#Python-logging-模块使用方式介绍" class="headerlink" title="Python logging 模块使用方式介绍"></a>Python logging 模块使用方式介绍</h1><p><code>logging</code> 模块提供了两种记录日志的方式：</p>
+<ul>
+<li>第一种方式是使用 <code>logging</code> 提供的模块级别的方法</li>
+<li>第二种方式是使用 <code>Logging</code> 日志系统的四大组件</li>
+</ul>
+<h2 id="logging-模块级别方法使用说明"><a href="#logging-模块级别方法使用说明" class="headerlink" title="logging 模块级别方法使用说明"></a>logging 模块级别方法使用说明</h2><p><code>logging</code> 提供的模块级别常用方法有：  </p>
+<table>
+<thead>
+<tr>
+<th>方法名</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>logging.basicConfig(**kwargs)</code></td>
+<td>对 <code>root logger</code> 进行一次性配置</td>
+<td></td>
+</tr>
+<tr>
+<td><code>logging.debug(msg, args, *kwargs)</code></td>
+<td>记录级别为 <code>DEBUG</code> 的日志</td>
+<td><code>logging.debug(&#39;debug msg&#39;)</code></td>
+</tr>
+<tr>
+<td><code>logging.info(msg, args, *kwargs)</code></td>
+<td>记录级别为 <code>INFO</code> 的日志</td>
+<td></td>
+</tr>
+<tr>
+<td><code>logging.warning(msg, args, *kwargs)	</code></td>
+<td>记录级别为 <code>WARNING</code> 的日志</td>
+<td></td>
+</tr>
+<tr>
+<td><code>logging.error(msg, args, *kwargs)	</code></td>
+<td>记录级别为 <code>ERROR</code> 的日志</td>
+<td></td>
+</tr>
+<tr>
+<td><code>logging.critical(msg, args, *kwargs)	</code></td>
+<td>记录级别为 <code>CRITICAL</code> 的日志</td>
+<td></td>
+</tr>
+<tr>
+<td><code>logging.log(level, args, *kwargs)	</code></td>
+<td>记录级别为 <code>level</code> 的日志</td>
+<td><code>logging.log(logging.DEBUG, &#39;debug msg&#39;)</code></td>
+</tr>
+</tbody></table>
+<h3 id="logging-basicConfig-方法说明"><a href="#logging-basicConfig-方法说明" class="headerlink" title="logging.basicConfig() 方法说明"></a>logging.basicConfig() 方法说明</h3><p>该方法用于为 <code>logging</code> 日志系统做一些基本配置，<code>logging.basicConfig()</code> 函数是一个一次性的简单配置工具使，也就是说只有在第一次调用该函数时会起作用，后续再次调用该函数时完全不会产生任何操作的，多次调用的设置并不是累加操作。方法定义如下：</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">logging.basicConfig(**kwargs)</span><br></pre></td></tr></table></figure>
+
+<p>该方法可接收的关键字参数如下：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>filename</code></td>
+<td>写入日志的文件名</td>
+</tr>
+<tr>
+<td><code>filemode</code></td>
+<td>打开日志文件的模式，默认为 <code>a</code>，该选项在 <code>filename</code> 指定时才生效</td>
+</tr>
+<tr>
+<td><code>format</code></td>
+<td>日志格式字符串, 指定日志输出时所包含的字段信息以及它们的顺序</td>
+</tr>
+<tr>
+<td><code>datefmt</code></td>
+<td>指定日期&#x2F;时间格式。该选项要在 <code>format</code> 中包含时间字段 <code>%(asctime)s</code> 时才有效</td>
+</tr>
+<tr>
+<td><code>level</code></td>
+<td>指定日志级别</td>
+</tr>
+<tr>
+<td><code>stream</code></td>
+<td>指定日志输出目标 stream，如 <code>sys.stdout</code>、<code>sys.stderr</code>以及 <code>网络stream</code>。需要说明的是，<code>stream</code> 和 <code>filename </code>不能同时提供，否则会引发 <code>ValueError</code> 异常</td>
+</tr>
+<tr>
+<td><code>style</code></td>
+<td><code>Python 3.2</code> 中新添加的配置项。指定 <code>format</code> 格式字符串的风格，可取值为 <code>%</code>、<code>&#123;</code> 和 <code>$</code>，默认为 <code>%</code></td>
+</tr>
+<tr>
+<td><code>handlers</code></td>
+<td><code>Python 3.3</code> 中新添加的配置项。该选项如果被指定，它应该是一个创建了多个 <code>Handler</code> 的可迭代对象，这些 <code>handler</code> 将会被添加到 <code>root logger</code> 。需要说明的是：<code>filename</code>、s<code>tream</code> 和 <code>handlers</code> 这三个配置项只能有一个存在，不能同时出现2个或3个，否则会引发 <code>ValueError</code> 异常。</td>
+</tr>
+</tbody></table>
+<p><code>logging</code> 模块中定义好的可以用于 <code>format</code> 日志格式字符串的字段主要有  </p>
+<table>
+<thead>
+<tr>
+<th>字段名称</th>
+<th>使用格式</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>asctime</code></td>
+<td><code>%(asctime)s</code></td>
+<td>日志事件发生的时间(可读时间)，如：2003-07-08 16:49:45,896</td>
+</tr>
+<tr>
+<td><code>created</code></td>
+<td><code>%(created)f	</code></td>
+<td>日志事件发生的时间(时间戳)</td>
+</tr>
+<tr>
+<td><code>levelname</code></td>
+<td><code>%(levelname)s</code></td>
+<td>日志级别</td>
+</tr>
+<tr>
+<td><code>levelno</code></td>
+<td><code>%(levelno)s	</code></td>
+<td>日志记录的数字形式的日志级别（10, 20, 30, 40, 50）</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td><code>%(name)s	</code></td>
+<td>所使用的日志器名称，默认是 <code>root</code>，因为默认使用的是 <code>rootLogger</code></td>
+</tr>
+<tr>
+<td><code>message</code></td>
+<td><code>%(message)s	</code></td>
+<td>日志记录的文本内容</td>
+</tr>
+<tr>
+<td><code>pathname</code></td>
+<td><code>%(pathname)s	</code></td>
+<td>调用日志记录方法的源码文件的全路径</td>
+</tr>
+<tr>
+<td><code>filename</code></td>
+<td><code>%(filename)s	</code></td>
+<td><code>pathname</code> 的文件名部分，包含文件后缀</td>
+</tr>
+<tr>
+<td><code>module</code></td>
+<td><code>%(module)s	</code></td>
+<td>filename的名称部分，不包含后缀</td>
+</tr>
+<tr>
+<td><code>lineno</code></td>
+<td><code>%(lineno)d	</code></td>
+<td>调用日志记录方法的源代码所在的行号</td>
+</tr>
+<tr>
+<td><code>funcName</code></td>
+<td><code>%(funcName)s	</code></td>
+<td>调用日志记录方法的函数名</td>
+</tr>
+<tr>
+<td><code>process</code></td>
+<td><code>%(process)d	</code></td>
+<td>进程ID</td>
+</tr>
+<tr>
+<td><code>processName</code></td>
+<td><code>%(processName)s	</code></td>
+<td>进程名称，Python 3.1新增</td>
+</tr>
+<tr>
+<td><code>thread</code></td>
+<td><code>%(thread)d	</code></td>
+<td>线程ID</td>
+</tr>
+<tr>
+<td><code>threadName</code></td>
+<td><code>%(thread)s	</code></td>
+<td>线程名称</td>
+</tr>
+</tbody></table>
+<h3 id="logging-模块级别方法中的-kwargs-参数说明"><a href="#logging-模块级别方法中的-kwargs-参数说明" class="headerlink" title="logging 模块级别方法中的 kwargs 参数说明"></a>logging 模块级别方法中的 kwargs 参数说明</h3><p><code>logging.debug()</code>, <code>logging.info()</code> 等方法的定义中，除了 <code>msg</code> 和 <code>args</code> 参数外，还有一个 <code>**kwargs</code> 参数。它们支持3个关键字参数: <code>exc_info</code>, <code>stack_info</code>, <code>extra</code></p>
+<ul>
+<li><code>exc_info</code> : 布尔值，如果该参数的值设置为 <code>True</code>，则会将异常异常信息添加到日志消息中。如果没有异常信息则添加 <code>None</code> 到日志信息中。</li>
+<li><code>stack_info</code> : 布尔值，默认值为 <code>False</code>。如果该参数的值设置为 <code>True</code>，栈信息将会被添加到日志信息中。</li>
+<li><code>extra</code> : 这是一个字典（<code>dict</code>）参数，它可以用来自定义消息格式中所包含的字段，但是它的 <code>key</code> 不能与 <code>logging</code> 模块定义的字段冲突</li>
+</ul>
+<p><code>exc_info</code> 使用示例：</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">try</span>:</span><br><span class="line"><span class="meta">... </span>    <span class="number">1</span> / <span class="number">0</span></span><br><span class="line"><span class="meta">... </span><span class="keyword">except</span>:</span><br><span class="line"><span class="meta">... </span>    logging.error(<span class="string">&#x27;except occor&#x27;</span>, exc_info=<span class="literal">True</span>)</span><br><span class="line"><span class="meta">... </span></span><br><span class="line">ERROR:root:<span class="keyword">except</span> occor</span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File <span class="string">&quot;&lt;stdin&gt;&quot;</span>, line <span class="number">2</span>, <span class="keyword">in</span> &lt;module&gt;</span><br><span class="line">ZeroDivisionError: division by zero</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>stack_info</code> 使用示例：</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">try</span>:</span><br><span class="line"><span class="meta">... </span>    <span class="number">1</span> / <span class="number">0</span></span><br><span class="line"><span class="meta">... </span><span class="keyword">except</span>:</span><br><span class="line"><span class="meta">... </span>    logging.error(<span class="string">&#x27;except&#x27;</span>, stack_info=<span class="literal">True</span>)</span><br><span class="line"><span class="meta">... </span></span><br><span class="line">ERROR:root:<span class="keyword">except</span></span><br><span class="line">Stack (most recent call last):</span><br><span class="line">  File <span class="string">&quot;&lt;stdin&gt;&quot;</span>, line <span class="number">4</span>, <span class="keyword">in</span> &lt;module&gt;</span><br></pre></td></tr></table></figure>
+
+<h1 id="Django-配置-logging"><a href="#Django-配置-logging" class="headerlink" title="Django 配置 logging"></a>Django 配置 logging</h1><p>在 <code>Django</code> 配置文件( <code>settings.py</code> ) 中添加以下配置  </p>
+<figure class="highlight django"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="language-xml">LOGGING = &#123;</span></span><br><span class="line"><span class="language-xml">    &#x27;version&#x27;: 1,</span></span><br><span class="line"><span class="language-xml">    &#x27;disable_existing_loggers&#x27;: False,</span></span><br><span class="line"><span class="language-xml">    &#x27;formatters&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">        &#x27;verbose&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;format&#x27;: &#x27;[%(asctime)s][%(levelname)s][%(pathname)s %(module)s %(lineno)s %(process)d %(thread)d] %(message)s&#x27;</span></span><br><span class="line"><span class="language-xml">        &#125;</span></span><br><span class="line"><span class="language-xml">    &#125;,</span></span><br><span class="line"><span class="language-xml">    &#x27;handlers&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">        &#x27;file&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;class&#x27;: &#x27;logging.handlers.RotatingFileHandler&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;filename&#x27;: &#x27;default.log&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;maxBytes&#x27;: 1024 * 1024 * 5,</span></span><br><span class="line"><span class="language-xml">            &#x27;backupCount&#x27;: 5,</span></span><br><span class="line"><span class="language-xml">            &#x27;formatter&#x27;: &#x27;verbose&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">        &#x27;console&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;class&#x27;: &#x27;logging.StreamHandler&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;formatter&#x27;: &#x27;verbose&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">        &#x27;django.server&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;class&#x27;: &#x27;logging.StreamHandler&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;formatter&#x27;: &#x27;verbose&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">    &#125;,</span></span><br><span class="line"><span class="language-xml">    &#x27;loggers&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">        &#x27;django&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;handlers&#x27;: [&#x27;console&#x27;, &#x27;file&#x27;],</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">        &#x27;django.server&#x27;: &#123;</span></span><br><span class="line"><span class="language-xml">            &#x27;handlers&#x27;: [&#x27;django.server&#x27;],</span></span><br><span class="line"><span class="language-xml">            &#x27;level&#x27;: &#x27;INFO&#x27;,</span></span><br><span class="line"><span class="language-xml">            &#x27;propagate&#x27;: False,</span></span><br><span class="line"><span class="language-xml">        &#125;,</span></span><br><span class="line"><span class="language-xml">    &#125;</span></span><br><span class="line"><span class="language-xml">&#125;</span></span><br></pre></td></tr></table></figure>
+
+<p>代码中可以通过以下方式写入日志到对应 <code>logger</code>:  </p>
+<figure class="highlight python"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="keyword">import</span> logging</span><br><span class="line">logger = logging.getLogger(`django.server`)</span><br><span class="line">logger.info(<span class="string">&#x27;aaa&#x27;</span>)</span><br></pre></td></tr></table></figure>
+
+<p> <code>loggers</code> 类型 为 <code>django</code> 将处理所有类型的日志</p>
+<h2 id="Django-简单使用示例"><a href="#Django-简单使用示例" class="headerlink" title="Django 简单使用示例"></a>Django 简单使用示例</h2><p>以下配置为 Django 中使用 <code>logging</code> 模块的简单示例，配置后在 Django 项目代码中直接使用 <code>logging</code> 方法即可写入日志</p>
+<figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">LOGGING = &#123;</span><br><span class="line">    <span class="string">&#x27;version&#x27;</span>: <span class="number">1</span>,</span><br><span class="line">    <span class="string">&#x27;disable_existing_loggers&#x27;</span>: <span class="literal">False</span>,</span><br><span class="line">    <span class="string">&#x27;formatters&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;verbose&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;format&#x27;</span>: <span class="string">&#x27;[%(asctime)s][%(levelname)s][%(pathname)s %(module)s %(lineno)s %(process)d %(thread)d] %(message)s&#x27;</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="string">&#x27;handlers&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;file&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;level&#x27;</span>: <span class="string">&#x27;INFO&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;class&#x27;</span>: <span class="string">&#x27;logging.handlers.RotatingFileHandler&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;filename&#x27;</span>: <span class="string">&#x27;default.log&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;maxBytes&#x27;</span>: <span class="number">1024</span> * <span class="number">1024</span> * <span class="number">5</span>,</span><br><span class="line">            <span class="string">&#x27;backupCount&#x27;</span>: <span class="number">5</span>,</span><br><span class="line">            <span class="string">&#x27;formatter&#x27;</span>: <span class="string">&#x27;verbose&#x27;</span>,</span><br><span class="line">        &#125;,</span><br><span class="line">        <span class="string">&#x27;console&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;class&#x27;</span>: <span class="string">&#x27;logging.StreamHandler&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;formatter&#x27;</span>: <span class="string">&#x27;verbose&#x27;</span>,</span><br><span class="line">        &#125;,</span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="string">&#x27;root&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;handlers&#x27;</span>: [<span class="string">&#x27;file&#x27;</span>, <span class="string">&#x27;console&#x27;</span>],</span><br><span class="line">        <span class="string">&#x27;level&#x27;</span>: <span class="string">&#x27;DEBUG&#x27;</span>,</span><br><span class="line">    &#125;,</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.djangoproject.com/zh-hans/4.0/topics/logging/">django logging 模块官网说明</a></p>
+]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+        <tag>Python</tag>
       </tags>
   </entry>
   <entry>
@@ -7473,6 +7473,9 @@ width: 20%;
 <p>检查 <code>kube-controller-manager-k8s-master3</code> 日志和 <code>kube-scheduler-k8s-master3</code> 日志，显示相关端口已经绑定，kill 掉被占用端口的进程后重试</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl logs -n kube-system kube-controller-manager-k8s-master3</span></span><br><span class="line">I1211 07:04:37.643782       1 serving.go:348] Generated self-signed cert in-memory</span><br><span class="line">failed to create listener: failed to listen on 0.0.0.0:10257: listen tcp 0.0.0.0:10257: bind: address already in use</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl logs -n kube-system kube-scheduler-k8s-master3</span></span><br><span class="line">I1211 07:10:21.304329       1 serving.go:348] Generated self-signed cert in-memory</span><br><span class="line">E1211 07:10:21.304587       1 run.go:74] &quot;command failed&quot; err=&quot;failed to create listener: failed to listen on 0.0.0.0:10259: listen tcp 0.0.0.0:10259: bind: address already in use&quot;</span><br></pre></td></tr></table></figure>
 
+<h3 id="更新证书后，kube-apiserver-报证书过期错误"><a href="#更新证书后，kube-apiserver-报证书过期错误" class="headerlink" title="更新证书后，kube-apiserver 报证书过期错误"></a>更新证书后，kube-apiserver 报证书过期错误</h3><p>在更新集群证书后，<code>kube-apiserver</code> 异常，检查日志，有证书过期的错误</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[invalid bearer token, service account token has been invalidated]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[invalid bearer token, service account token has been invalidated]&quot;</span><br></pre></td></tr></table></figure>
+<p>这个可能是因为更新证书后，其他节点依旧使用旧的证书在请求 <code>kube-apiserver</code>，此时可以重启所有节点上的 <code>kubelet</code> 服务。</p>
 <h1 id="Ingress-接入异常"><a href="#Ingress-接入异常" class="headerlink" title="Ingress 接入异常"></a>Ingress 接入异常</h1><h2 id="503-Service-Temporarily-Unavailable"><a href="#503-Service-Temporarily-Unavailable" class="headerlink" title="503 Service Temporarily Unavailable"></a>503 Service Temporarily Unavailable</h2><p><code>Deployment</code>，<code>Service</code>，<code>Ingress</code> 部署后，通过 <code>Ingress</code> 配置的域名访问，显示 <code>503 Service Temporarily Unavailable</code><br><img src="https://i.csms.tech/img_110.png"></p>
 <p><strong>排查步骤</strong></p>
 <p>检查 <code>Ingress-Nginx</code> Pod 的日志，检索对应域名日志，显示返回码为 503</p>
@@ -7483,11 +7486,12 @@ width: 20%;
 <p>查看 <code>Service</code> 信息</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services -n prometheus -o wide</span></span><br><span class="line">NAME                 TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE   SELECTOR</span><br><span class="line">prometheus-service   ClusterIP   10.99.75.232   &lt;none&gt;        8090/TCP   19h   app=prometheus-server</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe service -n prometheus prometheus-service</span></span><br><span class="line">Name:              prometheus-service</span><br><span class="line">Namespace:         prometheus</span><br><span class="line">Labels:            &lt;none&gt;</span><br><span class="line">Annotations:       &lt;none&gt;</span><br><span class="line">Selector:          app=prometheus-server</span><br><span class="line">Type:              ClusterIP</span><br><span class="line">IP Family Policy:  SingleStack</span><br><span class="line">IP Families:       IPv4</span><br><span class="line">IP:                10.99.75.232</span><br><span class="line">IPs:               10.99.75.232</span><br><span class="line">Port:              prometheus-port  8090/TCP</span><br><span class="line">TargetPort:        9090/TCP</span><br><span class="line">Endpoints:         10.244.3.95:9090</span><br><span class="line">Session Affinity:  None</span><br><span class="line">Events:            &lt;none&gt;</span><br></pre></td></tr></table></figure>
 <p>从以上信息可以看到，服务的端口为 <code>Port: prometheus-port  8090/TCP</code>，而 Ingress 中配置的服务端口为 <code>8080</code> ，修改 Ingress 配置，将服务端口修改正确。修改后访问正常。</p>
-<h3 id="更新证书后，kube-apiserver-报证书过期错误"><a href="#更新证书后，kube-apiserver-报证书过期错误" class="headerlink" title="更新证书后，kube-apiserver 报证书过期错误"></a>更新证书后，kube-apiserver 报证书过期错误</h3><p>在更新集群证书后，<code>kube-apiserver</code> 异常，检查日志，有证书过期的错误</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z, verifying certificate SN=2750116196247444292, SKID=, AKID=08:39:2B:D0:14:00:F4:7F:3F:58:26:36:32:BA:F8:0E:0E:B4:D4:83 failed: x509: certificate has expired or is not yet valid: current time 2023-12-11T07:35:22Z is after 2023-12-06T09:50:35Z]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[invalid bearer token, service account token has been invalidated]&quot;</span><br><span class="line">authentication.go:63] &quot;Unable to authenticate the request&quot; err=&quot;[invalid bearer token, service account token has been invalidated]&quot;</span><br></pre></td></tr></table></figure>
-<p>这个可能是因为更新证书后，其他节点依旧使用旧的证书在请求 <code>kube-apiserver</code>，此时可以重启所有节点上的 <code>kubelet</code> 服务。</p>
+<h1 id="其他错误"><a href="#其他错误" class="headerlink" title="其他错误"></a>其他错误</h1><h2 id="invalid-Host-header"><a href="#invalid-Host-header" class="headerlink" title="invalid Host header"></a>invalid Host header</h2><p>在 Master 节点上执行以下命令时报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl <span class="built_in">exec</span> -it -n kube-system coredns-6d4b75cb6d-kdlqg -- sh</span></span><br><span class="line">error: Internal error occurred: error executing command in container: http: invalid Host header</span><br></pre></td></tr></table></figure>
+<p>此错误主要是因为 Kubernetes 和 <code>cri-docker</code> 版本问题导致 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[GO 1.20.6 breaks cri-dockerd](https://github.com/k3s-io/k3s/issues/8089)
+">[3]</span></a></sup></p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://cloud.tencent.com/developer/article/1456389">相关参考</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://cloud.tencent.com/developer/article/1931089">Back-off restarting failed container 怎么办</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://tonybai.com/2017/10/16/out-of-node-resource-handling-in-kubernetes-cluster/">ephemeral-storage 问题</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://cloud.tencent.com/developer/article/1931089">Back-off restarting failed container 怎么办</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://tonybai.com/2017/10/16/out-of-node-resource-handling-in-kubernetes-cluster/">ephemeral-storage 问题</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/k3s-io/k3s/issues/8089">GO 1.20.6 breaks cri-dockerd</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
@@ -9094,7 +9098,7 @@ width: 20%;
 <ol>
 <li><p>初始化控制平面：</p>
  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock \</span><br><span class="line">             --control-plane-endpoint &quot;kube-apiserver.my.com:6443&quot; \</span><br><span class="line">             --upload-certs</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>--upload-certs</code> 标志用来将在所有控制平面实例之间的共享证书上传到集群。<em><strong>如果不适用此选项，需要手动拷贝证书到其他节点</strong></em> <sup id="fnref:12"><a href="#fn:12" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Manual certificate distribution](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/#manual-certs)">[12]</span></a></sup></p>
+<p><code>--upload-certs</code> 标志用来将在所有控制平面实例之间的共享证书上传到集群。<em><strong>如果不使用此选项，需要手动拷贝证书到其他节点</strong></em> <sup id="fnref:12"><a href="#fn:12" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Manual certificate distribution](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/#manual-certs)">[12]</span></a></sup></p>
 <p> 根据 <code>kubeadm init</code> 输出提示，配置 <code>kubectl</code> 需要的环境变量，root 用户执行以下命令</p>
  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">export KUBECONFIG=/etc/kubernetes/admin.conf</span><br></pre></td></tr></table></figure>
 <p> 为永久生效，可将其添加到 <code>~/.bash_profile</code></p>
