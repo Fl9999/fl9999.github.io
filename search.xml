@@ -4613,6 +4613,65 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>ELK 常见错误</title>
+    <url>/202312151503/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
+<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
+<p>要解决这个问题，可以考虑以下几个选项：</p>
+<ol>
+<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
+<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
+<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
+   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>获取  Elasticsearch 集群的最大分片数限制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
+</li>
+<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
+</li>
+</ol>
+<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>使用以下 filebeat 配置文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
+<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
+
+<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
+<ul>
+<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
+</li>
+<li><p><em><strong>ILM 配置问题</strong></em> </p>
+<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
+ <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>elasticsearch 配置</title>
     <url>/202307171638/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6791,7 +6850,8 @@ width: 20%;
 <li>kubeadm-1.25.0</li>
 <li>kubelet-1.25.0</li>
 </ul>
-<h1 id="kubeadm-常用命令"><a href="#kubeadm-常用命令" class="headerlink" title="kubeadm 常用命令"></a>kubeadm 常用命令</h1><h2 id="创建集群"><a href="#创建集群" class="headerlink" title="创建集群"></a>创建集群</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock</span><br></pre></td></tr></table></figure>
+<h1 id="kubeadm-常用命令"><a href="#kubeadm-常用命令" class="headerlink" title="kubeadm 常用命令"></a>kubeadm 常用命令</h1><p><a href="https://kubernetes.io/docs/reference/setup-tools/kubeadm/">kubeadm 命令官方参考文档</a></p>
+<h2 id="创建集群"><a href="#创建集群" class="headerlink" title="创建集群"></a>创建集群</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock</span><br></pre></td></tr></table></figure>
 
 <table>
 <thead>
@@ -6803,12 +6863,27 @@ width: 20%;
 </thead>
 <tbody><tr>
 <td><code>--pod-network-cidr</code></td>
-<td>指定 pod 的 cidr</td>
+<td>指定 pod 的 cidr，安装 CNI 插件时，配置的 CIDR 要和此处一致</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--service-cidr</code></td>
+<td><code>service</code> 使用的 CIDR</td>
 <td></td>
 </tr>
 <tr>
 <td><code>--cri-socket</code></td>
 <td>配置集群使用的 CRI，不指定时系统会扫描主机，如果有多个可用 CRI，会出现提示</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--apiserver-advertise-address</code></td>
+<td>手动配置 <code>api-server</code> 的 Advertise IP 地址。<br/>不配置的情况下，系统默认选择主机上的默认路由对应网卡上面的 IP</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--control-plane-endpoint</code></td>
+<td>配置  <code>api-server</code> 的共享地址，可以是域名或者负载均衡器的 IP<br/>单节点的 Master 后期需要扩展为多节点（高可用）时，需要有此配置，否则不支持(<code>kubeadm</code>)扩展</td>
 <td></td>
 </tr>
 </tbody></table>
@@ -8670,6 +8745,38 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>kubernetes 理论知识点汇总</title>
+    <url>/202401101016/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.29</li>
+</ul>
+<h1 id="kubeadm-初始化集群"><a href="#kubeadm-初始化集群" class="headerlink" title="kubeadm 初始化集群"></a>kubeadm 初始化集群</h1><h2 id="Network-setup"><a href="#Network-setup" class="headerlink" title="Network setup"></a>Network setup</h2><h3 id="组件的-advertise-IP-地址选择"><a href="#组件的-advertise-IP-地址选择" class="headerlink" title="组件的 advertise IP 地址选择"></a>组件的 advertise IP 地址选择</h3><p>Kubernetes 中的组件（如 <code>Kubeadm</code>、<code>Kube-apiserver</code> 等）在初始化启动时，都需要在节点（主机）上找到一个合适的 IP 作为组件的 <code>advertising</code>&#x2F;<code>listening</code> 的地址。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Network setup](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#network-setup)
+">[1]</span></a></sup></p>
+<p>默认情况下，此 IP 是主机上默认路由对应的网卡所在的 IP。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 172.31.16.1 dev eth0 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">10.244.3.0/24 via 10.244.3.0 dev flannel.1 onlink </span><br><span class="line">10.244.4.0/24 via 10.244.4.0 dev flannel.1 onlink </span><br><span class="line">172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 </span><br><span class="line">172.31.16.0/20 dev eth0 proto kernel scope link src 172.31.26.11</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>如果系统上有多个默认路由，组件会尝试使用第一个默认路由对应的网卡所在的 IP。<strong>如果系统上没有默认路由，并且未明确为组件配置 IP，组件会初始化失败并退出</strong></p>
+</blockquote>
+<p>组件选择的 IP 地址将会作为 X.509 证书的 SAN(Subject Alternative Name) 的一部分。因此在系统初始化运行之后修改 IP 需要重新签发证书并重启相关组件。</p>
+<h3 id="Pod-网段选择"><a href="#Pod-网段选择" class="headerlink" title="Pod 网段选择"></a>Pod 网段选择</h3><p>Pod 的网段必须不能和主机网络重叠，如果选用的网络插件的网络和主机的网段重叠，必须为网络插件选择合适的和主机不同的网段，在集群初始化时通过参数 <code>--pod-network-cidr</code> 配置，并在安装网络插件时在其 YAML 文件中修改为对应的网段。 <sup id="fnref:4"><a href="#fn:4" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Installing a Pod network add-on](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#pod-network)">[4]</span></a></sup></p>
+<h2 id="control-plane-endpoint-参数说明"><a href="#control-plane-endpoint-参数说明" class="headerlink" title="control-plane-endpoint 参数说明"></a>control-plane-endpoint 参数说明</h2><p><code>--control-plane-endpoint</code> 选项用来配置 <code>api-server</code> 的共享地址，可以是域名或者负载均衡器的 IP。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Initializing your control-plane node](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#initializing-your-control-plane-node)
+">[2]</span></a></sup></p>
+<p><em><strong>如果是单主节点的 Kubernetes 集群，想要扩展成为多个 Master 节点（高可用），初始化时没有 <code>--control-plane-endpoint</code>，是不被支持的。</strong></em></p>
+<p>因此为了后期可以由单个 Master 节点扩展为多个 Master 节点，即高可用，初始化节点时，建议加上此选项配置 <code>api-server</code> 的负载均衡地址。 </p>
+<p>&lt;– more –&gt;</p>
+<h2 id="admin-conf-的重要性"><a href="#admin-conf-的重要性" class="headerlink" title="admin.conf 的重要性"></a>admin.conf 的重要性</h2><p><code>kubeadm init</code> 初始化集群成功后，会产生一个 <code>kubeconfig</code> 文件 <code>/etc/kubernetes/admin.conf</code>，此配置中包含了一个绑定到 <code>cluster-admin</code> 的 ClusterRole 的组，其拥有对整个集群的控制权，<em><strong>不要将其共享给任何人</strong></em>。<sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[admin.conf](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#more-information)
+">[3]</span></a></sup></p>
+<p><code>kubeadm init</code> 初始化集群成功后，同时会生成一个名为 <code>super-admin.conf</code> 的 <code>kubeconfig</code> 文件，其中配置的超级用户可以跳过 <code>authorization layer</code>，比如 RBAC。<em><strong>不要将其共享给任何人</strong></em>。建议将其保存在一个安全的位置。</p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#network-setup">Network setup</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#initializing-your-control-plane-node">Initializing your control-plane node</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#more-information">admin.conf</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#pod-network">Installing a Pod network add-on</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>kibana 管理操作</title>
     <url>/202307281401/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8953,7 +9060,7 @@ width: 20%;
 <h2 id="初始化控制平面节点"><a href="#初始化控制平面节点" class="headerlink" title="初始化控制平面节点"></a>初始化控制平面节点</h2><h3 id="创建单控制平面集群"><a href="#创建单控制平面集群" class="headerlink" title="创建单控制平面集群"></a>创建单控制平面集群</h3><p>控制平面节点是运行控制平面组件的机器， 包括 etcd （集群数据库） 和 API Server （命令行工具 kubectl 与之通信）。</p>
 <ol>
 <li><p>初始化控制平面节点</p>
-<p> 要初始化控制平面节点，请在 master 节点上（<code>kubernetes1</code>）运行以下命令，<a href="(https://csms.tech%3C!--swig%EF%BF%BC108--%3E#%E5%88%9B%E5%BB%BA%E9%9B%86%E7%BE%A4)">命令参数说明</a>：</p>
+<p> 要初始化控制平面节点，请在 master 节点上（<code>kubernetes1</code>）运行以下命令，<a href="https://csms.tech/202209131536/#创建集群">命令参数说明</a>：</p>
  <figure class="highlight shell"><figcaption><span>kubernetes1</span></figcaption><table><tr><td class="code"><pre><span class="line">kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock</span><br></pre></td></tr></table></figure>
 <ul>
 <li><code>--pod-network-cidr=10.244.0.0/16</code> 指定 pod 使用的网络段，后面配置网络（CNI）时配置的网段要和此处一致</li>
@@ -8987,7 +9094,7 @@ width: 20%;
 <ol>
 <li><p>初始化控制平面：</p>
  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=unix:///var/run/cri-dockerd.sock \</span><br><span class="line">             --control-plane-endpoint &quot;kube-apiserver.my.com:6443&quot; \</span><br><span class="line">             --upload-certs</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>--upload-certs</code> 标志用来将在所有控制平面实例之间的共享证书上传到集群。</p>
+<p><code>--upload-certs</code> 标志用来将在所有控制平面实例之间的共享证书上传到集群。<em><strong>如果不适用此选项，需要手动拷贝证书到其他节点</strong></em> <sup id="fnref:12"><a href="#fn:12" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Manual certificate distribution](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/#manual-certs)">[12]</span></a></sup></p>
 <p> 根据 <code>kubeadm init</code> 输出提示，配置 <code>kubectl</code> 需要的环境变量，root 用户执行以下命令</p>
  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">export KUBECONFIG=/etc/kubernetes/admin.conf</span><br></pre></td></tr></table></figure>
 <p> 为永久生效，可将其添加到 <code>~/.bash_profile</code></p>
@@ -9161,15 +9268,13 @@ width: 20%;
 
 <h2 id="修改-kubelet-使用的-CRI-为-containerd"><a href="#修改-kubelet-使用的-CRI-为-containerd" class="headerlink" title="修改 kubelet 使用的 CRI 为 containerd"></a>修改 kubelet 使用的 CRI 为 containerd</h2><p>修改之前，<code>kubelet</code> 使用的 CRI 为 <code>cri-docker</code>。修改步骤如下</p>
 <ol>
-<li><p>停止 <code>kubelet</code>、<code>docker</code>、<code>cri-docker</code> 服务</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl stop kubelet</span><br><span class="line">systemctl stop docker</span><br><span class="line">systemctl stop docker.socket</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p>修改 kubelet 配置及节点配置。</p>
-<p>编辑 kubelet 配置文件 <code>/var/lib/kubelet/kubeadm-flags.env</code> 修改 <code>--container-runtime-endpoint</code> 为 <code>containerd</code> 的 socket 地址</p>
- <figure class="highlight shell"><figcaption><span>/var/lib/kubelet/kubeadm-flags.env</span></figcaption><table><tr><td class="code"><pre><span class="line">--container-runtime-endpoint=unix:///run/containerd/containerd.sock</span><br></pre></td></tr></table></figure>
-<p>编辑节点配置，修改以下配置 <code>kubeadm.alpha.kubernetes.io/cri-socket: unix:///run/containerd/containerd.sock</code> <sup id="fnref:9"><a href="#fn:9" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 kubelet 使用 containerd 作为其容器运行时](https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/change-runtime-containerd/#%E9%85%8D%E7%BD%AE-kubelet-%E4%BD%BF%E7%94%A8-containerd-%E4%BD%9C%E4%B8%BA%E5%85%B6%E5%AE%B9%E5%99%A8%E8%BF%90%E8%A1%8C%E6%97%B6)">[9]</span></a></sup></p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit node master2</span></span><br><span class="line">kubeadm.alpha.kubernetes.io/cri-socket: unix:///run/containerd/containerd.sock</span><br></pre></td></tr></table></figure>
+<li><p>修改 kubelet 配置及相关节点配置。</p>
+<p>编辑相关节点上的 kubelet 配置文件 <code>/var/lib/kubelet/kubeadm-flags.env</code> 修改 <code>--container-runtime-endpoint</code> 为 <code>containerd</code> 的 socket 地址</p>
+ <figure class="highlight shell"><figcaption><span>/var/lib/kubelet/kubeadm-flags.env</span></figcaption><table><tr><td class="code"><pre><span class="line">--container-runtime-endpoint=unix:///run/containerd/containerd.sock</span><br></pre></td></tr></table></figure></li>
+<li><p>在 Master 节点上，执行以下命令，编辑相关节点配置，修改配置 <code>kubeadm.alpha.kubernetes.io/cri-socket: unix:///run/containerd/containerd.sock</code> <sup id="fnref:9"><a href="#fn:9" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 kubelet 使用 containerd 作为其容器运行时](https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/change-runtime-containerd/#%E9%85%8D%E7%BD%AE-kubelet-%E4%BD%BF%E7%94%A8-containerd-%E4%BD%9C%E4%B8%BA%E5%85%B6%E5%AE%B9%E5%99%A8%E8%BF%90%E8%A1%8C%E6%97%B6)">[9]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit node master2</span></span><br><span class="line">kubeadm.alpha.kubernetes.io/cri-socket: unix:///run/containerd/containerd.sock</span><br></pre></td></tr></table></figure>
 </li>
-<li><p>启动服务</p>
+<li><p>重启相关服务，无需使用 <code>docker</code> 时可停止 <code>docker</code> 服务</p>
  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl daemon-reload &amp;&amp; systemctl restart containerd  &amp;&amp; systemctl restart kubelet</span><br></pre></td></tr></table></figure>
 <blockquote>
 <p>如果启动 <code>kubelet</code> 失败，报错误： <code>Error: failed to run Kubelet: failed to create kubelet: get remote runtime typed version failed: rpc error: code = Unimplemented desc = unknown service runtime.v1alpha2.RuntimeService</code>，删除 <code>containerd</code> 的默认配置文件 <code>/etc/containerd/config.toml</code> 后，重新启动 <sup id="fnref:10"><a href="#fn:10" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Kubeadm unknown service runtime.v1alpha2.RuntimeService](https://github.com/containerd/containerd/issues/4581)">[10]</span></a></sup></p>
@@ -9279,7 +9384,7 @@ width: 20%;
 </li>
 </ol>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/">Kubernetes 官网文档</a><br><a href="https://github.com/Mirantis/cri-dockerd">cri-dockerd 安装链接</a><br><a href="https://juejin.cn/post/6844904148001882120">Centos7 集群部署k8s 版本v1.17.4及Dashboard </a><br><a href="https://github.com/kubernetes/dashboard/tree/master/docs">kubernetes-dashboard 配置官网说明</a><br><a href="https://kubernetes.io/zh-cn/docs/tasks/access-application-cluster/web-ui-dashboard/">部署和访问 Kubernetes 仪表板（Dashboard）</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/migrate-dockershim-dockerd/#configure-the-kubelet-to-use-cri-dockerd">配置 kubelet 使用 cri-dockerd</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/high-availability/#%E4%B8%BA-kube-apiserver-%E5%88%9B%E5%BB%BA%E8%B4%9F%E8%BD%BD%E5%9D%87%E8%A1%A1%E5%99%A8">为 kube-apiserver 创建负载均衡器</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/pull-image-private-registry/#create-a-secret-by-providing-credentials-on-the-command-line">在命令行上提供凭证来创建 Secret</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/network/customize-hosts-file-for-pods/">使用 HostAliases 向 Pod /etc/hosts 文件添加条目</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">Kubernetes Metrics Server</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://v1-25.docs.kubernetes.io/zh-cn/docs/reference/networking/ports-and-protocols/">端口和协议</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://v1-25.docs.kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#tear-down">清理</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-service-account/#add-imagepullsecrets-to-a-service-account">为服务账号添加 ImagePullSecrets</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/change-runtime-containerd/#%E9%85%8D%E7%BD%AE-kubelet-%E4%BD%BF%E7%94%A8-containerd-%E4%BD%9C%E4%B8%BA%E5%85%B6%E5%AE%B9%E5%99%A8%E8%BF%90%E8%A1%8C%E6%97%B6">配置 kubelet 使用 containerd 作为其容器运行时</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/containerd/containerd/issues/4581">Kubeadm unknown service runtime.v1alpha2.RuntimeService</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Mirantis/cri-dockerd">cri-dockerd 安装链接</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/migrate-dockershim-dockerd/#configure-the-kubelet-to-use-cri-dockerd">配置 kubelet 使用 cri-dockerd</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/high-availability/#%E4%B8%BA-kube-apiserver-%E5%88%9B%E5%BB%BA%E8%B4%9F%E8%BD%BD%E5%9D%87%E8%A1%A1%E5%99%A8">为 kube-apiserver 创建负载均衡器</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/pull-image-private-registry/#create-a-secret-by-providing-credentials-on-the-command-line">在命令行上提供凭证来创建 Secret</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/network/customize-hosts-file-for-pods/">使用 HostAliases 向 Pod /etc/hosts 文件添加条目</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">Kubernetes Metrics Server</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://v1-25.docs.kubernetes.io/zh-cn/docs/reference/networking/ports-and-protocols/">端口和协议</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://v1-25.docs.kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#tear-down">清理</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-service-account/#add-imagepullsecrets-to-a-service-account">为服务账号添加 ImagePullSecrets</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/administer-cluster/migrating-from-dockershim/change-runtime-containerd/#%E9%85%8D%E7%BD%AE-kubelet-%E4%BD%BF%E7%94%A8-containerd-%E4%BD%9C%E4%B8%BA%E5%85%B6%E5%AE%B9%E5%99%A8%E8%BF%90%E8%A1%8C%E6%97%B6">配置 kubelet 使用 containerd 作为其容器运行时</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/containerd/containerd/issues/4581">Kubeadm unknown service runtime.v1alpha2.RuntimeService</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Mirantis/cri-dockerd">cri-dockerd 安装链接</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li><li id="fn:12"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">12.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/high-availability/#manual-certs">Manual certificate distribution</a><a href="#fnref:12" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
