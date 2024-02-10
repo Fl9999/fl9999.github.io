@@ -13166,63 +13166,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Docker 部署 OpenVPN</title>
-    <url>/202302171657/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 3.10.0-1160</li>
-<li>Docker 20.10.9</li>
-<li>iptables</li>
-</ul>
-<h1 id="前提条件"><a href="#前提条件" class="headerlink" title="前提条件"></a>前提条件</h1><p>宿主机操作系统内核配置允许数据转发，<a href="https://csms.tech/202302161539/#开启系统-IPv4-转发功能">开启系统 IPv4 转发功能</a></p>
-<h1 id="Docker-部署-OpenVPN-服务端步骤"><a href="#Docker-部署-OpenVPN-服务端步骤" class="headerlink" title="Docker 部署 OpenVPN 服务端步骤"></a>Docker 部署 OpenVPN 服务端步骤</h1><h2 id="创建本地配置目录"><a href="#创建本地配置目录" class="headerlink" title="创建本地配置目录"></a>创建本地配置目录</h2><p>用了在启动容器时挂载以持久化 OpenVPN 配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkdir /opt/openvpn1/</span><br></pre></td></tr></table></figure>
-
-<h2 id="初始化配置文件"><a href="#初始化配置文件" class="headerlink" title="初始化配置文件"></a>初始化配置文件</h2><p>执行以下命令初始化 OpenVPN 服务端配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_genconfig -u udp://$&#123;PUB_IP&#125;:1194</span><br></pre></td></tr></table></figure>
-<p>参数说明：</p>
-<ul>
-<li><code>udp://$&#123;PUB_IP&#125;:1194</code> - 指定 VPN 服务器配置，使用 <code>1194/udp</code> 端口。${PUB_IP} 为服务器公网 IP。</li>
-</ul>
-<h2 id="生成密钥-证书-文件"><a href="#生成密钥-证书-文件" class="headerlink" title="生成密钥(证书)文件"></a>生成密钥(证书)文件</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_initpki</span><br></pre></td></tr></table></figure>
-<p>根据提示，输入 CA 根证书密码及名称</p>
-<h2 id="创建带有密码的客户端证书"><a href="#创建带有密码的客户端证书" class="headerlink" title="创建带有密码的客户端证书"></a>创建带有密码的客户端证书</h2><p>执行以下命令，根据提示输入客户端证书密码及 CA 密码，生成客户端证书。如果客户端证书无需密码，最后加选项 <code>nopass</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 easyrsa build-client-full vpn1</span><br></pre></td></tr></table></figure>
-
-<h2 id="导出客户端证书"><a href="#导出客户端证书" class="headerlink" title="导出客户端证书"></a>导出客户端证书</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_getclient vpn1 &gt; /opt/openvpn/client/vpn1.ovpn</span><br></pre></td></tr></table></figure>
-
-<h2 id="启动-OpenVPN"><a href="#启动-OpenVPN" class="headerlink" title="启动 OpenVPN"></a>启动 OpenVPN</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -it --name OpenVPN1 \</span><br><span class="line">           -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">           -d -p 1194:1194/udp --cap-add=NET_ADMIN \</span><br><span class="line">           kylemanna/openvpn:2.4</span><br><span class="line">           </span><br></pre></td></tr></table></figure>
-<p>防火墙放通 <code>1194/udp</code> 端口</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -p udp --dport 1194 -j ACCEPT -m comment --comment &quot;openvpn&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>OpenVPN 启动后，docker 会在宿主机操作系统的 iptables 中添加对应的 <code>MASQUERADE</code> 规则，负责转发和 NAT 数据，具体规则可通过以下方法查看</p>
-<p>查看 NAT 表添加的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers | more</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 127 packets, 9255 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       54  2490 DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 1 packets, 70 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       75  6875 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">2      610 36387 MASQUERADE  all  --  *      *       10.8.0.0/24          0.0.0.0/0           </span><br><span class="line">3        0     0 MASQUERADE  udp  --  *      *       172.17.0.2           172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        1    70 DNAT       udp  --  !docker0 *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 to:172.17.0.2:1194</span><br></pre></td></tr></table></figure>
-<p>查看 FILTER 表添加的规则</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ iptables -L -v -n --line-numbers | more</span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      641 51489 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 /* openvpn */</span><br><span class="line">...</span><br><span class="line">13       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">14       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">15     230 14788 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3     8465 2439K ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        1    70 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5     8425 2421K ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7     4177 1774K ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">8      202 13030 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 343 packets, 61383 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        1    70 ACCEPT     udp  --  !docker0 docker0  0.0.0.0/0            172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     8425 2421K DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2     8425 2421K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
-
-<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>将 <a href="#%E5%AF%BC%E5%87%BA%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%AF%81%E4%B9%A6">导出客户端证书</a> 中生成的客户端证书发送到客户端，测试连接。</p>
-<p>客户端连接失败，可以检查以下内容：</p>
-<ul>
-<li><p>客户端日志及服务端日志，服务端日志可以通过以下方法查看</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker logs -f OpenVPN</span><br></pre></td></tr></table></figure>
-
-</li>
-<li><p>检查是否是因为 <a href="#%E5%90%AF%E5%8A%A8-OpenVPN">iptables 防火墙规则</a> 问题导致无法连接，如果防火墙相关规则丢失，可以通过重启 docker 和 OpenVPN 容器的方式恢复。</p>
-</li>
-<li><p>检查容器中启动的端口和 docker 映射的端口是否一致。</p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>OpenVPN 安装及使用</title>
     <url>/202302161539/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -13339,6 +13282,63 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Docker 部署 OpenVPN</title>
+    <url>/202302171657/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 3.10.0-1160</li>
+<li>Docker 20.10.9</li>
+<li>iptables</li>
+</ul>
+<h1 id="前提条件"><a href="#前提条件" class="headerlink" title="前提条件"></a>前提条件</h1><p>宿主机操作系统内核配置允许数据转发，<a href="https://csms.tech/202302161539/#开启系统-IPv4-转发功能">开启系统 IPv4 转发功能</a></p>
+<h1 id="Docker-部署-OpenVPN-服务端步骤"><a href="#Docker-部署-OpenVPN-服务端步骤" class="headerlink" title="Docker 部署 OpenVPN 服务端步骤"></a>Docker 部署 OpenVPN 服务端步骤</h1><h2 id="创建本地配置目录"><a href="#创建本地配置目录" class="headerlink" title="创建本地配置目录"></a>创建本地配置目录</h2><p>用了在启动容器时挂载以持久化 OpenVPN 配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkdir /opt/openvpn1/</span><br></pre></td></tr></table></figure>
+
+<h2 id="初始化配置文件"><a href="#初始化配置文件" class="headerlink" title="初始化配置文件"></a>初始化配置文件</h2><p>执行以下命令初始化 OpenVPN 服务端配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_genconfig -u udp://$&#123;PUB_IP&#125;:1194</span><br></pre></td></tr></table></figure>
+<p>参数说明：</p>
+<ul>
+<li><code>udp://$&#123;PUB_IP&#125;:1194</code> - 指定 VPN 服务器配置，使用 <code>1194/udp</code> 端口。${PUB_IP} 为服务器公网 IP。</li>
+</ul>
+<h2 id="生成密钥-证书-文件"><a href="#生成密钥-证书-文件" class="headerlink" title="生成密钥(证书)文件"></a>生成密钥(证书)文件</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_initpki</span><br></pre></td></tr></table></figure>
+<p>根据提示，输入 CA 根证书密码及名称</p>
+<h2 id="创建带有密码的客户端证书"><a href="#创建带有密码的客户端证书" class="headerlink" title="创建带有密码的客户端证书"></a>创建带有密码的客户端证书</h2><p>执行以下命令，根据提示输入客户端证书密码及 CA 密码，生成客户端证书。如果客户端证书无需密码，最后加选项 <code>nopass</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 easyrsa build-client-full vpn1</span><br></pre></td></tr></table></figure>
+
+<h2 id="导出客户端证书"><a href="#导出客户端证书" class="headerlink" title="导出客户端证书"></a>导出客户端证书</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_getclient vpn1 &gt; /opt/openvpn/client/vpn1.ovpn</span><br></pre></td></tr></table></figure>
+
+<h2 id="启动-OpenVPN"><a href="#启动-OpenVPN" class="headerlink" title="启动 OpenVPN"></a>启动 OpenVPN</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -it --name OpenVPN1 \</span><br><span class="line">           -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">           -d -p 1194:1194/udp --cap-add=NET_ADMIN \</span><br><span class="line">           kylemanna/openvpn:2.4</span><br><span class="line">           </span><br></pre></td></tr></table></figure>
+<p>防火墙放通 <code>1194/udp</code> 端口</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -p udp --dport 1194 -j ACCEPT -m comment --comment &quot;openvpn&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>OpenVPN 启动后，docker 会在宿主机操作系统的 iptables 中添加对应的 <code>MASQUERADE</code> 规则，负责转发和 NAT 数据，具体规则可通过以下方法查看</p>
+<p>查看 NAT 表添加的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers | more</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 127 packets, 9255 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       54  2490 DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 1 packets, 70 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       75  6875 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">2      610 36387 MASQUERADE  all  --  *      *       10.8.0.0/24          0.0.0.0/0           </span><br><span class="line">3        0     0 MASQUERADE  udp  --  *      *       172.17.0.2           172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        1    70 DNAT       udp  --  !docker0 *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 to:172.17.0.2:1194</span><br></pre></td></tr></table></figure>
+<p>查看 FILTER 表添加的规则</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ iptables -L -v -n --line-numbers | more</span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      641 51489 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 /* openvpn */</span><br><span class="line">...</span><br><span class="line">13       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">14       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">15     230 14788 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3     8465 2439K ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        1    70 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5     8425 2421K ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7     4177 1774K ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">8      202 13030 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 343 packets, 61383 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        1    70 ACCEPT     udp  --  !docker0 docker0  0.0.0.0/0            172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     8425 2421K DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2     8425 2421K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
+
+<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>将 <a href="#%E5%AF%BC%E5%87%BA%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%AF%81%E4%B9%A6">导出客户端证书</a> 中生成的客户端证书发送到客户端，测试连接。</p>
+<p>客户端连接失败，可以检查以下内容：</p>
+<ul>
+<li><p>客户端日志及服务端日志，服务端日志可以通过以下方法查看</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker logs -f OpenVPN</span><br></pre></td></tr></table></figure>
+
+</li>
+<li><p>检查是否是因为 <a href="#%E5%90%AF%E5%8A%A8-OpenVPN">iptables 防火墙规则</a> 问题导致无法连接，如果防火墙相关规则丢失，可以通过重启 docker 和 OpenVPN 容器的方式恢复。</p>
+</li>
+<li><p>检查容器中启动的端口和 docker 映射的端口是否一致。</p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>php 编译安装配置</title>
     <url>/202207301722/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -13412,6 +13412,48 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Prometheus blackbox export 安装配置</title>
+    <url>/202309261542/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>blackbox_exporter</code> 是一个由 Prometheus 社区维护的项目，它允许用户通过 HTTP、HTTPS、DNS、TCP 和 ICMP 协议对服务进行“黑盒”方式的探测，以检测和监控网络协议的可用性和响应时间。</p>
+<p>本文档以在 Kubernetes 中部署 <code>blackbox_exporter</code> 为例，演示其使用方法。</p>
+<p>为了能够监控到 Kubernetes 集群内部的部分信息（如 <code>api-server</code> 的证书等），建议 <a href="https://csms.tech/202212141608/#创建集群角色">参考文档为其配置 RBAC 策略</a> 以使其能读取 <code>kube-apiserver</code> 相关资源，<strong>本文档中的配置示例基于此权限配置</strong>。Namespace 为 <code>prometheus</code></p>
+<h1 id="Kubernetes-中部署-blackbox-export"><a href="#Kubernetes-中部署-blackbox-export" class="headerlink" title="Kubernetes 中部署 blackbox_export"></a>Kubernetes 中部署 blackbox_export</h1><h2 id="创建-ConfigMap-以外部化-blackbox-export-配置"><a href="#创建-ConfigMap-以外部化-blackbox-export-配置" class="headerlink" title="创建 ConfigMap 以外部化 blackbox_export 配置"></a>创建 ConfigMap 以外部化 blackbox_export 配置</h2><p><code>blackbox_export</code> 基于配置文件运行，将其配置文件通过 Kubernetes 的 ConfiMap 存储，分离运行环境和配置，方便管理。</p>
+<p>参考以下配置，创建 ConfigMap</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">data:</span><br><span class="line">  blackbox.yml: |-</span><br><span class="line">    modules:</span><br><span class="line">      http_2xx:</span><br><span class="line">        prober: http</span><br><span class="line">        timeout: 10s</span><br><span class="line">        http:</span><br><span class="line">          preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">      tcp_connect:</span><br><span class="line">        prober: tcp</span><br><span class="line">kind: ConfigMap</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-export-config</span><br><span class="line">  namespace: prometheus</span><br></pre></td></tr></table></figure>
+
+<h2 id="部署-blackbox-export"><a href="#部署-blackbox-export" class="headerlink" title="部署 blackbox_export"></a>部署 blackbox_export</h2><p>参考以下内容，创建 Deployment 和 Service，在此配置中，使用上面创建的 ConfigMap 作为 <code>blackbox_export</code> 的配置文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus-blackbox-export</span><br><span class="line">  namespace: prometheus</span><br><span class="line">  labels:</span><br><span class="line">    app: prometheus-blackbox-export</span><br><span class="line">spec:</span><br><span class="line">  replicas: 1</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      app: prometheus-blackbox-export</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        app: prometheus-blackbox-export</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">        - name: prometheus-blackbox-export</span><br><span class="line">          image: bitnami/blackbox-exporter</span><br><span class="line">          args:</span><br><span class="line">            - &quot;--config.file=/etc/blackbox/blackbox.yml&quot;</span><br><span class="line">          ports:</span><br><span class="line">            - containerPort: 9115</span><br><span class="line">          resources:</span><br><span class="line">            requests:</span><br><span class="line">              cpu: 500m</span><br><span class="line">              memory: 500M</span><br><span class="line">            limits:</span><br><span class="line">              cpu: 1</span><br><span class="line">              memory: 1Gi</span><br><span class="line">          volumeMounts:</span><br><span class="line">            - name: blackbox-config-volume</span><br><span class="line">              mountPath: /etc/blackbox/</span><br><span class="line">      volumes:</span><br><span class="line">        - name: blackbox-config-volume</span><br><span class="line">          configMap:</span><br><span class="line">            defaultMode: 420</span><br><span class="line">            name: blackbox-export-config</span><br><span class="line">---</span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Service</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-service</span><br><span class="line">  namespace: prometheus</span><br><span class="line">spec:</span><br><span class="line">  ports:</span><br><span class="line">    - name: blackbox-port</span><br><span class="line">      port: 9115</span><br><span class="line">      protocol: TCP</span><br><span class="line">      targetPort: 9115</span><br><span class="line">  selector:</span><br><span class="line">    app: prometheus-blackbox-export            </span><br></pre></td></tr></table></figure>
+
+<p>部署成功后，从 <code>prometheus</code> 的 Namespace 中测试访问 <code>blackbox_export</code> 的 Endpoint <code>blackbox-service:9115</code>，如果是在其他 Namespace，可以使用 Endpoint <code>blackbox-service.prometheus.svc.cluster.local:9115</code>。如果集群的域名不是 <code>cluster.local</code>，修改为实际值。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">prometheus-7589d5bbdd-xdjwt:~# curl -v blackbox-service:9115</span><br><span class="line">*   Trying 10.111.137.0:9115...</span><br><span class="line">* Connected to blackbox-service (10.111.137.0) port 9115 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: blackbox-service:9115</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/8.0.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">&lt; Content-Type: text/html</span><br><span class="line">&lt; Date: Tue, 26 Sep 2023 09:11:25 GMT</span><br><span class="line">&lt; Content-Length: 544</span><br><span class="line">&lt; </span><br><span class="line">&lt;html&gt;</span><br><span class="line">    &lt;head&gt;&lt;title&gt;Blackbox Exporter&lt;/title&gt;&lt;/head&gt;</span><br><span class="line">    &lt;body&gt;</span><br><span class="line">    &lt;h1&gt;Blackbox Exporter&lt;/h1&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&quot;&gt;Probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&amp;debug=true&quot;&gt;Debug probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;metrics&quot;&gt;Metrics&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;config&quot;&gt;Configuration&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;h2&gt;Recent Probes&lt;/h2&gt;</span><br><span class="line">    &lt;table border=&#x27;1&#x27;&gt;&lt;tr&gt;&lt;th&gt;Module&lt;/th&gt;&lt;th&gt;Target&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;Debug&lt;/th&gt;&lt;/table&gt;&lt;/body&gt;</span><br><span class="line">* Connection #0 to host blackbox-service left intact</span><br><span class="line">    &lt;/html&gt;</span><br></pre></td></tr></table></figure>
+
+<h2 id="Prometheus-读取-blackbox-exporter-数据"><a href="#Prometheus-读取-blackbox-exporter-数据" class="headerlink" title="Prometheus 读取 blackbox_exporter 数据"></a>Prometheus 读取 blackbox_exporter 数据</h2><p>在 Prometheus 配置中添加以下内容，使 Prometheus 抓取 <code>black_exporter</code> 的监控数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_2xx&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_2xx]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - http://www.google.com:5000/</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
+<p>部署完成后，观察过 Prometheus 的 Target，正常情况下可以看到监控目标的状态。</p>
+<span id="more"></span>
+
+<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint"><a href="#使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint" class="headerlink" title="使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint"></a>使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</h2><p>本示例演示使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint，Kubernetes 集群默认的域为 <code>cluster.local</code>，本示例中的 Kubernetes 集群使用默认域。Kubernetes 集群中和 <code>kube-apiserver</code> 的通信一般都是使用 HTTPS，因此在使用 <code>blackbox_exporter</code> 监控时需要指定使用 HTTPS 请求 <code>kube-apiserver</code>，同时可以达到监控 <code>kube-apiserver</code> HTTPS 证书的目的。</p>
+<p>使用 <code>kubeadmin</code> 初始化的集群默认使用自签名的证书，客户端使用 HTTPS 访问时需要提供 CA 证书。以下 <code>blackbox_exporter</code> 配置中，模块 <code>http_k8s_cluster</code> 配置了必须使用 HTTPS 请求 Endpoint，并且配置了 CA 路径</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">modules:</span><br><span class="line">  http_2xx:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 10s</span><br><span class="line">    http:</span><br><span class="line">      preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">  tcp_connect:</span><br><span class="line">    prober: tcp</span><br><span class="line">  http_k8s_cluster:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 5s</span><br><span class="line">    http:</span><br><span class="line">      method: GET</span><br><span class="line">      fail_if_ssl: false</span><br><span class="line">      fail_if_not_ssl: true</span><br><span class="line">      valid_status_codes: [200, 403]</span><br><span class="line">      tls_config:</span><br><span class="line">        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt</span><br><span class="line">        insecure_skip_verify: false</span><br></pre></td></tr></table></figure>
+
+<p>在 Prometheus 配置中添加以下 Target，用于监控  <code>kube-apiserver</code> 的 Endpoint <code>https://kubernetes.default.svc.cluster.local</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_k8s_cluster&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_k8s_cluster]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - https://kubernetes.default.svc.cluster.local</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
+<p>配置成功后，观察 Prometheus 中的 Targets，可以看到 Targets 状态<br><img src="https://i.csms.tech/img_221.png"></p>
+<h2 id="监控-HTTPS-类型-的-Endpoints-的证书过期时间"><a href="#监控-HTTPS-类型-的-Endpoints-的证书过期时间" class="headerlink" title="监控 HTTPS 类型 的 Endpoints 的证书过期时间"></a>监控 HTTPS 类型 的 Endpoints 的证书过期时间</h2><p>假如在 <code>blackbox_exporter</code> 配置了 <code>prober</code> 为 <code>http</code> 类型的 module，当在 Prometheus 中配置的 <code>targets</code> 的请求协议使用 <code>https</code> 时，<code>blackbox_exporter</code> 提供了关于证书的监控指标。配置示例可以参考 <a href="#%E4%BD%BF%E7%94%A8-blackbox-exporter-%E5%92%8C-Prometheus-%E7%9B%91%E6%8E%A7-Kubernetes-API-Server-%E7%9A%84-Endpoint">使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</a></p>
+<p><code>probe_ssl_earliest_cert_expiry</code> 指标显示了证书链中最早到期的证书的过期时间。其值是一个 Unix 时间戳，表示证书的过期日期和时间。</p>
+<p>如果要计算证书剩余的有效天数，可以使用以下表达式计算</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(probe_ssl_earliest_cert_expiry - time()) / 86400</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>predixy 安装配置</title>
     <url>/202207271506/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
@@ -13457,48 +13499,6 @@ width: 20%;
       <tags>
         <tag>Redis</tag>
         <tag>Predixy</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Prometheus blackbox export 安装配置</title>
-    <url>/202309261542/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>blackbox_exporter</code> 是一个由 Prometheus 社区维护的项目，它允许用户通过 HTTP、HTTPS、DNS、TCP 和 ICMP 协议对服务进行“黑盒”方式的探测，以检测和监控网络协议的可用性和响应时间。</p>
-<p>本文档以在 Kubernetes 中部署 <code>blackbox_exporter</code> 为例，演示其使用方法。</p>
-<p>为了能够监控到 Kubernetes 集群内部的部分信息（如 <code>api-server</code> 的证书等），建议 <a href="https://csms.tech/202212141608/#创建集群角色">参考文档为其配置 RBAC 策略</a> 以使其能读取 <code>kube-apiserver</code> 相关资源，<strong>本文档中的配置示例基于此权限配置</strong>。Namespace 为 <code>prometheus</code></p>
-<h1 id="Kubernetes-中部署-blackbox-export"><a href="#Kubernetes-中部署-blackbox-export" class="headerlink" title="Kubernetes 中部署 blackbox_export"></a>Kubernetes 中部署 blackbox_export</h1><h2 id="创建-ConfigMap-以外部化-blackbox-export-配置"><a href="#创建-ConfigMap-以外部化-blackbox-export-配置" class="headerlink" title="创建 ConfigMap 以外部化 blackbox_export 配置"></a>创建 ConfigMap 以外部化 blackbox_export 配置</h2><p><code>blackbox_export</code> 基于配置文件运行，将其配置文件通过 Kubernetes 的 ConfiMap 存储，分离运行环境和配置，方便管理。</p>
-<p>参考以下配置，创建 ConfigMap</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">data:</span><br><span class="line">  blackbox.yml: |-</span><br><span class="line">    modules:</span><br><span class="line">      http_2xx:</span><br><span class="line">        prober: http</span><br><span class="line">        timeout: 10s</span><br><span class="line">        http:</span><br><span class="line">          preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">      tcp_connect:</span><br><span class="line">        prober: tcp</span><br><span class="line">kind: ConfigMap</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-export-config</span><br><span class="line">  namespace: prometheus</span><br></pre></td></tr></table></figure>
-
-<h2 id="部署-blackbox-export"><a href="#部署-blackbox-export" class="headerlink" title="部署 blackbox_export"></a>部署 blackbox_export</h2><p>参考以下内容，创建 Deployment 和 Service，在此配置中，使用上面创建的 ConfigMap 作为 <code>blackbox_export</code> 的配置文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus-blackbox-export</span><br><span class="line">  namespace: prometheus</span><br><span class="line">  labels:</span><br><span class="line">    app: prometheus-blackbox-export</span><br><span class="line">spec:</span><br><span class="line">  replicas: 1</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      app: prometheus-blackbox-export</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        app: prometheus-blackbox-export</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">        - name: prometheus-blackbox-export</span><br><span class="line">          image: bitnami/blackbox-exporter</span><br><span class="line">          args:</span><br><span class="line">            - &quot;--config.file=/etc/blackbox/blackbox.yml&quot;</span><br><span class="line">          ports:</span><br><span class="line">            - containerPort: 9115</span><br><span class="line">          resources:</span><br><span class="line">            requests:</span><br><span class="line">              cpu: 500m</span><br><span class="line">              memory: 500M</span><br><span class="line">            limits:</span><br><span class="line">              cpu: 1</span><br><span class="line">              memory: 1Gi</span><br><span class="line">          volumeMounts:</span><br><span class="line">            - name: blackbox-config-volume</span><br><span class="line">              mountPath: /etc/blackbox/</span><br><span class="line">      volumes:</span><br><span class="line">        - name: blackbox-config-volume</span><br><span class="line">          configMap:</span><br><span class="line">            defaultMode: 420</span><br><span class="line">            name: blackbox-export-config</span><br><span class="line">---</span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Service</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-service</span><br><span class="line">  namespace: prometheus</span><br><span class="line">spec:</span><br><span class="line">  ports:</span><br><span class="line">    - name: blackbox-port</span><br><span class="line">      port: 9115</span><br><span class="line">      protocol: TCP</span><br><span class="line">      targetPort: 9115</span><br><span class="line">  selector:</span><br><span class="line">    app: prometheus-blackbox-export            </span><br></pre></td></tr></table></figure>
-
-<p>部署成功后，从 <code>prometheus</code> 的 Namespace 中测试访问 <code>blackbox_export</code> 的 Endpoint <code>blackbox-service:9115</code>，如果是在其他 Namespace，可以使用 Endpoint <code>blackbox-service.prometheus.svc.cluster.local:9115</code>。如果集群的域名不是 <code>cluster.local</code>，修改为实际值。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">prometheus-7589d5bbdd-xdjwt:~# curl -v blackbox-service:9115</span><br><span class="line">*   Trying 10.111.137.0:9115...</span><br><span class="line">* Connected to blackbox-service (10.111.137.0) port 9115 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: blackbox-service:9115</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/8.0.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">&lt; Content-Type: text/html</span><br><span class="line">&lt; Date: Tue, 26 Sep 2023 09:11:25 GMT</span><br><span class="line">&lt; Content-Length: 544</span><br><span class="line">&lt; </span><br><span class="line">&lt;html&gt;</span><br><span class="line">    &lt;head&gt;&lt;title&gt;Blackbox Exporter&lt;/title&gt;&lt;/head&gt;</span><br><span class="line">    &lt;body&gt;</span><br><span class="line">    &lt;h1&gt;Blackbox Exporter&lt;/h1&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&quot;&gt;Probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&amp;debug=true&quot;&gt;Debug probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;metrics&quot;&gt;Metrics&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;config&quot;&gt;Configuration&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;h2&gt;Recent Probes&lt;/h2&gt;</span><br><span class="line">    &lt;table border=&#x27;1&#x27;&gt;&lt;tr&gt;&lt;th&gt;Module&lt;/th&gt;&lt;th&gt;Target&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;Debug&lt;/th&gt;&lt;/table&gt;&lt;/body&gt;</span><br><span class="line">* Connection #0 to host blackbox-service left intact</span><br><span class="line">    &lt;/html&gt;</span><br></pre></td></tr></table></figure>
-
-<h2 id="Prometheus-读取-blackbox-exporter-数据"><a href="#Prometheus-读取-blackbox-exporter-数据" class="headerlink" title="Prometheus 读取 blackbox_exporter 数据"></a>Prometheus 读取 blackbox_exporter 数据</h2><p>在 Prometheus 配置中添加以下内容，使 Prometheus 抓取 <code>black_exporter</code> 的监控数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_2xx&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_2xx]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - http://www.google.com:5000/</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
-<p>部署完成后，观察过 Prometheus 的 Target，正常情况下可以看到监控目标的状态。</p>
-<span id="more"></span>
-
-<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint"><a href="#使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint" class="headerlink" title="使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint"></a>使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</h2><p>本示例演示使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint，Kubernetes 集群默认的域为 <code>cluster.local</code>，本示例中的 Kubernetes 集群使用默认域。Kubernetes 集群中和 <code>kube-apiserver</code> 的通信一般都是使用 HTTPS，因此在使用 <code>blackbox_exporter</code> 监控时需要指定使用 HTTPS 请求 <code>kube-apiserver</code>，同时可以达到监控 <code>kube-apiserver</code> HTTPS 证书的目的。</p>
-<p>使用 <code>kubeadmin</code> 初始化的集群默认使用自签名的证书，客户端使用 HTTPS 访问时需要提供 CA 证书。以下 <code>blackbox_exporter</code> 配置中，模块 <code>http_k8s_cluster</code> 配置了必须使用 HTTPS 请求 Endpoint，并且配置了 CA 路径</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">modules:</span><br><span class="line">  http_2xx:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 10s</span><br><span class="line">    http:</span><br><span class="line">      preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">  tcp_connect:</span><br><span class="line">    prober: tcp</span><br><span class="line">  http_k8s_cluster:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 5s</span><br><span class="line">    http:</span><br><span class="line">      method: GET</span><br><span class="line">      fail_if_ssl: false</span><br><span class="line">      fail_if_not_ssl: true</span><br><span class="line">      valid_status_codes: [200, 403]</span><br><span class="line">      tls_config:</span><br><span class="line">        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt</span><br><span class="line">        insecure_skip_verify: false</span><br></pre></td></tr></table></figure>
-
-<p>在 Prometheus 配置中添加以下 Target，用于监控  <code>kube-apiserver</code> 的 Endpoint <code>https://kubernetes.default.svc.cluster.local</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_k8s_cluster&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_k8s_cluster]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - https://kubernetes.default.svc.cluster.local</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
-<p>配置成功后，观察 Prometheus 中的 Targets，可以看到 Targets 状态<br><img src="https://i.csms.tech/img_221.png"></p>
-<h2 id="监控-HTTPS-类型-的-Endpoints-的证书过期时间"><a href="#监控-HTTPS-类型-的-Endpoints-的证书过期时间" class="headerlink" title="监控 HTTPS 类型 的 Endpoints 的证书过期时间"></a>监控 HTTPS 类型 的 Endpoints 的证书过期时间</h2><p>假如在 <code>blackbox_exporter</code> 配置了 <code>prober</code> 为 <code>http</code> 类型的 module，当在 Prometheus 中配置的 <code>targets</code> 的请求协议使用 <code>https</code> 时，<code>blackbox_exporter</code> 提供了关于证书的监控指标。配置示例可以参考 <a href="#%E4%BD%BF%E7%94%A8-blackbox-exporter-%E5%92%8C-Prometheus-%E7%9B%91%E6%8E%A7-Kubernetes-API-Server-%E7%9A%84-Endpoint">使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</a></p>
-<p><code>probe_ssl_earliest_cert_expiry</code> 指标显示了证书链中最早到期的证书的过期时间。其值是一个 Unix 时间戳，表示证书的过期日期和时间。</p>
-<p>如果要计算证书剩余的有效天数，可以使用以下表达式计算</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(probe_ssl_earliest_cert_expiry - time()) / 86400</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>Prometheus</tag>
       </tags>
   </entry>
   <entry>
@@ -16261,6 +16261,27 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>windows 中的 zip 类型压缩文件，linux 中 unzip 解压后文件名乱码</title>
+    <url>/202208240911/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>centos 7</li>
+</ul>
+<p>在 windows 系统添加到 zip 类型的压缩文件，上传到 Linux，使用 <code>unzip</code> 解压后，文件名乱码  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">unzip 测试文档.zip</span></span><br><span class="line">Archive:  测试文档.zip</span><br><span class="line">  inflating: ═°╦▐╫╩╘┤╬┤╝╙├▄├╗╙╨╙├╡╜╡─┴╨▒э.csv</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h3 id="问题原因"><a href="#问题原因" class="headerlink" title="问题原因"></a>问题原因</h3><p>主要的原因是因为 <code>unzip</code> 在解压的时候会将编码转化为其内部默认的编码，而默认的编码根本不支持中文 <code>CP936</code> 编码。因此我们需要在解压的时候明确的指定需要使用的编码。  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">unzip -O CP936 测试文档.zip</span> </span><br><span class="line">Archive:  测试文档.zip</span><br><span class="line">  inflating: 测试文档.csv  </span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>unzip</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Ubuntu 系列软件包管理命令</title>
     <url>/202307031141/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -16283,27 +16304,6 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>Ubuntu</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>windows 中的 zip 类型压缩文件，linux 中 unzip 解压后文件名乱码</title>
-    <url>/202208240911/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>centos 7</li>
-</ul>
-<p>在 windows 系统添加到 zip 类型的压缩文件，上传到 Linux，使用 <code>unzip</code> 解压后，文件名乱码  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">unzip 测试文档.zip</span></span><br><span class="line">Archive:  测试文档.zip</span><br><span class="line">  inflating: ═°╦▐╫╩╘┤╬┤╝╙├▄├╗╙╨╙├╡╜╡─┴╨▒э.csv</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h3 id="问题原因"><a href="#问题原因" class="headerlink" title="问题原因"></a>问题原因</h3><p>主要的原因是因为 <code>unzip</code> 在解压的时候会将编码转化为其内部默认的编码，而默认的编码根本不支持中文 <code>CP936</code> 编码。因此我们需要在解压的时候明确的指定需要使用的编码。  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">unzip -O CP936 测试文档.zip</span> </span><br><span class="line">Archive:  测试文档.zip</span><br><span class="line">  inflating: 测试文档.csv  </span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>unzip</tag>
       </tags>
   </entry>
   <entry>
