@@ -6864,67 +6864,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes 上部署 cert-manager 及使用</title>
-    <url>/202301050935/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kubernetes 1.24</li>
-<li>cert-manager v1.7.1</li>
-</ul>
-<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
-<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.csms.tech/img_111.png"></p>
-<p>解释下几个关键的资源:</p>
-<ul>
-<li><code>Issuer/ClusterIssuer</code>: 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。<code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书，<code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
-<li><code>Certificate</code>: 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
-</ul>
-<span id="more"></span>
-
-<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
-<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
-<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
-<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
-<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
-<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
-<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://csms.tech/202210071716/#安装-cert-manager">安装参考文档</a></p>
-<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
-<ol>
-<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.csms.tech/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.csms.tech/img_113.png"></p>
-</li>
-<li><p>将 Token 保存到 Secret 中:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Secret</span><br><span class="line">metadata:</span><br><span class="line">  name: cloudflare-api-token-secret</span><br><span class="line">  namespace: cert-manager</span><br><span class="line">type: Opaque</span><br><span class="line">stringData:</span><br><span class="line">  api-token: &lt;API Token&gt; # 粘贴 Token 到这里，不需要 base64 加密。</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[DNS-01 校验方式签发证书](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6)">[3]</span></a></sup></p>
-</blockquote>
-</li>
-<li><p>创建 ClusterIssuer:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: ClusterIssuer</span><br><span class="line">metadata:</span><br><span class="line">  name: letsencrypt-dns01</span><br><span class="line">spec:</span><br><span class="line">  acme:</span><br><span class="line">    privateKeySecretRef:</span><br><span class="line">      name: letsencrypt-dns01     # 用于储存 ACME Account 私钥的 Secret</span><br><span class="line">    email: my-cloudflare-acc@example.com</span><br><span class="line">    server: https://acme-v02.api.letsencrypt.org/directory</span><br><span class="line">    solvers:</span><br><span class="line">    - dns01:</span><br><span class="line">        cloudflare:</span><br><span class="line">          email: my-cloudflare-acc@example.com # 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span><br><span class="line">          apiTokenSecretRef:</span><br><span class="line">            key: api-token               # 引用 secret 中的配置数据，key 为 secret 中配置的名称</span><br><span class="line">            name: cloudflare-api-token-secret    # 引用保存 cloudflare 认证信息的 Secret</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建 Certificate:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: Certificate</span><br><span class="line">metadata:</span><br><span class="line">  name: test-mydomain-com</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  dnsNames:</span><br><span class="line">  - test.mydomain.com # 要签发证书的域名</span><br><span class="line">  - &quot;*.mydomain.com&quot; </span><br><span class="line">  issuerRef:</span><br><span class="line">    kind: ClusterIssuer</span><br><span class="line">    name: letsencrypt-dns01 # 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span><br><span class="line">  secretName: test-mydomain-com-tls # 最终签发出来的证书会保存在这个 Secret 里面</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>获取和使用证书</p>
-<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get certificate -n prod</span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
-<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl describe certificate test-mydomain-com -n prod</span><br></pre></td></tr></table></figure>
-<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code>)，可以通过 <code>kubectl</code> 查看:</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get secret test-mydomain-com-tls -n default</span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
-<p> 其中 <code>tls.crt</code> 就是证书，<code>tls.key</code> 是密钥。</p>
-<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code>，示例:</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">apiVersion: networking.k8s.io/v1beta1</span><br><span class="line">kind: Ingress</span><br><span class="line">metadata:</span><br><span class="line">  name: test-ingress</span><br><span class="line">  annotations:</span><br><span class="line">    kubernetes.io/Ingress.class: nginx</span><br><span class="line">spec:</span><br><span class="line">  rules:</span><br><span class="line">  - host: test.mydomain.com</span><br><span class="line">    http:</span><br><span class="line">      paths:</span><br><span class="line">      - path: /web</span><br><span class="line">        backend:</span><br><span class="line">          serviceName: web</span><br><span class="line">          servicePort: 80</span><br><span class="line">  tls:</span><br><span class="line">    hosts:</span><br><span class="line">    - test.mydomain.com</span><br><span class="line">    secretName: test-mydomain-com-tls</span><br></pre></td></tr></table></figure>
-<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
-<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
-</li>
-</ol>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes 常用命令示例</title>
     <url>/202209131536/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -7108,6 +7047,67 @@ width: 20%;
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#join-nodes">使用 kubeadm 创建集群</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes 上部署 cert-manager 及使用</title>
+    <url>/202301050935/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.24</li>
+<li>cert-manager v1.7.1</li>
+</ul>
+<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
+<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.csms.tech/img_111.png"></p>
+<p>解释下几个关键的资源:</p>
+<ul>
+<li><code>Issuer/ClusterIssuer</code>: 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。<code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书，<code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
+<li><code>Certificate</code>: 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
+<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
+<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
+<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
+<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
+<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
+<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://csms.tech/202210071716/#安装-cert-manager">安装参考文档</a></p>
+<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
+<ol>
+<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.csms.tech/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.csms.tech/img_113.png"></p>
+</li>
+<li><p>将 Token 保存到 Secret 中:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Secret</span><br><span class="line">metadata:</span><br><span class="line">  name: cloudflare-api-token-secret</span><br><span class="line">  namespace: cert-manager</span><br><span class="line">type: Opaque</span><br><span class="line">stringData:</span><br><span class="line">  api-token: &lt;API Token&gt; # 粘贴 Token 到这里，不需要 base64 加密。</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[DNS-01 校验方式签发证书](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6)">[3]</span></a></sup></p>
+</blockquote>
+</li>
+<li><p>创建 ClusterIssuer:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: ClusterIssuer</span><br><span class="line">metadata:</span><br><span class="line">  name: letsencrypt-dns01</span><br><span class="line">spec:</span><br><span class="line">  acme:</span><br><span class="line">    privateKeySecretRef:</span><br><span class="line">      name: letsencrypt-dns01     # 用于储存 ACME Account 私钥的 Secret</span><br><span class="line">    email: my-cloudflare-acc@example.com</span><br><span class="line">    server: https://acme-v02.api.letsencrypt.org/directory</span><br><span class="line">    solvers:</span><br><span class="line">    - dns01:</span><br><span class="line">        cloudflare:</span><br><span class="line">          email: my-cloudflare-acc@example.com # 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span><br><span class="line">          apiTokenSecretRef:</span><br><span class="line">            key: api-token               # 引用 secret 中的配置数据，key 为 secret 中配置的名称</span><br><span class="line">            name: cloudflare-api-token-secret    # 引用保存 cloudflare 认证信息的 Secret</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建 Certificate:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: Certificate</span><br><span class="line">metadata:</span><br><span class="line">  name: test-mydomain-com</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  dnsNames:</span><br><span class="line">  - test.mydomain.com # 要签发证书的域名</span><br><span class="line">  - &quot;*.mydomain.com&quot; </span><br><span class="line">  issuerRef:</span><br><span class="line">    kind: ClusterIssuer</span><br><span class="line">    name: letsencrypt-dns01 # 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span><br><span class="line">  secretName: test-mydomain-com-tls # 最终签发出来的证书会保存在这个 Secret 里面</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>获取和使用证书</p>
+<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get certificate -n prod</span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
+<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl describe certificate test-mydomain-com -n prod</span><br></pre></td></tr></table></figure>
+<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code>)，可以通过 <code>kubectl</code> 查看:</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get secret test-mydomain-com-tls -n default</span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
+<p> 其中 <code>tls.crt</code> 就是证书，<code>tls.key</code> 是密钥。</p>
+<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code>，示例:</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">apiVersion: networking.k8s.io/v1beta1</span><br><span class="line">kind: Ingress</span><br><span class="line">metadata:</span><br><span class="line">  name: test-ingress</span><br><span class="line">  annotations:</span><br><span class="line">    kubernetes.io/Ingress.class: nginx</span><br><span class="line">spec:</span><br><span class="line">  rules:</span><br><span class="line">  - host: test.mydomain.com</span><br><span class="line">    http:</span><br><span class="line">      paths:</span><br><span class="line">      - path: /web</span><br><span class="line">        backend:</span><br><span class="line">          serviceName: web</span><br><span class="line">          servicePort: 80</span><br><span class="line">  tls:</span><br><span class="line">    hosts:</span><br><span class="line">    - test.mydomain.com</span><br><span class="line">    secretName: test-mydomain-com-tls</span><br></pre></td></tr></table></figure>
+<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
+<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
+</li>
+</ol>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
       </categories>
       <tags>
         <tag>Kubernetes</tag>
