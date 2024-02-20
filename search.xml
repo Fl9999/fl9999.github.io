@@ -677,6 +677,58 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -771,58 +823,6 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -3102,36 +3102,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>django 接收 post 请求中的 json 数据</title>
-    <url>/202209161740/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Python3.10</li>
-<li>Django 4.0</li>
-</ul>
-<h3 id="接收-post-中的-json-数据"><a href="#接收-post-中的-json-数据" class="headerlink" title="接收 post 中的 json 数据"></a>接收 post 中的 json 数据</h3><p>示例通过 <code>curl</code> 命令模拟 post 请求，命令如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -v -H &quot;Accept: application/json&quot; -H &quot;Content-type: application/json&quot; -X POST \</span><br><span class="line">      -d &#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27; 127.0.0.1:8000/csapi</span><br></pre></td></tr></table></figure>
-
-<p>Django 处理程序示例：</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.http import HttpResponse</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">def csapi(request):</span><br><span class="line">    post_body = request.body</span><br><span class="line">    print(f&#x27;****** POST body: &#123;post_body&#125;, type : &#123;type(post_body)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    # </span><br><span class="line">    data = eval(post_body)</span><br><span class="line"></span><br><span class="line">    print(f&#x27;****** data : &#123;data&#125; , type : &#123;type(data)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    return HttpResponse(&#x27;ok&#x27;)</span><br></pre></td></tr></table></figure>
-
-<p>Console 输出结果：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">****** POST body: b&#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27;, type : &lt;class &#x27;bytes&#x27;&gt;</span><br><span class="line">****** data : &#123;&#x27;id&#x27;: &#x27;yTP7PSsRxz53tJ56VVG&#x27;, &#x27;type&#x27;: 5&#125; , type : &lt;class &#x27;dict&#x27;&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>以上输出可以看到，<code>request.body</code> 中的类型为 <code>bytes</code></p>
-<p>使用 <code>eval</code> 转换后类型变为 <code>dict</code></p>
-<p>使用 <code>json.loads</code> 将 <code>request.body</code> 转换为 <code>dict</code> 时，可能会报以下错误：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>可能原因 <a href="https://www.jianshu.com/p/3a7dbd17e7b9">参考</a></p>
-]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Django</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Django model 使用</title>
     <url>/202301191014/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -3381,45 +3351,27 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Django 常用配置</title>
-    <url>/202301181649/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.10</li>
-<li>Django 4.1</li>
+    <title>django 接收 post 请求中的 json 数据</title>
+    <url>/202209161740/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Python3.10</li>
+<li>Django 4.0</li>
 </ul>
-<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="创建项目及-app"><a href="#创建项目及-app" class="headerlink" title="创建项目及 app"></a>创建项目及 app</h2><p>开始使用 Django 时，需要初始化配置，执行以下命令生成初始化的工程环境 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建项目](https://docs.djangoproject.com/zh-hans/4.1/intro/tutorial01/#creating-a-project)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">django-admin startproject mysite</span><br></pre></td></tr></table></figure>
-<p>创建 Project 成功后，会生成以 Project 命名的根目录(此处为 <code>mysite</code>)，根目录只是你项目的容器， 根目录名称对 Django 没有影响，你可以将它重命名为任何你喜欢的名称。以下为目录结构 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建项目](https://docs.djangoproject.com/zh-hans/4.1/intro/tutorial01/#creating-a-project)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysite/</span><br><span class="line">    manage.py</span><br><span class="line">    mysite/</span><br><span class="line">        __init__.py</span><br><span class="line">        settings.py</span><br><span class="line">        urls.py</span><br><span class="line">        asgi.py</span><br><span class="line">        wsgi.py</span><br></pre></td></tr></table></figure>
-<p>其中：</p>
-<ul>
-<li><code>mysite/mysite/settings.py</code> 为项目配置文件，包括配置 app，数据库等。</li>
-</ul>
-<p>创建 App</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py startapp myapp</span><br></pre></td></tr></table></figure>
-<p>创建 app 后，会在项目根目录下生成 app 命名的目录。创建 app 后，需要将 app 添加到项目配置文件 <code>settings.py</code> 中的 <code>INSTALLED_APPS</code></p>
-<h2 id="项目配置文件-settings-py-常用配置说明"><a href="#项目配置文件-settings-py-常用配置说明" class="headerlink" title="项目配置文件 settings.py 常用配置说明"></a>项目配置文件 <code>settings.py</code> 常用配置说明</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ALLOWED_HOSTS = [&#x27;*&#x27;]</span><br></pre></td></tr></table></figure>
-<p>访问控制，默认只允许从本地访问 Django Server，如果需要远程访问，需要配置远程主机地址，<code>*</code> 可以配置允许任一客户端访问。</p>
-<h3 id="配置-mysql-数据库"><a href="#配置-mysql-数据库" class="headerlink" title="配置 mysql 数据库"></a>配置 mysql 数据库</h3><p>要为项目配置使用 Mysql 数据库，可以使用以下配置。</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">DATABASES = &#123;</span><br><span class="line">    &#x27;default&#x27;: &#123;</span><br><span class="line">        &#x27;ENGINE&#x27;: &#x27;django.db.backends.mysql&#x27;,</span><br><span class="line">        &#x27;NAME&#x27;: &quot;vb&quot;,</span><br><span class="line">        &#x27;USER&#x27;: &quot;root&quot;,</span><br><span class="line">        &quot;PASSWORD&quot;: &quot;dBVgcKGnn0&quot;,</span><br><span class="line">        &#x27;HOST&#x27;: &quot;127.0.0.1&quot;,</span><br><span class="line">        &quot;PORT&quot;: &#x27;3306&#x27;,</span><br><span class="line">    &#125;,</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h3 id="接收-post-中的-json-数据"><a href="#接收-post-中的-json-数据" class="headerlink" title="接收 post 中的 json 数据"></a>接收 post 中的 json 数据</h3><p>示例通过 <code>curl</code> 命令模拟 post 请求，命令如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -v -H &quot;Accept: application/json&quot; -H &quot;Content-type: application/json&quot; -X POST \</span><br><span class="line">      -d &#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27; 127.0.0.1:8000/csapi</span><br></pre></td></tr></table></figure>
 
-<h3 id="配置语言为中文"><a href="#配置语言为中文" class="headerlink" title="配置语言为中文"></a>配置语言为中文</h3><figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">LANGUAGE_CODE = &#x27;zh-hans&#x27;</span><br></pre></td></tr></table></figure>
+<p>Django 处理程序示例：</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.http import HttpResponse</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">def csapi(request):</span><br><span class="line">    post_body = request.body</span><br><span class="line">    print(f&#x27;****** POST body: &#123;post_body&#125;, type : &#123;type(post_body)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    # </span><br><span class="line">    data = eval(post_body)</span><br><span class="line"></span><br><span class="line">    print(f&#x27;****** data : &#123;data&#125; , type : &#123;type(data)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    return HttpResponse(&#x27;ok&#x27;)</span><br></pre></td></tr></table></figure>
 
-<h3 id="配置时区"><a href="#配置时区" class="headerlink" title="配置时区"></a>配置时区</h3><figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">TIME_ZONE = &#x27;Asia/Shanghai&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>Console 输出结果：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">****** POST body: b&#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27;, type : &lt;class &#x27;bytes&#x27;&gt;</span><br><span class="line">****** data : &#123;&#x27;id&#x27;: &#x27;yTP7PSsRxz53tJ56VVG&#x27;, &#x27;type&#x27;: 5&#125; , type : &lt;class &#x27;dict&#x27;&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<h3 id="配置默认的登陆-url-为-Django-后台的登陆-url"><a href="#配置默认的登陆-url-为-Django-后台的登陆-url" class="headerlink" title="配置默认的登陆 url 为 Django 后台的登陆 url"></a>配置默认的登陆 url 为 Django 后台的登陆 url</h3><p>如果需要限制只有登陆的用户才能访问 url。可以在视图函数中使用 <code>login_required</code> 装饰器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    return render(request, &#x27;cloudclient/index.html&#x27;)</span><br></pre></td></tr></table></figure>
-<p>使用了 <code>login_required</code> 装饰器后，未登录的用户会跳转到登陆页面，要配置登陆页面使用 Django Admin 的登陆 url，需要在 <code>settings.py</code> 中添加以下配置</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">LOGIN_URL = &#x27;admin:login&#x27;</span><br></pre></td></tr></table></figure>
-<h3 id="配置登陆用户自动注销"><a href="#配置登陆用户自动注销" class="headerlink" title="配置登陆用户自动注销"></a>配置登陆用户自动注销</h3><p>要配置登陆用户在指定时间内未操作（发送 url 请求）后自动注销，使用以下配置</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">设置会话的过期时间为10分钟（以秒为单位）</span></span><br><span class="line">SESSION_COOKIE_AGE = 600  # 10分钟</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">True： 用户的会话在每个请求时都会刷新会话过期时间</span></span><br><span class="line">SESSION_SAVE_EVERY_REQUEST = True</span><br></pre></td></tr></table></figure>
-<h2 id="Django-管理后台配置"><a href="#Django-管理后台配置" class="headerlink" title="Django 管理后台配置"></a>Django 管理后台配置</h2><ol>
-<li>创建 project 后，要使用 Django 管理后台，需要首先初始化数据库并创建 superuser <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py makemigrations</span><br><span class="line">python manage.py migrate</span><br><span class="line">python manage.py createsuperuser</span><br></pre></td></tr></table></figure></li>
-<li>为 admin 添加路由<br> 在工程目录中的 <code>urls.py</code> 文件中配置以下内容 <figure class="highlight shell"><figcaption><span>urls.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.contrib import admin</span><br><span class="line">from django.urls import path</span><br><span class="line">from .views import index</span><br><span class="line"></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(&#x27;admin/&#x27;, admin.site.urls),</span><br><span class="line">    path(&#x27;&#x27;, index),</span><br><span class="line">    # 项目根 url 既是后台</span><br><span class="line">    # path(&#x27;&#x27;, admin.site.urls),</span><br><span class="line">]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-如果要在访问项目 <code>/</code> 时，重定向到管理后台，可以在项目的 <code>views.py</code> 文件中添加以下内容，将 <code>/</code> 重定向到 <code>/admin/</code><figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import redirect</span><br><span class="line"></span><br><span class="line">def index(request):</span><br><span class="line">    return redirect(&#x27;admin/&#x27;)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-访问项目 url，此时可以看到登陆后台页面。</li>
-</ol>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/intro/tutorial01/#creating-a-project">创建项目</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<p>以上输出可以看到，<code>request.body</code> 中的类型为 <code>bytes</code></p>
+<p>使用 <code>eval</code> 转换后类型变为 <code>dict</code></p>
+<p>使用 <code>json.loads</code> 将 <code>request.body</code> 转换为 <code>dict</code> 时，可能会报以下错误：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>可能原因 <a href="https://www.jianshu.com/p/3a7dbd17e7b9">参考</a></p>
+]]></content>
       <categories>
         <category>Python</category>
         <category>Django</category>
@@ -3509,6 +3461,79 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Django 常用配置</title>
+    <url>/202301181649/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.10</li>
+<li>Django 4.1</li>
+</ul>
+<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="创建项目及-app"><a href="#创建项目及-app" class="headerlink" title="创建项目及 app"></a>创建项目及 app</h2><p>开始使用 Django 时，需要初始化配置，执行以下命令生成初始化的工程环境 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建项目](https://docs.djangoproject.com/zh-hans/4.1/intro/tutorial01/#creating-a-project)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">django-admin startproject mysite</span><br></pre></td></tr></table></figure>
+<p>创建 Project 成功后，会生成以 Project 命名的根目录(此处为 <code>mysite</code>)，根目录只是你项目的容器， 根目录名称对 Django 没有影响，你可以将它重命名为任何你喜欢的名称。以下为目录结构 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建项目](https://docs.djangoproject.com/zh-hans/4.1/intro/tutorial01/#creating-a-project)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysite/</span><br><span class="line">    manage.py</span><br><span class="line">    mysite/</span><br><span class="line">        __init__.py</span><br><span class="line">        settings.py</span><br><span class="line">        urls.py</span><br><span class="line">        asgi.py</span><br><span class="line">        wsgi.py</span><br></pre></td></tr></table></figure>
+<p>其中：</p>
+<ul>
+<li><code>mysite/mysite/settings.py</code> 为项目配置文件，包括配置 app，数据库等。</li>
+</ul>
+<p>创建 App</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py startapp myapp</span><br></pre></td></tr></table></figure>
+<p>创建 app 后，会在项目根目录下生成 app 命名的目录。创建 app 后，需要将 app 添加到项目配置文件 <code>settings.py</code> 中的 <code>INSTALLED_APPS</code></p>
+<h2 id="项目配置文件-settings-py-常用配置说明"><a href="#项目配置文件-settings-py-常用配置说明" class="headerlink" title="项目配置文件 settings.py 常用配置说明"></a>项目配置文件 <code>settings.py</code> 常用配置说明</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ALLOWED_HOSTS = [&#x27;*&#x27;]</span><br></pre></td></tr></table></figure>
+<p>访问控制，默认只允许从本地访问 Django Server，如果需要远程访问，需要配置远程主机地址，<code>*</code> 可以配置允许任一客户端访问。</p>
+<h3 id="配置-mysql-数据库"><a href="#配置-mysql-数据库" class="headerlink" title="配置 mysql 数据库"></a>配置 mysql 数据库</h3><p>要为项目配置使用 Mysql 数据库，可以使用以下配置。</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">DATABASES = &#123;</span><br><span class="line">    &#x27;default&#x27;: &#123;</span><br><span class="line">        &#x27;ENGINE&#x27;: &#x27;django.db.backends.mysql&#x27;,</span><br><span class="line">        &#x27;NAME&#x27;: &quot;vb&quot;,</span><br><span class="line">        &#x27;USER&#x27;: &quot;root&quot;,</span><br><span class="line">        &quot;PASSWORD&quot;: &quot;dBVgcKGnn0&quot;,</span><br><span class="line">        &#x27;HOST&#x27;: &quot;127.0.0.1&quot;,</span><br><span class="line">        &quot;PORT&quot;: &#x27;3306&#x27;,</span><br><span class="line">    &#125;,</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="配置语言为中文"><a href="#配置语言为中文" class="headerlink" title="配置语言为中文"></a>配置语言为中文</h3><figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">LANGUAGE_CODE = &#x27;zh-hans&#x27;</span><br></pre></td></tr></table></figure>
+
+<h3 id="配置时区"><a href="#配置时区" class="headerlink" title="配置时区"></a>配置时区</h3><figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">TIME_ZONE = &#x27;Asia/Shanghai&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="配置默认的登陆-url-为-Django-后台的登陆-url"><a href="#配置默认的登陆-url-为-Django-后台的登陆-url" class="headerlink" title="配置默认的登陆 url 为 Django 后台的登陆 url"></a>配置默认的登陆 url 为 Django 后台的登陆 url</h3><p>如果需要限制只有登陆的用户才能访问 url。可以在视图函数中使用 <code>login_required</code> 装饰器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    return render(request, &#x27;cloudclient/index.html&#x27;)</span><br></pre></td></tr></table></figure>
+<p>使用了 <code>login_required</code> 装饰器后，未登录的用户会跳转到登陆页面，要配置登陆页面使用 Django Admin 的登陆 url，需要在 <code>settings.py</code> 中添加以下配置</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">LOGIN_URL = &#x27;admin:login&#x27;</span><br></pre></td></tr></table></figure>
+<h3 id="配置登陆用户自动注销"><a href="#配置登陆用户自动注销" class="headerlink" title="配置登陆用户自动注销"></a>配置登陆用户自动注销</h3><p>要配置登陆用户在指定时间内未操作（发送 url 请求）后自动注销，使用以下配置</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">设置会话的过期时间为10分钟（以秒为单位）</span></span><br><span class="line">SESSION_COOKIE_AGE = 600  # 10分钟</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">True： 用户的会话在每个请求时都会刷新会话过期时间</span></span><br><span class="line">SESSION_SAVE_EVERY_REQUEST = True</span><br></pre></td></tr></table></figure>
+<h2 id="Django-管理后台配置"><a href="#Django-管理后台配置" class="headerlink" title="Django 管理后台配置"></a>Django 管理后台配置</h2><ol>
+<li>创建 project 后，要使用 Django 管理后台，需要首先初始化数据库并创建 superuser <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py makemigrations</span><br><span class="line">python manage.py migrate</span><br><span class="line">python manage.py createsuperuser</span><br></pre></td></tr></table></figure></li>
+<li>为 admin 添加路由<br> 在工程目录中的 <code>urls.py</code> 文件中配置以下内容 <figure class="highlight shell"><figcaption><span>urls.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.contrib import admin</span><br><span class="line">from django.urls import path</span><br><span class="line">from .views import index</span><br><span class="line"></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(&#x27;admin/&#x27;, admin.site.urls),</span><br><span class="line">    path(&#x27;&#x27;, index),</span><br><span class="line">    # 项目根 url 既是后台</span><br><span class="line">    # path(&#x27;&#x27;, admin.site.urls),</span><br><span class="line">]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+如果要在访问项目 <code>/</code> 时，重定向到管理后台，可以在项目的 <code>views.py</code> 文件中添加以下内容，将 <code>/</code> 重定向到 <code>/admin/</code><figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import redirect</span><br><span class="line"></span><br><span class="line">def index(request):</span><br><span class="line">    return redirect(&#x27;admin/&#x27;)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+访问项目 url，此时可以看到登陆后台页面。</li>
+</ol>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/intro/tutorial01/#creating-a-project">创建项目</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>docker daemon 常用配置</title>
+    <url>/202211241005/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Docker 19.03.15</li>
+</ul>
+<h1 id="docker-配置容器日志-rotate"><a href="#docker-配置容器日志-rotate" class="headerlink" title="docker 配置容器日志 rotate"></a>docker 配置容器日志 rotate</h1><h2 id="docker-daemon-方式配置容器日志-rotate"><a href="#docker-daemon-方式配置容器日志-rotate" class="headerlink" title="docker daemon 方式配置容器日志 rotate"></a>docker daemon 方式配置容器日志 rotate</h2><p>编辑 docker daemon 配置文件 <code>/etc/docker/daemon.json</code> (若不存在则新建)，添加以下内容，用来配置 docker containers 的日志轮转</p>
+<figure class="highlight shell"><figcaption><span>/etc/docker/daemon.json</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;</span><br><span class="line">  &quot;log-driver&quot;: &quot;json-file&quot;,</span><br><span class="line">  &quot;log-opts&quot;: &#123;</span><br><span class="line">    &quot;max-size&quot;: &quot;100m&quot;,</span><br><span class="line">    &quot;max-file&quot;: &quot;3&quot;    </span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>重启 docker 服务生效</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart docker</span><br></pre></td></tr></table></figure>
+<p>根据以上配置，当容器日志大小达到 <code>100m</code>，即对其进行 rotate，并保留最多 3 个日志文件。 </p>
+<h2 id="使用-OS-系统服务-logrotate-进行容器日志-rotate"><a href="#使用-OS-系统服务-logrotate-进行容器日志-rotate" class="headerlink" title="使用 OS 系统服务 logrotate 进行容器日志 rotate"></a>使用 OS 系统服务 logrotate 进行容器日志 rotate</h2><p>Linux 系统中有专门用来做日志 rotate 的 <a href="!--swig%EF%BF%BC3--">服务 <code>logrotate</code></a>，可直接使用此服务做 log rotate</p>
+<p>配置针对 docker 的 <code>logrotate</code> 配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/docker</span></figcaption><table><tr><td class="code"><pre><span class="line">/var/lib/docker/containers/*/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    rotate 5</span><br><span class="line">    copytruncate</span><br><span class="line">    missingok</span><br><span class="line">    compress</span><br><span class="line">    delaycompress</span><br><span class="line">    maxsize 100M</span><br><span class="line">    minsize 1024k</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>copytruncate</code> 的方式做日志 totate 时，会先拷贝日志文件为 totate 日志文件，然后 <code>truncate</code> 日志，确保 totate 过程中，日志文件不变并一直保持打开状态。</p>
+<span id="more"></span>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>docker 容器中安装常见工具</title>
     <url>/202209051507/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常用工具安装"><a href="#常用工具安装" class="headerlink" title="常用工具安装"></a>常用工具安装</h1><p>查找 <code>netstat</code> 命令由哪个安装包提供</p>
@@ -3534,31 +3559,6 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum whatprovides /usr/sbin/ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64 : Advanced IP routing and network device configuration tools</span><br><span class="line">Repo        : base</span><br><span class="line">Matched from:</span><br><span class="line">Filename    : /usr/sbin/ip</span><br></pre></td></tr></table></figure>
 
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apt-get install iproute2</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>docker daemon 常用配置</title>
-    <url>/202211241005/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Docker 19.03.15</li>
-</ul>
-<h1 id="docker-配置容器日志-rotate"><a href="#docker-配置容器日志-rotate" class="headerlink" title="docker 配置容器日志 rotate"></a>docker 配置容器日志 rotate</h1><h2 id="docker-daemon-方式配置容器日志-rotate"><a href="#docker-daemon-方式配置容器日志-rotate" class="headerlink" title="docker daemon 方式配置容器日志 rotate"></a>docker daemon 方式配置容器日志 rotate</h2><p>编辑 docker daemon 配置文件 <code>/etc/docker/daemon.json</code> (若不存在则新建)，添加以下内容，用来配置 docker containers 的日志轮转</p>
-<figure class="highlight shell"><figcaption><span>/etc/docker/daemon.json</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;</span><br><span class="line">  &quot;log-driver&quot;: &quot;json-file&quot;,</span><br><span class="line">  &quot;log-opts&quot;: &#123;</span><br><span class="line">    &quot;max-size&quot;: &quot;100m&quot;,</span><br><span class="line">    &quot;max-file&quot;: &quot;3&quot;    </span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>重启 docker 服务生效</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart docker</span><br></pre></td></tr></table></figure>
-<p>根据以上配置，当容器日志大小达到 <code>100m</code>，即对其进行 rotate，并保留最多 3 个日志文件。 </p>
-<h2 id="使用-OS-系统服务-logrotate-进行容器日志-rotate"><a href="#使用-OS-系统服务-logrotate-进行容器日志-rotate" class="headerlink" title="使用 OS 系统服务 logrotate 进行容器日志 rotate"></a>使用 OS 系统服务 logrotate 进行容器日志 rotate</h2><p>Linux 系统中有专门用来做日志 rotate 的 <a href="!--swig%EF%BF%BC3--">服务 <code>logrotate</code></a>，可直接使用此服务做 log rotate</p>
-<p>配置针对 docker 的 <code>logrotate</code> 配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/docker</span></figcaption><table><tr><td class="code"><pre><span class="line">/var/lib/docker/containers/*/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    rotate 5</span><br><span class="line">    copytruncate</span><br><span class="line">    missingok</span><br><span class="line">    compress</span><br><span class="line">    delaycompress</span><br><span class="line">    maxsize 100M</span><br><span class="line">    minsize 1024k</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>copytruncate</code> 的方式做日志 totate 时，会先拷贝日志文件为 totate 日志文件，然后 <code>truncate</code> 日志，确保 totate 过程中，日志文件不变并一直保持打开状态。</p>
-<span id="more"></span>]]></content>
       <categories>
         <category>Docker</category>
       </categories>
@@ -5528,64 +5528,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>firewalld 使用</title>
-    <url>/202302220932/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 3.10.0-1160</li>
-</ul>
-<p><code>firewalld</code> 是 <code>iptables</code> 的一个封装，可以让你更容易地管理 <code>iptables</code> 规则， 它并不是 <code>iptables</code> 的替代品。虽然 <code>iptables</code> 命令仍可用于 <code>firewalld</code> ，但建议使用 <code>firewalld</code> 时仅使用 <code>firewalld</code> 命令。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[FirewallD入门手册](https://www.linuxprobe.com/centos-firewalld.html)">[1]</span></a></sup></p>
-<p><code>firewalld</code> 是 <code>iptables</code> 的前端控制器，用于实现持久的网络流量规则。它提供命令行和图形界面，在大多数 Linux 发行版的仓库中都有。与直接控制 <code>iptables</code> 相比，使用 <code>firewalld</code> 有两个主要区别：</p>
-<ul>
-<li><code>firewalld</code> 使用区域和服务而不是链式规则。</li>
-<li>它动态管理规则集，允许更新规则而不破坏现有会话和连接。</li>
-</ul>
-<h1 id="firewalld-配置说明"><a href="#firewalld-配置说明" class="headerlink" title="firewalld 配置说明"></a>firewalld 配置说明</h1><h2 id="配置文件目录"><a href="#配置文件目录" class="headerlink" title="配置文件目录"></a>配置文件目录</h2><p>配置文件位于两个目录中：</p>
-<ul>
-<li><code>/usr/lib/firewalld/</code> 下保存默认配置，如默认区域和公用服务。避免修改它们，因为每次 <code>firewall</code> 软件包更新时都会覆盖这些文件。</li>
-<li><code>/etc/firewalld</code> 下保存系统配置文件。 这些文件将覆盖默认配置。</li>
-</ul>
-<h2 id="配置集说明"><a href="#配置集说明" class="headerlink" title="配置集说明"></a>配置集说明</h2><p><code>firewalld</code> 使用两个配置集： <code>运行时</code> 和 <code>持久</code></p>
-<p>在系统重新启动或重新启动 <code>firewalld</code> 服务时，不会保留 <code>运行时</code> 的配置更改，而对 <code>持久</code> 配置集的更改不会应用于正在运行的系统。</p>
-<p>默认情况下，<code>firewall-cmd</code> 命令适用于 <code>运行时</code> 配置，但使用 <code>--permanent</code> 选项将保存配置到  <code>持久</code> 配置中。</p>
-<p>要添加和激活持久性规则，你可以使用以下两种方法之一：</p>
-<ol>
-<li>将规则同时添加到持久规则集和运行时规则集中<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --zone=public --add-service=http</span><br></pre></td></tr></table></figure></li>
-<li>将规则添加到持久规则集中并重新加载 <code>firewalld</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --reload</span><br></pre></td></tr></table></figure>
-<code>--reload</code> 选项会删除所有 <code>运行时</code> 配置并应用 <code>持久</code> 配置。因为 <code>firewalld</code> 动态管理规则集，所以它不会破坏现有的连接和会话。<span id="more"></span></li>
-</ol>
-<h2 id="区域说明"><a href="#区域说明" class="headerlink" title="区域说明"></a>区域说明</h2><p><code>区域</code> 是针对给定位置或场景（例如家庭、公共、受信任等）可能具有的各种信任级别的预构建规则集。不同的区域允许不同的网络服务和入站流量类型，而拒绝其他任何流量。 首次启用 <code>firewalld</code> 后，<code>public</code> 将是默认区域。</p>
-<p>区域也可以用于不同的网络接口。例如，要分离内部网络和互联网的接口，你可以在 <code>internal</code> 区域上允许 DHCP，但在 <code>external</code> 区域仅允许 HTTP 和 SSH。未明确设置为特定区域的任何接口将添加到默认区域。</p>
-<h3 id="查看默认区域"><a href="#查看默认区域" class="headerlink" title="查看默认区域"></a>查看默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-default-zone</span></span><br><span class="line">public</span><br></pre></td></tr></table></figure>
-<h3 id="修改默认区域"><a href="#修改默认区域" class="headerlink" title="修改默认区域"></a>修改默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --set-default-zone=internal</span><br></pre></td></tr></table></figure>
-<h3 id="查看激活的区域及网络接口使用的区域"><a href="#查看激活的区域及网络接口使用的区域" class="headerlink" title="查看激活的区域及网络接口使用的区域"></a>查看激活的区域及网络接口使用的区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-active-zones</span></span><br><span class="line">public</span><br><span class="line">  interfaces: eth0</span><br></pre></td></tr></table></figure>
-<h3 id="查看指定区域的所有规则集-默认查看-运行时"><a href="#查看指定区域的所有规则集-默认查看-运行时" class="headerlink" title="查看指定区域的所有规则集(默认查看 运行时)"></a>查看指定区域的所有规则集(默认查看 <code>运行时</code>)</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all</span></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules:</span><br></pre></td></tr></table></figure>
-<h3 id="查看指定区域-持久-配置集的所有规则"><a href="#查看指定区域-持久-配置集的所有规则" class="headerlink" title="查看指定区域 持久 配置集的所有规则"></a>查看指定区域 <code>持久</code> 配置集的所有规则</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all --permanent</span></span><br><span class="line">public</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="查看所有区域的配置"><a href="#查看所有区域的配置" class="headerlink" title="查看所有区域的配置"></a>查看所有区域的配置</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --list-all-zones</span></span><br><span class="line">block</span><br><span class="line">  target: %%REJECT%%</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">dmz</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">drop</span><br><span class="line">  target: DROP</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">external</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: yes</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">home</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">internal</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">trusted</span><br><span class="line">  target: ACCEPT</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">work</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="服务"><a href="#服务" class="headerlink" title="服务"></a>服务</h2><p><code>firewalld</code> 可以根据特定网络服务的预定义规则来允许相关流量。你可以创建自己的自定义系统规则，并将它们添加到任何区域。 默认支持的服务的配置文件位于 <code>/usr/lib/firewalld/services/</code>，用户创建的服务文件在 <code>/etc/firewalld/services/</code> 中</p>
-<h3 id="查看默认的可用服务"><a href="#查看默认的可用服务" class="headerlink" title="查看默认的可用服务"></a>查看默认的可用服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-services</span></span><br><span class="line">RH-Satellite-6 RH-Satellite-6-capsule amanda-client amanda-k5-client amqp amqps apcupsd audit bacula bacula-client \</span><br><span class="line">bgp bitcoin bitcoin-rpc bitcoin-testnet bitcoin-testnet-rpc ceph ceph-mon cfengine condor-collector ctdb dhcp dhcpv6 \</span><br><span class="line">dhcpv6-client distcc dns docker-registry docker-swarm dropbox-lansync elasticsearch etcd-client etcd-server finger \</span><br><span class="line">freeipa-ldap freeipa-ldaps freeipa-replication freeipa-trust ftp ganglia-client ganglia-master git gre high-availability \</span><br><span class="line">http https imap imaps ipp ipp-client ipsec irc ircs iscsi-target isns jenkins kadmin kerberos kibana klogin kpasswd \</span><br><span class="line">kprop kshell ldap ldaps libvirt libvirt-tls lightning-network llmnr managesieve matrix mdns minidlna mongodb mosh mountd \</span><br><span class="line">mqtt mqtt-tls ms-wbt mssql murmur mysql nfs nfs3 nmea-0183 nrpe ntp nut openvpn ovirt-imageio ovirt-storageconsole \</span><br><span class="line">ovirt-vmconsole plex pmcd pmproxy pmwebapi pmwebapis pop3 pop3s postgresql privoxy proxy-dhcp ptp pulseaudio puppetmaster \</span><br><span class="line">quassel radius redis rpc-bind rsh rsyncd rtsp salt-master samba samba-client samba-dc sane sip sips slp smtp smtp-submission \</span><br><span class="line">smtps snmp snmptrap spideroak-lansync squid ssh steam-streaming svdrp svn syncthing syncthing-gui synergy syslog syslog-tls \</span><br><span class="line">telnet tftp tftp-client tinc tor-socks transmission-client upnp-client vdsm vnc-server wbem-http wbem-https wsman wsmans \</span><br><span class="line">xdmcp xmpp-bosh xmpp-client xmpp-local xmpp-server zabbix-agent zabbix-server</span><br></pre></td></tr></table></figure>
-
-<h3 id="启用或禁用-HTTP-服务"><a href="#启用或禁用-HTTP-服务" class="headerlink" title="启用或禁用 HTTP 服务"></a>启用或禁用 HTTP 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-service=http --permanent</span><br></pre></td></tr></table></figure>
-
-<h3 id="允许或者拒绝任意端口-x2F-协议"><a href="#允许或者拒绝任意端口-x2F-协议" class="headerlink" title="允许或者拒绝任意端口&#x2F;协议"></a>允许或者拒绝任意端口&#x2F;协议</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-port=12345/tcp --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-port=12345/tcp --permanent</span><br></pre></td></tr></table></figure>
-
-<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><h3 id="同一台服务器上将-80-端口的流量转发到-12345-端口"><a href="#同一台服务器上将-80-端口的流量转发到-12345-端口" class="headerlink" title="同一台服务器上将 80 端口的流量转发到 12345 端口"></a>同一台服务器上将 80 端口的流量转发到 12345 端口</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=12345</span><br></pre></td></tr></table></figure>
-
-<h3 id="将端口转发到另外一台服务器上"><a href="#将端口转发到另外一台服务器上" class="headerlink" title="将端口转发到另外一台服务器上"></a>将端口转发到另外一台服务器上</h3><ol>
-<li>在需要的区域中激活 <code>masquerade</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-masquerade</span><br></pre></td></tr></table></figure></li>
-<li>添加转发规则<br>例子中是将 IP 地址为 ：123.456.78.9 的远程服务器上 80 端口的流量转发到 8080 上<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=8080:toaddr=123.456.78.9</span><br></pre></td></tr></table></figure>
-要删除规则，用 <code>--remove</code> 替换 <code>--add</code>。比如：<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --remove-masquerade</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.linuxprobe.com/centos-firewalld.html">FirewallD入门手册</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>filebeat 使用详解</title>
     <url>/202307201352/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6065,6 +6007,64 @@ width: 20%;
       <categories>
         <category>Linux</category>
         <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>firewalld 使用</title>
+    <url>/202302220932/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 3.10.0-1160</li>
+</ul>
+<p><code>firewalld</code> 是 <code>iptables</code> 的一个封装，可以让你更容易地管理 <code>iptables</code> 规则， 它并不是 <code>iptables</code> 的替代品。虽然 <code>iptables</code> 命令仍可用于 <code>firewalld</code> ，但建议使用 <code>firewalld</code> 时仅使用 <code>firewalld</code> 命令。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[FirewallD入门手册](https://www.linuxprobe.com/centos-firewalld.html)">[1]</span></a></sup></p>
+<p><code>firewalld</code> 是 <code>iptables</code> 的前端控制器，用于实现持久的网络流量规则。它提供命令行和图形界面，在大多数 Linux 发行版的仓库中都有。与直接控制 <code>iptables</code> 相比，使用 <code>firewalld</code> 有两个主要区别：</p>
+<ul>
+<li><code>firewalld</code> 使用区域和服务而不是链式规则。</li>
+<li>它动态管理规则集，允许更新规则而不破坏现有会话和连接。</li>
+</ul>
+<h1 id="firewalld-配置说明"><a href="#firewalld-配置说明" class="headerlink" title="firewalld 配置说明"></a>firewalld 配置说明</h1><h2 id="配置文件目录"><a href="#配置文件目录" class="headerlink" title="配置文件目录"></a>配置文件目录</h2><p>配置文件位于两个目录中：</p>
+<ul>
+<li><code>/usr/lib/firewalld/</code> 下保存默认配置，如默认区域和公用服务。避免修改它们，因为每次 <code>firewall</code> 软件包更新时都会覆盖这些文件。</li>
+<li><code>/etc/firewalld</code> 下保存系统配置文件。 这些文件将覆盖默认配置。</li>
+</ul>
+<h2 id="配置集说明"><a href="#配置集说明" class="headerlink" title="配置集说明"></a>配置集说明</h2><p><code>firewalld</code> 使用两个配置集： <code>运行时</code> 和 <code>持久</code></p>
+<p>在系统重新启动或重新启动 <code>firewalld</code> 服务时，不会保留 <code>运行时</code> 的配置更改，而对 <code>持久</code> 配置集的更改不会应用于正在运行的系统。</p>
+<p>默认情况下，<code>firewall-cmd</code> 命令适用于 <code>运行时</code> 配置，但使用 <code>--permanent</code> 选项将保存配置到  <code>持久</code> 配置中。</p>
+<p>要添加和激活持久性规则，你可以使用以下两种方法之一：</p>
+<ol>
+<li>将规则同时添加到持久规则集和运行时规则集中<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --zone=public --add-service=http</span><br></pre></td></tr></table></figure></li>
+<li>将规则添加到持久规则集中并重新加载 <code>firewalld</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --reload</span><br></pre></td></tr></table></figure>
+<code>--reload</code> 选项会删除所有 <code>运行时</code> 配置并应用 <code>持久</code> 配置。因为 <code>firewalld</code> 动态管理规则集，所以它不会破坏现有的连接和会话。<span id="more"></span></li>
+</ol>
+<h2 id="区域说明"><a href="#区域说明" class="headerlink" title="区域说明"></a>区域说明</h2><p><code>区域</code> 是针对给定位置或场景（例如家庭、公共、受信任等）可能具有的各种信任级别的预构建规则集。不同的区域允许不同的网络服务和入站流量类型，而拒绝其他任何流量。 首次启用 <code>firewalld</code> 后，<code>public</code> 将是默认区域。</p>
+<p>区域也可以用于不同的网络接口。例如，要分离内部网络和互联网的接口，你可以在 <code>internal</code> 区域上允许 DHCP，但在 <code>external</code> 区域仅允许 HTTP 和 SSH。未明确设置为特定区域的任何接口将添加到默认区域。</p>
+<h3 id="查看默认区域"><a href="#查看默认区域" class="headerlink" title="查看默认区域"></a>查看默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-default-zone</span></span><br><span class="line">public</span><br></pre></td></tr></table></figure>
+<h3 id="修改默认区域"><a href="#修改默认区域" class="headerlink" title="修改默认区域"></a>修改默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --set-default-zone=internal</span><br></pre></td></tr></table></figure>
+<h3 id="查看激活的区域及网络接口使用的区域"><a href="#查看激活的区域及网络接口使用的区域" class="headerlink" title="查看激活的区域及网络接口使用的区域"></a>查看激活的区域及网络接口使用的区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-active-zones</span></span><br><span class="line">public</span><br><span class="line">  interfaces: eth0</span><br></pre></td></tr></table></figure>
+<h3 id="查看指定区域的所有规则集-默认查看-运行时"><a href="#查看指定区域的所有规则集-默认查看-运行时" class="headerlink" title="查看指定区域的所有规则集(默认查看 运行时)"></a>查看指定区域的所有规则集(默认查看 <code>运行时</code>)</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all</span></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules:</span><br></pre></td></tr></table></figure>
+<h3 id="查看指定区域-持久-配置集的所有规则"><a href="#查看指定区域-持久-配置集的所有规则" class="headerlink" title="查看指定区域 持久 配置集的所有规则"></a>查看指定区域 <code>持久</code> 配置集的所有规则</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all --permanent</span></span><br><span class="line">public</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="查看所有区域的配置"><a href="#查看所有区域的配置" class="headerlink" title="查看所有区域的配置"></a>查看所有区域的配置</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --list-all-zones</span></span><br><span class="line">block</span><br><span class="line">  target: %%REJECT%%</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">dmz</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">drop</span><br><span class="line">  target: DROP</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">external</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: yes</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">home</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">internal</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">trusted</span><br><span class="line">  target: ACCEPT</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">work</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="服务"><a href="#服务" class="headerlink" title="服务"></a>服务</h2><p><code>firewalld</code> 可以根据特定网络服务的预定义规则来允许相关流量。你可以创建自己的自定义系统规则，并将它们添加到任何区域。 默认支持的服务的配置文件位于 <code>/usr/lib/firewalld/services/</code>，用户创建的服务文件在 <code>/etc/firewalld/services/</code> 中</p>
+<h3 id="查看默认的可用服务"><a href="#查看默认的可用服务" class="headerlink" title="查看默认的可用服务"></a>查看默认的可用服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-services</span></span><br><span class="line">RH-Satellite-6 RH-Satellite-6-capsule amanda-client amanda-k5-client amqp amqps apcupsd audit bacula bacula-client \</span><br><span class="line">bgp bitcoin bitcoin-rpc bitcoin-testnet bitcoin-testnet-rpc ceph ceph-mon cfengine condor-collector ctdb dhcp dhcpv6 \</span><br><span class="line">dhcpv6-client distcc dns docker-registry docker-swarm dropbox-lansync elasticsearch etcd-client etcd-server finger \</span><br><span class="line">freeipa-ldap freeipa-ldaps freeipa-replication freeipa-trust ftp ganglia-client ganglia-master git gre high-availability \</span><br><span class="line">http https imap imaps ipp ipp-client ipsec irc ircs iscsi-target isns jenkins kadmin kerberos kibana klogin kpasswd \</span><br><span class="line">kprop kshell ldap ldaps libvirt libvirt-tls lightning-network llmnr managesieve matrix mdns minidlna mongodb mosh mountd \</span><br><span class="line">mqtt mqtt-tls ms-wbt mssql murmur mysql nfs nfs3 nmea-0183 nrpe ntp nut openvpn ovirt-imageio ovirt-storageconsole \</span><br><span class="line">ovirt-vmconsole plex pmcd pmproxy pmwebapi pmwebapis pop3 pop3s postgresql privoxy proxy-dhcp ptp pulseaudio puppetmaster \</span><br><span class="line">quassel radius redis rpc-bind rsh rsyncd rtsp salt-master samba samba-client samba-dc sane sip sips slp smtp smtp-submission \</span><br><span class="line">smtps snmp snmptrap spideroak-lansync squid ssh steam-streaming svdrp svn syncthing syncthing-gui synergy syslog syslog-tls \</span><br><span class="line">telnet tftp tftp-client tinc tor-socks transmission-client upnp-client vdsm vnc-server wbem-http wbem-https wsman wsmans \</span><br><span class="line">xdmcp xmpp-bosh xmpp-client xmpp-local xmpp-server zabbix-agent zabbix-server</span><br></pre></td></tr></table></figure>
+
+<h3 id="启用或禁用-HTTP-服务"><a href="#启用或禁用-HTTP-服务" class="headerlink" title="启用或禁用 HTTP 服务"></a>启用或禁用 HTTP 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-service=http --permanent</span><br></pre></td></tr></table></figure>
+
+<h3 id="允许或者拒绝任意端口-x2F-协议"><a href="#允许或者拒绝任意端口-x2F-协议" class="headerlink" title="允许或者拒绝任意端口&#x2F;协议"></a>允许或者拒绝任意端口&#x2F;协议</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-port=12345/tcp --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-port=12345/tcp --permanent</span><br></pre></td></tr></table></figure>
+
+<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><h3 id="同一台服务器上将-80-端口的流量转发到-12345-端口"><a href="#同一台服务器上将-80-端口的流量转发到-12345-端口" class="headerlink" title="同一台服务器上将 80 端口的流量转发到 12345 端口"></a>同一台服务器上将 80 端口的流量转发到 12345 端口</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=12345</span><br></pre></td></tr></table></figure>
+
+<h3 id="将端口转发到另外一台服务器上"><a href="#将端口转发到另外一台服务器上" class="headerlink" title="将端口转发到另外一台服务器上"></a>将端口转发到另外一台服务器上</h3><ol>
+<li>在需要的区域中激活 <code>masquerade</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-masquerade</span><br></pre></td></tr></table></figure></li>
+<li>添加转发规则<br>例子中是将 IP 地址为 ：123.456.78.9 的远程服务器上 80 端口的流量转发到 8080 上<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=8080:toaddr=123.456.78.9</span><br></pre></td></tr></table></figure>
+要删除规则，用 <code>--remove</code> 替换 <code>--add</code>。比如：<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --remove-masquerade</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.linuxprobe.com/centos-firewalld.html">FirewallD入门手册</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -10998,6 +10998,51 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>linux macvlan 网卡虚拟化技术</title>
+    <url>/202304251611/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Macvlan"><a href="#Macvlan" class="headerlink" title="Macvlan"></a>Macvlan</h1><p>Macvlan 本身是 linxu kernel 模块</p>
+<p>Macvlan 接口是物理以太网接口的虚拟子接口，Macvlan 允许用户在一个物理网络接口上面配置多个虚拟的网络接口，每个 Macvlan 接口都有自己的区别与父接口的 MAC 地址，并且可以像普通的物理网络接口一样分配 IP 地址。使用 Macvlan 技术实现的效果是一块物理网卡可以绑定多个 IP 地址，并且每个 IP 地址有自己独立的 MAC 地址。</p>
+<p>Macvlan 虚拟出来的虚拟网卡，在逻辑上和物理网卡是对等的。使用 Macvlan 的虚拟网卡要和父接口在同一个网段。</p>
+<p>Macvlan 的最大优点是性能极好，相比其他方式，macvlan 不需要创建 Linux bridge，而是直接通过interface 连接到物理网络。</p>
+<p>为保证父接口能接收多个不同 MAC 地址的网络包，需要开启网卡的 <a href="/202304041014/" title="混杂模式">混杂模式</a></p>
+<h2 id="docker-中使用-Macvlan-虚拟网卡"><a href="#docker-中使用-Macvlan-虚拟网卡" class="headerlink" title="docker 中使用 Macvlan 虚拟网卡"></a>docker 中使用 Macvlan 虚拟网卡</h2><p>本示例演示 docker 环境中使用 macvlan。首先创建使用 macvlan 驱动的 network，Docker 中 macvlan 只支持 bridge 模式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Docker跨主机通信之macvlan](http://dockeradv.baoshu.red/advanced_network/macvlan.html)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network <span class="built_in">ls</span></span></span><br><span class="line">NETWORK ID     NAME       DRIVER    SCOPE</span><br><span class="line">69324d203c35   bridge     bridge    local</span><br><span class="line">f8943f720d73   host       host      local</span><br><span class="line">0aa95ac8c0f4   macvlan1   macvlan   local</span><br><span class="line">d400c40efdc5   none       null      local</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>在 docker 环境中，创建网络时，会自动将宿主机网卡设置为混杂模式，此时查看网卡信息，未显示混杂模式，但是查看 <code>dmesg</code> 日志，会看到网卡进入了混杂模式</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ dmesg</span><br><span class="line">[93203.228311] device ens33 entered promiscuous mode</span><br></pre></td></tr></table></figure>
+</blockquote>
+<p>运行容器并连接到新建的 macvlan 网络 <code>macvlan1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -itd --name test01 \</span><br><span class="line">                --ip=192.168.142.12 \</span><br><span class="line">                --network macvlan1 centos:centos7.9.2009</span><br></pre></td></tr></table></figure>
+<p>使用命令 <code>docker exec -it test01 bash</code> 进入容器查看容器的 IP 地址信息，可以看到容器中的网卡类型为 <code>macvlan</code>，模式为 <code>bridge</code>，网关为 docker 网络 <code>macvlan1</code> 中配置的网关。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">4: eth0@if2: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default </span><br><span class="line">    link/ether 02:42:c0:a8:8e:0c brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    macvlan mode bridge numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 192.168.142.12/24 brd 192.168.142.255 scope global eth0</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">route -n</span></span><br><span class="line">Kernel IP routing table</span><br><span class="line">Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line">0.0.0.0         192.168.142.2   0.0.0.0         UG    0      0        0 eth0</span><br><span class="line">192.168.142.0   0.0.0.0         255.255.255.0   U     0      0        0 eth0</span><br></pre></td></tr></table></figure>
+<p>测试容器可以和宿主机网络一样访问外网。</p>
+<p>此时检查宿主机网卡信息，系统上只有 <code>lo</code>，<code>ens33</code>，<code>docker0</code>，未出现其他网卡。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span></span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:90:51:eb brd ff:ff:ff:ff:ff:ff promiscuity 1 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:e9:a6:76:56 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:e9:a6:76:56 designated_root 8000.2:42:e9:a6:76:56 root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer  265.03 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br></pre></td></tr></table></figure>
+
+<p>在另一个 docker 节点上同样配置 docker 网络和容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run -itd --name test01 \</span></span><br><span class="line"><span class="language-bash">                --ip=192.168.142.13 \</span></span><br><span class="line"><span class="language-bash">                --network macvlan1 centos:centos7.9.2009</span>                                   </span><br></pre></td></tr></table></figure>
+<p>进入容器 <code>test01</code> ，访问到另一个节点上的容器的连通性</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.12</span></span><br><span class="line">PING 192.168.142.12 (192.168.142.12) 56(84) bytes of data.</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=1 ttl=64 time=0.871 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=2 ttl=64 time=0.403 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=3 ttl=64 time=0.568 ms</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.12 ping statistics ---</span><br><span class="line">3 packets transmitted, 3 received, 0% packet loss, time 2047ms</span><br><span class="line">rtt min/avg/max/mdev = 0.403/0.614/0.871/0.193 ms</span><br></pre></td></tr></table></figure>
+<p>进入容器 <code>test01</code> ，测试和宿主机 ip 的连通性，结果发现不通，原因为：在 macvlan 虚拟网络中，父接口（物理网卡）相当于一个交换机，对于其子 macvlan 网卡的数据包，只进行转发而不处理，于是造成了使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信。 </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.10</span></span><br><span class="line">PING 192.168.142.10 (192.168.142.10) 56(84) bytes of data.</span><br><span class="line">From 192.168.142.13 icmp_seq=1 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=2 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=3 Destination Host Unreachable</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.10 ping statistics ---</span><br><span class="line">5 packets transmitted, 0 received, +3 errors, 100% packet loss, time 4073ms</span><br><span class="line">pipe 4</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+<h2 id="macvlan-网络存的缺点"><a href="#macvlan-网络存的缺点" class="headerlink" title="macvlan 网络存的缺点"></a>macvlan 网络存的缺点</h2><ul>
+<li>macvlan 会独占主机的物理网卡，也就是说一个物理网卡只能创建一个 macvlan 网络</li>
+<li>使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信</li>
+<li>父接口异常，其他所有的虚拟子接口的网络都会异常</li>
+</ul>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="http://dockeradv.baoshu.red/advanced_network/macvlan.html">Docker跨主机通信之macvlan</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>network</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>linux network namespace 使用说明</title>
     <url>/202304031317/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -11121,51 +11166,6 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> vxlan</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN mode DEFAULT group default </span><br><span class="line">    link/ether ce:8c:56:84:e1:7a brd ff:ff:ff:ff:ff:ff</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> veth</span></span><br><span class="line">2350: veth2fd77154@if3: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue master cni0 state UP mode DEFAULT group default </span><br><span class="line">    link/ether 5a:02:6c:65:c8:5f brd ff:ff:ff:ff:ff:ff link-netnsid 0</span><br><span class="line">2352: vethfef50370@if3: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue master cni0 state UP mode DEFAULT group default </span><br><span class="line">    link/ether 3a:1c:0b:4f:af:b2 brd ff:ff:ff:ff:ff:ff link-netnsid 2</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> bridge</span></span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:48:54:ca:75 brd ff:ff:ff:ff:ff:ff</span><br><span class="line">2349: cni0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 26:4e:46:b2:2a:4c brd ff:ff:ff:ff:ff:ff</span><br></pre></td></tr></table></figure>
 <p>以下命令查看网卡的详细信息，包括网卡类型</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show veth1_p</span></span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show docker0</span></span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer   48.83 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 ::1/128 scope host </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:e7:c0:27 brd ff:ff:ff:ff:ff:ff promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 192.168.142.10/24 brd 192.168.142.255 scope global noprefixroute ens33</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::20c:29ff:fee7:c027/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer  147.42 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.10.10.1/24 scope global veth1_p</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::70f1:d6ff:fef6:c953/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">6: veth2_p@if7: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000</span><br><span class="line">    link/ether b6:17:a8:92:57:09 brd ff:ff:ff:ff:ff:ff link-netnsid 1 promiscuity 0 </span><br><span class="line">    veth numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.10.20.1/24 scope global veth2_p</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::b417:a8ff:fe92:5709/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever  </span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span></span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:e7:c0:27 brd ff:ff:ff:ff:ff:ff promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer   67.56 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">6: veth2_p@if7: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether b6:17:a8:92:57:09 brd ff:ff:ff:ff:ff:ff link-netnsid 1 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535       </span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>network</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux macvlan 网卡虚拟化技术</title>
-    <url>/202304251611/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Macvlan"><a href="#Macvlan" class="headerlink" title="Macvlan"></a>Macvlan</h1><p>Macvlan 本身是 linxu kernel 模块</p>
-<p>Macvlan 接口是物理以太网接口的虚拟子接口，Macvlan 允许用户在一个物理网络接口上面配置多个虚拟的网络接口，每个 Macvlan 接口都有自己的区别与父接口的 MAC 地址，并且可以像普通的物理网络接口一样分配 IP 地址。使用 Macvlan 技术实现的效果是一块物理网卡可以绑定多个 IP 地址，并且每个 IP 地址有自己独立的 MAC 地址。</p>
-<p>Macvlan 虚拟出来的虚拟网卡，在逻辑上和物理网卡是对等的。使用 Macvlan 的虚拟网卡要和父接口在同一个网段。</p>
-<p>Macvlan 的最大优点是性能极好，相比其他方式，macvlan 不需要创建 Linux bridge，而是直接通过interface 连接到物理网络。</p>
-<p>为保证父接口能接收多个不同 MAC 地址的网络包，需要开启网卡的 <a href="/202304041014/" title="混杂模式">混杂模式</a></p>
-<h2 id="docker-中使用-Macvlan-虚拟网卡"><a href="#docker-中使用-Macvlan-虚拟网卡" class="headerlink" title="docker 中使用 Macvlan 虚拟网卡"></a>docker 中使用 Macvlan 虚拟网卡</h2><p>本示例演示 docker 环境中使用 macvlan。首先创建使用 macvlan 驱动的 network，Docker 中 macvlan 只支持 bridge 模式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Docker跨主机通信之macvlan](http://dockeradv.baoshu.red/advanced_network/macvlan.html)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network <span class="built_in">ls</span></span></span><br><span class="line">NETWORK ID     NAME       DRIVER    SCOPE</span><br><span class="line">69324d203c35   bridge     bridge    local</span><br><span class="line">f8943f720d73   host       host      local</span><br><span class="line">0aa95ac8c0f4   macvlan1   macvlan   local</span><br><span class="line">d400c40efdc5   none       null      local</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>在 docker 环境中，创建网络时，会自动将宿主机网卡设置为混杂模式，此时查看网卡信息，未显示混杂模式，但是查看 <code>dmesg</code> 日志，会看到网卡进入了混杂模式</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ dmesg</span><br><span class="line">[93203.228311] device ens33 entered promiscuous mode</span><br></pre></td></tr></table></figure>
-</blockquote>
-<p>运行容器并连接到新建的 macvlan 网络 <code>macvlan1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -itd --name test01 \</span><br><span class="line">                --ip=192.168.142.12 \</span><br><span class="line">                --network macvlan1 centos:centos7.9.2009</span><br></pre></td></tr></table></figure>
-<p>使用命令 <code>docker exec -it test01 bash</code> 进入容器查看容器的 IP 地址信息，可以看到容器中的网卡类型为 <code>macvlan</code>，模式为 <code>bridge</code>，网关为 docker 网络 <code>macvlan1</code> 中配置的网关。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">4: eth0@if2: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default </span><br><span class="line">    link/ether 02:42:c0:a8:8e:0c brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    macvlan mode bridge numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 192.168.142.12/24 brd 192.168.142.255 scope global eth0</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">route -n</span></span><br><span class="line">Kernel IP routing table</span><br><span class="line">Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line">0.0.0.0         192.168.142.2   0.0.0.0         UG    0      0        0 eth0</span><br><span class="line">192.168.142.0   0.0.0.0         255.255.255.0   U     0      0        0 eth0</span><br></pre></td></tr></table></figure>
-<p>测试容器可以和宿主机网络一样访问外网。</p>
-<p>此时检查宿主机网卡信息，系统上只有 <code>lo</code>，<code>ens33</code>，<code>docker0</code>，未出现其他网卡。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span></span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:90:51:eb brd ff:ff:ff:ff:ff:ff promiscuity 1 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:e9:a6:76:56 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:e9:a6:76:56 designated_root 8000.2:42:e9:a6:76:56 root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer  265.03 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br></pre></td></tr></table></figure>
-
-<p>在另一个 docker 节点上同样配置 docker 网络和容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run -itd --name test01 \</span></span><br><span class="line"><span class="language-bash">                --ip=192.168.142.13 \</span></span><br><span class="line"><span class="language-bash">                --network macvlan1 centos:centos7.9.2009</span>                                   </span><br></pre></td></tr></table></figure>
-<p>进入容器 <code>test01</code> ，访问到另一个节点上的容器的连通性</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.12</span></span><br><span class="line">PING 192.168.142.12 (192.168.142.12) 56(84) bytes of data.</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=1 ttl=64 time=0.871 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=2 ttl=64 time=0.403 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=3 ttl=64 time=0.568 ms</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.12 ping statistics ---</span><br><span class="line">3 packets transmitted, 3 received, 0% packet loss, time 2047ms</span><br><span class="line">rtt min/avg/max/mdev = 0.403/0.614/0.871/0.193 ms</span><br></pre></td></tr></table></figure>
-<p>进入容器 <code>test01</code> ，测试和宿主机 ip 的连通性，结果发现不通，原因为：在 macvlan 虚拟网络中，父接口（物理网卡）相当于一个交换机，对于其子 macvlan 网卡的数据包，只进行转发而不处理，于是造成了使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信。 </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.10</span></span><br><span class="line">PING 192.168.142.10 (192.168.142.10) 56(84) bytes of data.</span><br><span class="line">From 192.168.142.13 icmp_seq=1 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=2 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=3 Destination Host Unreachable</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.10 ping statistics ---</span><br><span class="line">5 packets transmitted, 0 received, +3 errors, 100% packet loss, time 4073ms</span><br><span class="line">pipe 4</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-<h2 id="macvlan-网络存的缺点"><a href="#macvlan-网络存的缺点" class="headerlink" title="macvlan 网络存的缺点"></a>macvlan 网络存的缺点</h2><ul>
-<li>macvlan 会独占主机的物理网卡，也就是说一个物理网卡只能创建一个 macvlan 网络</li>
-<li>使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信</li>
-<li>父接口异常，其他所有的虚拟子接口的网络都会异常</li>
-</ul>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="http://dockeradv.baoshu.red/advanced_network/macvlan.html">Docker跨主机通信之macvlan</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
         <category>network</category>
@@ -11467,37 +11467,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux sudo 使用介绍</title>
-    <url>/202308311739/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
-<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
-<p>主要配置文件内容如下</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
-
-<p>各列值含义说明：</p>
-<ul>
-<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
-<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
-<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
-</ul>
-<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
-<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
-<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
-<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
-<p>若要禁止此行为，删除此文件即可。</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>linux 系统状态查看</title>
     <url>/202301171137/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -11536,6 +11505,37 @@ width: 20%;
 </ul>
 <h2 id="内存使用量统计"><a href="#内存使用量统计" class="headerlink" title="内存使用量统计"></a>内存使用量统计</h2><p>查看使用内存排名前十的进程：</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ps aux | sort -k4,4nr | head -n 10</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux sudo 使用介绍</title>
+    <url>/202308311739/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
+<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
+<p>主要配置文件内容如下</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
+
+<p>各列值含义说明：</p>
+<ul>
+<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
+<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
+<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
+</ul>
+<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
+<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
+<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
+<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
+<p>若要禁止此行为，删除此文件即可。</p>
 ]]></content>
       <categories>
         <category>Linux</category>
@@ -13461,48 +13461,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Prometheus blackbox export 安装配置</title>
-    <url>/202309261542/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>blackbox_exporter</code> 是一个由 Prometheus 社区维护的项目，它允许用户通过 HTTP、HTTPS、DNS、TCP 和 ICMP 协议对服务进行“黑盒”方式的探测，以检测和监控网络协议的可用性和响应时间。</p>
-<p>本文档以在 Kubernetes 中部署 <code>blackbox_exporter</code> 为例，演示其使用方法。</p>
-<p>为了能够监控到 Kubernetes 集群内部的部分信息（如 <code>api-server</code> 的证书等），建议 <a href="https://csms.tech/202212141608/#创建集群角色">参考文档为其配置 RBAC 策略</a> 以使其能读取 <code>kube-apiserver</code> 相关资源，<strong>本文档中的配置示例基于此权限配置</strong>。Namespace 为 <code>prometheus</code></p>
-<h1 id="Kubernetes-中部署-blackbox-export"><a href="#Kubernetes-中部署-blackbox-export" class="headerlink" title="Kubernetes 中部署 blackbox_export"></a>Kubernetes 中部署 blackbox_export</h1><h2 id="创建-ConfigMap-以外部化-blackbox-export-配置"><a href="#创建-ConfigMap-以外部化-blackbox-export-配置" class="headerlink" title="创建 ConfigMap 以外部化 blackbox_export 配置"></a>创建 ConfigMap 以外部化 blackbox_export 配置</h2><p><code>blackbox_export</code> 基于配置文件运行，将其配置文件通过 Kubernetes 的 ConfiMap 存储，分离运行环境和配置，方便管理。</p>
-<p>参考以下配置，创建 ConfigMap</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">data:</span><br><span class="line">  blackbox.yml: |-</span><br><span class="line">    modules:</span><br><span class="line">      http_2xx:</span><br><span class="line">        prober: http</span><br><span class="line">        timeout: 10s</span><br><span class="line">        http:</span><br><span class="line">          preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">      tcp_connect:</span><br><span class="line">        prober: tcp</span><br><span class="line">kind: ConfigMap</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-export-config</span><br><span class="line">  namespace: prometheus</span><br></pre></td></tr></table></figure>
-
-<h2 id="部署-blackbox-export"><a href="#部署-blackbox-export" class="headerlink" title="部署 blackbox_export"></a>部署 blackbox_export</h2><p>参考以下内容，创建 Deployment 和 Service，在此配置中，使用上面创建的 ConfigMap 作为 <code>blackbox_export</code> 的配置文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus-blackbox-export</span><br><span class="line">  namespace: prometheus</span><br><span class="line">  labels:</span><br><span class="line">    app: prometheus-blackbox-export</span><br><span class="line">spec:</span><br><span class="line">  replicas: 1</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      app: prometheus-blackbox-export</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        app: prometheus-blackbox-export</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">        - name: prometheus-blackbox-export</span><br><span class="line">          image: bitnami/blackbox-exporter</span><br><span class="line">          args:</span><br><span class="line">            - &quot;--config.file=/etc/blackbox/blackbox.yml&quot;</span><br><span class="line">          ports:</span><br><span class="line">            - containerPort: 9115</span><br><span class="line">          resources:</span><br><span class="line">            requests:</span><br><span class="line">              cpu: 500m</span><br><span class="line">              memory: 500M</span><br><span class="line">            limits:</span><br><span class="line">              cpu: 1</span><br><span class="line">              memory: 1Gi</span><br><span class="line">          volumeMounts:</span><br><span class="line">            - name: blackbox-config-volume</span><br><span class="line">              mountPath: /etc/blackbox/</span><br><span class="line">      volumes:</span><br><span class="line">        - name: blackbox-config-volume</span><br><span class="line">          configMap:</span><br><span class="line">            defaultMode: 420</span><br><span class="line">            name: blackbox-export-config</span><br><span class="line">---</span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Service</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-service</span><br><span class="line">  namespace: prometheus</span><br><span class="line">spec:</span><br><span class="line">  ports:</span><br><span class="line">    - name: blackbox-port</span><br><span class="line">      port: 9115</span><br><span class="line">      protocol: TCP</span><br><span class="line">      targetPort: 9115</span><br><span class="line">  selector:</span><br><span class="line">    app: prometheus-blackbox-export            </span><br></pre></td></tr></table></figure>
-
-<p>部署成功后，从 <code>prometheus</code> 的 Namespace 中测试访问 <code>blackbox_export</code> 的 Endpoint <code>blackbox-service:9115</code>，如果是在其他 Namespace，可以使用 Endpoint <code>blackbox-service.prometheus.svc.cluster.local:9115</code>。如果集群的域名不是 <code>cluster.local</code>，修改为实际值。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">prometheus-7589d5bbdd-xdjwt:~# curl -v blackbox-service:9115</span><br><span class="line">*   Trying 10.111.137.0:9115...</span><br><span class="line">* Connected to blackbox-service (10.111.137.0) port 9115 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: blackbox-service:9115</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/8.0.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">&lt; Content-Type: text/html</span><br><span class="line">&lt; Date: Tue, 26 Sep 2023 09:11:25 GMT</span><br><span class="line">&lt; Content-Length: 544</span><br><span class="line">&lt; </span><br><span class="line">&lt;html&gt;</span><br><span class="line">    &lt;head&gt;&lt;title&gt;Blackbox Exporter&lt;/title&gt;&lt;/head&gt;</span><br><span class="line">    &lt;body&gt;</span><br><span class="line">    &lt;h1&gt;Blackbox Exporter&lt;/h1&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&quot;&gt;Probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&amp;debug=true&quot;&gt;Debug probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;metrics&quot;&gt;Metrics&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;config&quot;&gt;Configuration&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;h2&gt;Recent Probes&lt;/h2&gt;</span><br><span class="line">    &lt;table border=&#x27;1&#x27;&gt;&lt;tr&gt;&lt;th&gt;Module&lt;/th&gt;&lt;th&gt;Target&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;Debug&lt;/th&gt;&lt;/table&gt;&lt;/body&gt;</span><br><span class="line">* Connection #0 to host blackbox-service left intact</span><br><span class="line">    &lt;/html&gt;</span><br></pre></td></tr></table></figure>
-
-<h2 id="Prometheus-读取-blackbox-exporter-数据"><a href="#Prometheus-读取-blackbox-exporter-数据" class="headerlink" title="Prometheus 读取 blackbox_exporter 数据"></a>Prometheus 读取 blackbox_exporter 数据</h2><p>在 Prometheus 配置中添加以下内容，使 Prometheus 抓取 <code>black_exporter</code> 的监控数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_2xx&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_2xx]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - http://www.google.com:5000/</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
-<p>部署完成后，观察过 Prometheus 的 Target，正常情况下可以看到监控目标的状态。</p>
-<span id="more"></span>
-
-<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint"><a href="#使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint" class="headerlink" title="使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint"></a>使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</h2><p>本示例演示使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint，Kubernetes 集群默认的域为 <code>cluster.local</code>，本示例中的 Kubernetes 集群使用默认域。Kubernetes 集群中和 <code>kube-apiserver</code> 的通信一般都是使用 HTTPS，因此在使用 <code>blackbox_exporter</code> 监控时需要指定使用 HTTPS 请求 <code>kube-apiserver</code>，同时可以达到监控 <code>kube-apiserver</code> HTTPS 证书的目的。</p>
-<p>使用 <code>kubeadmin</code> 初始化的集群默认使用自签名的证书，客户端使用 HTTPS 访问时需要提供 CA 证书。以下 <code>blackbox_exporter</code> 配置中，模块 <code>http_k8s_cluster</code> 配置了必须使用 HTTPS 请求 Endpoint，并且配置了 CA 路径</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">modules:</span><br><span class="line">  http_2xx:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 10s</span><br><span class="line">    http:</span><br><span class="line">      preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">  tcp_connect:</span><br><span class="line">    prober: tcp</span><br><span class="line">  http_k8s_cluster:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 5s</span><br><span class="line">    http:</span><br><span class="line">      method: GET</span><br><span class="line">      fail_if_ssl: false</span><br><span class="line">      fail_if_not_ssl: true</span><br><span class="line">      valid_status_codes: [200, 403]</span><br><span class="line">      tls_config:</span><br><span class="line">        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt</span><br><span class="line">        insecure_skip_verify: false</span><br></pre></td></tr></table></figure>
-
-<p>在 Prometheus 配置中添加以下 Target，用于监控  <code>kube-apiserver</code> 的 Endpoint <code>https://kubernetes.default.svc.cluster.local</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_k8s_cluster&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_k8s_cluster]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - https://kubernetes.default.svc.cluster.local</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
-<p>配置成功后，观察 Prometheus 中的 Targets，可以看到 Targets 状态<br><img src="https://i.csms.tech/img_221.png"></p>
-<h2 id="监控-HTTPS-类型-的-Endpoints-的证书过期时间"><a href="#监控-HTTPS-类型-的-Endpoints-的证书过期时间" class="headerlink" title="监控 HTTPS 类型 的 Endpoints 的证书过期时间"></a>监控 HTTPS 类型 的 Endpoints 的证书过期时间</h2><p>假如在 <code>blackbox_exporter</code> 配置了 <code>prober</code> 为 <code>http</code> 类型的 module，当在 Prometheus 中配置的 <code>targets</code> 的请求协议使用 <code>https</code> 时，<code>blackbox_exporter</code> 提供了关于证书的监控指标。配置示例可以参考 <a href="#%E4%BD%BF%E7%94%A8-blackbox-exporter-%E5%92%8C-Prometheus-%E7%9B%91%E6%8E%A7-Kubernetes-API-Server-%E7%9A%84-Endpoint">使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</a></p>
-<p><code>probe_ssl_earliest_cert_expiry</code> 指标显示了证书链中最早到期的证书的过期时间。其值是一个 Unix 时间戳，表示证书的过期日期和时间。</p>
-<p>如果要计算证书剩余的有效天数，可以使用以下表达式计算</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(probe_ssl_earliest_cert_expiry - time()) / 86400</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>predixy 安装配置</title>
     <url>/202207271506/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
@@ -13548,6 +13506,48 @@ width: 20%;
       <tags>
         <tag>Redis</tag>
         <tag>Predixy</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Prometheus blackbox export 安装配置</title>
+    <url>/202309261542/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>blackbox_exporter</code> 是一个由 Prometheus 社区维护的项目，它允许用户通过 HTTP、HTTPS、DNS、TCP 和 ICMP 协议对服务进行“黑盒”方式的探测，以检测和监控网络协议的可用性和响应时间。</p>
+<p>本文档以在 Kubernetes 中部署 <code>blackbox_exporter</code> 为例，演示其使用方法。</p>
+<p>为了能够监控到 Kubernetes 集群内部的部分信息（如 <code>api-server</code> 的证书等），建议 <a href="https://csms.tech/202212141608/#创建集群角色">参考文档为其配置 RBAC 策略</a> 以使其能读取 <code>kube-apiserver</code> 相关资源，<strong>本文档中的配置示例基于此权限配置</strong>。Namespace 为 <code>prometheus</code></p>
+<h1 id="Kubernetes-中部署-blackbox-export"><a href="#Kubernetes-中部署-blackbox-export" class="headerlink" title="Kubernetes 中部署 blackbox_export"></a>Kubernetes 中部署 blackbox_export</h1><h2 id="创建-ConfigMap-以外部化-blackbox-export-配置"><a href="#创建-ConfigMap-以外部化-blackbox-export-配置" class="headerlink" title="创建 ConfigMap 以外部化 blackbox_export 配置"></a>创建 ConfigMap 以外部化 blackbox_export 配置</h2><p><code>blackbox_export</code> 基于配置文件运行，将其配置文件通过 Kubernetes 的 ConfiMap 存储，分离运行环境和配置，方便管理。</p>
+<p>参考以下配置，创建 ConfigMap</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">data:</span><br><span class="line">  blackbox.yml: |-</span><br><span class="line">    modules:</span><br><span class="line">      http_2xx:</span><br><span class="line">        prober: http</span><br><span class="line">        timeout: 10s</span><br><span class="line">        http:</span><br><span class="line">          preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">      tcp_connect:</span><br><span class="line">        prober: tcp</span><br><span class="line">kind: ConfigMap</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-export-config</span><br><span class="line">  namespace: prometheus</span><br></pre></td></tr></table></figure>
+
+<h2 id="部署-blackbox-export"><a href="#部署-blackbox-export" class="headerlink" title="部署 blackbox_export"></a>部署 blackbox_export</h2><p>参考以下内容，创建 Deployment 和 Service，在此配置中，使用上面创建的 ConfigMap 作为 <code>blackbox_export</code> 的配置文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus-blackbox-export</span><br><span class="line">  namespace: prometheus</span><br><span class="line">  labels:</span><br><span class="line">    app: prometheus-blackbox-export</span><br><span class="line">spec:</span><br><span class="line">  replicas: 1</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      app: prometheus-blackbox-export</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        app: prometheus-blackbox-export</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">        - name: prometheus-blackbox-export</span><br><span class="line">          image: bitnami/blackbox-exporter</span><br><span class="line">          args:</span><br><span class="line">            - &quot;--config.file=/etc/blackbox/blackbox.yml&quot;</span><br><span class="line">          ports:</span><br><span class="line">            - containerPort: 9115</span><br><span class="line">          resources:</span><br><span class="line">            requests:</span><br><span class="line">              cpu: 500m</span><br><span class="line">              memory: 500M</span><br><span class="line">            limits:</span><br><span class="line">              cpu: 1</span><br><span class="line">              memory: 1Gi</span><br><span class="line">          volumeMounts:</span><br><span class="line">            - name: blackbox-config-volume</span><br><span class="line">              mountPath: /etc/blackbox/</span><br><span class="line">      volumes:</span><br><span class="line">        - name: blackbox-config-volume</span><br><span class="line">          configMap:</span><br><span class="line">            defaultMode: 420</span><br><span class="line">            name: blackbox-export-config</span><br><span class="line">---</span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Service</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-service</span><br><span class="line">  namespace: prometheus</span><br><span class="line">spec:</span><br><span class="line">  ports:</span><br><span class="line">    - name: blackbox-port</span><br><span class="line">      port: 9115</span><br><span class="line">      protocol: TCP</span><br><span class="line">      targetPort: 9115</span><br><span class="line">  selector:</span><br><span class="line">    app: prometheus-blackbox-export            </span><br></pre></td></tr></table></figure>
+
+<p>部署成功后，从 <code>prometheus</code> 的 Namespace 中测试访问 <code>blackbox_export</code> 的 Endpoint <code>blackbox-service:9115</code>，如果是在其他 Namespace，可以使用 Endpoint <code>blackbox-service.prometheus.svc.cluster.local:9115</code>。如果集群的域名不是 <code>cluster.local</code>，修改为实际值。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">prometheus-7589d5bbdd-xdjwt:~# curl -v blackbox-service:9115</span><br><span class="line">*   Trying 10.111.137.0:9115...</span><br><span class="line">* Connected to blackbox-service (10.111.137.0) port 9115 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: blackbox-service:9115</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/8.0.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">&lt; Content-Type: text/html</span><br><span class="line">&lt; Date: Tue, 26 Sep 2023 09:11:25 GMT</span><br><span class="line">&lt; Content-Length: 544</span><br><span class="line">&lt; </span><br><span class="line">&lt;html&gt;</span><br><span class="line">    &lt;head&gt;&lt;title&gt;Blackbox Exporter&lt;/title&gt;&lt;/head&gt;</span><br><span class="line">    &lt;body&gt;</span><br><span class="line">    &lt;h1&gt;Blackbox Exporter&lt;/h1&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&quot;&gt;Probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&amp;debug=true&quot;&gt;Debug probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;metrics&quot;&gt;Metrics&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;config&quot;&gt;Configuration&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;h2&gt;Recent Probes&lt;/h2&gt;</span><br><span class="line">    &lt;table border=&#x27;1&#x27;&gt;&lt;tr&gt;&lt;th&gt;Module&lt;/th&gt;&lt;th&gt;Target&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;Debug&lt;/th&gt;&lt;/table&gt;&lt;/body&gt;</span><br><span class="line">* Connection #0 to host blackbox-service left intact</span><br><span class="line">    &lt;/html&gt;</span><br></pre></td></tr></table></figure>
+
+<h2 id="Prometheus-读取-blackbox-exporter-数据"><a href="#Prometheus-读取-blackbox-exporter-数据" class="headerlink" title="Prometheus 读取 blackbox_exporter 数据"></a>Prometheus 读取 blackbox_exporter 数据</h2><p>在 Prometheus 配置中添加以下内容，使 Prometheus 抓取 <code>black_exporter</code> 的监控数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_2xx&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_2xx]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - http://www.google.com:5000/</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
+<p>部署完成后，观察过 Prometheus 的 Target，正常情况下可以看到监控目标的状态。</p>
+<span id="more"></span>
+
+<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint"><a href="#使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint" class="headerlink" title="使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint"></a>使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</h2><p>本示例演示使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint，Kubernetes 集群默认的域为 <code>cluster.local</code>，本示例中的 Kubernetes 集群使用默认域。Kubernetes 集群中和 <code>kube-apiserver</code> 的通信一般都是使用 HTTPS，因此在使用 <code>blackbox_exporter</code> 监控时需要指定使用 HTTPS 请求 <code>kube-apiserver</code>，同时可以达到监控 <code>kube-apiserver</code> HTTPS 证书的目的。</p>
+<p>使用 <code>kubeadmin</code> 初始化的集群默认使用自签名的证书，客户端使用 HTTPS 访问时需要提供 CA 证书。以下 <code>blackbox_exporter</code> 配置中，模块 <code>http_k8s_cluster</code> 配置了必须使用 HTTPS 请求 Endpoint，并且配置了 CA 路径</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">modules:</span><br><span class="line">  http_2xx:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 10s</span><br><span class="line">    http:</span><br><span class="line">      preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">  tcp_connect:</span><br><span class="line">    prober: tcp</span><br><span class="line">  http_k8s_cluster:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 5s</span><br><span class="line">    http:</span><br><span class="line">      method: GET</span><br><span class="line">      fail_if_ssl: false</span><br><span class="line">      fail_if_not_ssl: true</span><br><span class="line">      valid_status_codes: [200, 403]</span><br><span class="line">      tls_config:</span><br><span class="line">        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt</span><br><span class="line">        insecure_skip_verify: false</span><br></pre></td></tr></table></figure>
+
+<p>在 Prometheus 配置中添加以下 Target，用于监控  <code>kube-apiserver</code> 的 Endpoint <code>https://kubernetes.default.svc.cluster.local</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_k8s_cluster&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_k8s_cluster]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - https://kubernetes.default.svc.cluster.local</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
+<p>配置成功后，观察 Prometheus 中的 Targets，可以看到 Targets 状态<br><img src="https://i.csms.tech/img_221.png"></p>
+<h2 id="监控-HTTPS-类型-的-Endpoints-的证书过期时间"><a href="#监控-HTTPS-类型-的-Endpoints-的证书过期时间" class="headerlink" title="监控 HTTPS 类型 的 Endpoints 的证书过期时间"></a>监控 HTTPS 类型 的 Endpoints 的证书过期时间</h2><p>假如在 <code>blackbox_exporter</code> 配置了 <code>prober</code> 为 <code>http</code> 类型的 module，当在 Prometheus 中配置的 <code>targets</code> 的请求协议使用 <code>https</code> 时，<code>blackbox_exporter</code> 提供了关于证书的监控指标。配置示例可以参考 <a href="#%E4%BD%BF%E7%94%A8-blackbox-exporter-%E5%92%8C-Prometheus-%E7%9B%91%E6%8E%A7-Kubernetes-API-Server-%E7%9A%84-Endpoint">使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</a></p>
+<p><code>probe_ssl_earliest_cert_expiry</code> 指标显示了证书链中最早到期的证书的过期时间。其值是一个 Unix 时间戳，表示证书的过期日期和时间。</p>
+<p>如果要计算证书剩余的有效天数，可以使用以下表达式计算</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(probe_ssl_earliest_cert_expiry - time()) / 86400</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>Prometheus</tag>
       </tags>
   </entry>
   <entry>
@@ -14292,6 +14292,44 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Prometheus 抓取 Nginx 指标</title>
+    <url>/202306270947/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Prometheus 抓取 Nginx 运行时指标，主要有以下方法：</p>
+<ul>
+<li>Nginx 通过自己的 <code>stub_status</code> 页面 (需要 <code>with-http_stub_status_module</code> 模块支持) 暴露出了一些 Nginx 运行时的指标，较为简单，在 Prometheus 中对应的 Metrics 也少。<code>nginx_exporter</code> 主要就是获取 <code>stub_status</code> 中内建的指标。</li>
+<li>可以通过 <code>nginx-vts-exporter</code> 监控 Nginx 更多的指标，但 <code>nginx-vts-exporter</code> 依赖于 Nginx 编译安装是添加的第三方模块 <code>nginx-module-vts</code> 来实现，指标更为丰富。建议使用此种监控方式。</li>
+</ul>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Nginx stable 1.24.0</li>
+<li>nginx-vts-exporter v0.10.3</li>
+<li>nginx-module-vts v0.2.2</li>
+</ul>
+<h1 id="安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics"><a href="#安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics" class="headerlink" title="安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics"></a>安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics</h1><h2 id="Nginx-编译安装-nginx-module-vts-模块"><a href="#Nginx-编译安装-nginx-module-vts-模块" class="headerlink" title="Nginx 编译安装 nginx-module-vts 模块"></a>Nginx 编译安装 nginx-module-vts 模块</h2><a href="/202306270934/" title="Nginx 编译安装 &#96;nginx-module-vts&#96; 模块">Nginx 编译安装 &#96;nginx-module-vts&#96; 模块</a>
+
+<p>Nginx 安装了 <code>nginx-module-vts</code> 后，可以通过以下配置暴露运行时的指标</p>
+<figure class="highlight shell"><figcaption><span>status.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vhost_traffic_status_zone;</span><br><span class="line">vhost_traffic_status_filter_by_host on;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">server&#123;</span><br><span class="line">    listen 8081;</span><br><span class="line">    server_name localhost;</span><br><span class="line">    location /status &#123;</span><br><span class="line">        vhost_traffic_status_display;</span><br><span class="line">        vhost_traffic_status_display_format html;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>重启 Nginx 后，访问 <code>http://localhost:8081/status</code> 即可查看到 Nginx 运行时的指标<br><img src="https://i.csms.tech/img_194.png"></p>
+<h2 id="安装-nginx-vts-exporter"><a href="#安装-nginx-vts-exporter" class="headerlink" title="安装 nginx-vts-exporter"></a>安装 nginx-vts-exporter</h2><p><a href="https://github.com/hnlq715/nginx-vts-exporter">nginx-vts-exporter github 官网</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/hnlq715/nginx-vts-exporter/releases/download/v0.10.3/nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">tar -xf nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">cp nginx-vts-exporter-0.10.3.linux-amd64/nginx-vts-exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>创建 <code>systemd</code> 管理配置文件 <code>/usr/lib/systemd/system/nginx-vts-exporter.service</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/nginx-vts-exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">[Unit]</span><br><span class="line">Description=nginx-vts-exporter</span><br><span class="line">After=network.target</span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">User=root</span><br><span class="line">ExecStart=/usr/bin/nginx-vts-exporter \</span><br><span class="line">  -nginx.scrape_timeout 10 \</span><br><span class="line">  -nginx.scrape_uri http://127.0.0.1:8081/status/format/json</span><br><span class="line">Restart=on-failure</span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>启动服务，默认监听端口为 <code>9913</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable --now nginx-vts-exporter</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>浏览器访问 <code>localhost:9913/metrics</code> 即可看到 <code>nginx-vts-exporter</code> 暴露出来的 Metrics<br><img src="https://i.csms.tech/img_195.png"></p>
+<p>之后 Prometheus 可通过 <code>9913</code> 端口抓取监控数据。</p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Prometheus Node exporter 使用</title>
     <url>/202306071109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -14650,44 +14688,6 @@ width: 20%;
         <category>Prometheus</category>
       </categories>
       <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Prometheus 抓取 Nginx 指标</title>
-    <url>/202306270947/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Prometheus 抓取 Nginx 运行时指标，主要有以下方法：</p>
-<ul>
-<li>Nginx 通过自己的 <code>stub_status</code> 页面 (需要 <code>with-http_stub_status_module</code> 模块支持) 暴露出了一些 Nginx 运行时的指标，较为简单，在 Prometheus 中对应的 Metrics 也少。<code>nginx_exporter</code> 主要就是获取 <code>stub_status</code> 中内建的指标。</li>
-<li>可以通过 <code>nginx-vts-exporter</code> 监控 Nginx 更多的指标，但 <code>nginx-vts-exporter</code> 依赖于 Nginx 编译安装是添加的第三方模块 <code>nginx-module-vts</code> 来实现，指标更为丰富。建议使用此种监控方式。</li>
-</ul>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Nginx stable 1.24.0</li>
-<li>nginx-vts-exporter v0.10.3</li>
-<li>nginx-module-vts v0.2.2</li>
-</ul>
-<h1 id="安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics"><a href="#安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics" class="headerlink" title="安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics"></a>安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics</h1><h2 id="Nginx-编译安装-nginx-module-vts-模块"><a href="#Nginx-编译安装-nginx-module-vts-模块" class="headerlink" title="Nginx 编译安装 nginx-module-vts 模块"></a>Nginx 编译安装 nginx-module-vts 模块</h2><a href="/202306270934/" title="Nginx 编译安装 &#96;nginx-module-vts&#96; 模块">Nginx 编译安装 &#96;nginx-module-vts&#96; 模块</a>
-
-<p>Nginx 安装了 <code>nginx-module-vts</code> 后，可以通过以下配置暴露运行时的指标</p>
-<figure class="highlight shell"><figcaption><span>status.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vhost_traffic_status_zone;</span><br><span class="line">vhost_traffic_status_filter_by_host on;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">server&#123;</span><br><span class="line">    listen 8081;</span><br><span class="line">    server_name localhost;</span><br><span class="line">    location /status &#123;</span><br><span class="line">        vhost_traffic_status_display;</span><br><span class="line">        vhost_traffic_status_display_format html;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>重启 Nginx 后，访问 <code>http://localhost:8081/status</code> 即可查看到 Nginx 运行时的指标<br><img src="https://i.csms.tech/img_194.png"></p>
-<h2 id="安装-nginx-vts-exporter"><a href="#安装-nginx-vts-exporter" class="headerlink" title="安装 nginx-vts-exporter"></a>安装 nginx-vts-exporter</h2><p><a href="https://github.com/hnlq715/nginx-vts-exporter">nginx-vts-exporter github 官网</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/hnlq715/nginx-vts-exporter/releases/download/v0.10.3/nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">tar -xf nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">cp nginx-vts-exporter-0.10.3.linux-amd64/nginx-vts-exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>创建 <code>systemd</code> 管理配置文件 <code>/usr/lib/systemd/system/nginx-vts-exporter.service</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/nginx-vts-exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">[Unit]</span><br><span class="line">Description=nginx-vts-exporter</span><br><span class="line">After=network.target</span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">User=root</span><br><span class="line">ExecStart=/usr/bin/nginx-vts-exporter \</span><br><span class="line">  -nginx.scrape_timeout 10 \</span><br><span class="line">  -nginx.scrape_uri http://127.0.0.1:8081/status/format/json</span><br><span class="line">Restart=on-failure</span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>启动服务，默认监听端口为 <code>9913</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable --now nginx-vts-exporter</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>浏览器访问 <code>localhost:9913/metrics</code> 即可看到 <code>nginx-vts-exporter</code> 暴露出来的 Metrics<br><img src="https://i.csms.tech/img_195.png"></p>
-<p>之后 Prometheus 可通过 <code>9913</code> 端口抓取监控数据。</p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
         <tag>Prometheus</tag>
       </tags>
   </entry>
