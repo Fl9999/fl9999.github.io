@@ -2514,6 +2514,89 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>containerd 使用方法</title>
+    <url>/202212011355/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>containerd.io-1.4.13-3</li>
+</ul>
+<h1 id="containerd-相关配置"><a href="#containerd-相关配置" class="headerlink" title="containerd 相关配置"></a>containerd 相关配置</h1><h2 id="默认配置文件"><a href="#默认配置文件" class="headerlink" title="默认配置文件"></a>默认配置文件</h2><p><code>containerd</code> 服务默认配置文件为 <code>/etc/containerd/config.toml</code></p>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">subreaper = <span class="literal">true</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>Containerd 有两个不同的存储路径，一个用来保存持久化数据，一个用来保存运行时状态。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Containerd 的前世今生和保姆级入门教程](https://blog.51cto.com/u_15127639/3256557)">[1]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br></pre></td></tr></table></figure>
+<ul>
+<li><code>root</code> - 用来保存持久化数据，包括 Snapshots, Content, Metadata 以及各种插件的数据。每一个插件都有自己单独的目录，Containerd 本身不存储任何数据，它的所有功能都来自于已加载的插件。</li>
+<li><code>state</code> - 用来保存临时数据，包括 <code>sockets</code>、<code>pid</code>、<code>挂载点</code>、<code>运行时状态</code> 以及不需要持久化保存的插件数据。</li>
+</ul>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br></pre></td></tr></table></figure>
+<p>Containerd 是容器的守护者，一旦发生内存不足的情况，理想的情况应该是先杀死容器，而不是杀死 Containerd。所以需要调整 Containerd 的 OOM 权重，减少其被 OOM Kill 的几率。<code>oom_score</code> 其取值范围为 <code>-1000</code> 到 <code>1000</code>，如果将该值设置为 <code>-1000</code>，则进程永远不会被杀死，建议 Containerd 将该值设置为 <code>-999</code> 到 <code>0</code> 之间。如果作为 Kubernetes 的 Worker 节点，可以考虑设置为 <code>-999</code>。</p>
+<h2 id="containerd-服务配置文件"><a href="#containerd-服务配置文件" class="headerlink" title="containerd 服务配置文件"></a>containerd 服务配置文件</h2><p>默认的 <code>containerd</code> 服务的配置为 <code>/usr/lib/systemd/system/containerd.service</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/containerd.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=containerd container runtime</span><br><span class="line">Documentation=https://containerd.io</span><br><span class="line">After=network.target local-fs.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">ExecStartPre=-/sbin/modprobe overlay</span><br><span class="line">ExecStart=/usr/bin/containerd</span><br><span class="line"></span><br><span class="line">Type=notify</span><br><span class="line">Delegate=yes</span><br><span class="line">KillMode=process</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=5</span><br><span class="line"></span><br><span class="line">LimitNPROC=infinity</span><br><span class="line">LimitCORE=infinity</span><br><span class="line">LimitNOFILE=1048576</span><br><span class="line"></span><br><span class="line">TasksMax=infinity</span><br><span class="line">OOMScoreAdjust=-999</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<ul>
+<li><p><strong><code>Delegate</code></strong> - 这个选项允许 Containerd 以及运行时自己管理自己创建的容器的 cgroups。如果不设置这个选项，<code>systemd</code> 就会将进程移到自己的 cgroups 中，从而导致 Containerd 无法正确获取容器的资源使用情况。</p>
+</li>
+<li><p><strong><code>KillMode</code></strong> - 这个选项用来处理 Containerd 进程被杀死的方式。默认情况下，<code>systemd</code> 会在进程的 cgroup 中查找并杀死 Containerd 的所有子进程，这肯定不是我们想要的。<code>KillMode</code> 字段可以设置的值如下:</p>
+<ul>
+<li><strong><code>control-group</code></strong> -（默认值）当前控制组里面的所有子进程，都会被杀掉</li>
+<li><strong><code>process</code></strong> - 只杀主进程。</li>
+<li><strong><code>mixed</code></strong> - 主进程将收到 <code>SIGTERM</code> 信号，子进程收到 <code>SIGKILL</code> 信号</li>
+<li><strong><code>none</code></strong> - 没有进程会被杀掉，只是执行服务的 stop 命令。</li>
+</ul>
+<p>  需要将 <code>KillMode</code> 的值设置为<code> process</code>，这样可以确保升级或重启 Containerd 时不杀死现有的容器。</p>
+</li>
+</ul>
+<h1 id="客户端工具-ctr-使用"><a href="#客户端工具-ctr-使用" class="headerlink" title="客户端工具 ctr 使用"></a>客户端工具 ctr 使用</h1><h2 id="ctr-管理镜像"><a href="#ctr-管理镜像" class="headerlink" title="ctr 管理镜像"></a>ctr 管理镜像</h2><h3 id="镜像下载"><a href="#镜像下载" class="headerlink" title="镜像下载"></a>镜像下载</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image pull docker.io/library/nginx:alpine</span><br></pre></td></tr></table></figure>
+
+<h3 id="列出本地镜像"><a href="#列出本地镜像" class="headerlink" title="列出本地镜像"></a>列出本地镜像</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image <span class="built_in">ls</span></span></span><br><span class="line">REF                            TYPE                                                      DIGEST                                                                  SIZE    PLATFORMS                                                                                LABELS </span><br><span class="line">docker.io/library/nginx:alpine application/vnd.docker.distribution.manifest.list.v2+json sha256:455c39afebd4d98ef26dd70284aa86e6810b0485af5f4f222b19b89758cabf1e 9.8 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/s390x -</span><br></pre></td></tr></table></figure>
+<h3 id="将镜像挂载到本地目录"><a href="#将镜像挂载到本地目录" class="headerlink" title="将镜像挂载到本地目录"></a>将镜像挂载到本地目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image mount docker.io/library/nginx:alpine /mnt</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /mnt</span></span><br><span class="line">bin  docker-entrypoint.d   etc   lib    mnt  proc  run   srv  tmp  var</span><br><span class="line">dev  docker-entrypoint.sh  home  media  opt  root  sbin  sys  usr</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>卸载已挂载的镜像</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image unmount /mnt</span><br></pre></td></tr></table></figure>
+
+<h2 id="ctr-管理-容器"><a href="#ctr-管理-容器" class="headerlink" title="ctr 管理 容器"></a>ctr 管理 容器</h2><h3 id="创建容器"><a href="#创建容器" class="headerlink" title="创建容器"></a>创建容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container create docker.io/library/nginx:alpine nginx</span><br></pre></td></tr></table></figure>
+<p>容器创建后，并没有开始运行，只是分配了容器运行所需的资源及配置的数据结构，这意味着 <code>namespaces</code>、<code>rootfs</code> 和容器的配置都已经初始化成功了，只是用户进程(这里是 <code>nginx</code>)还没有启动，容器（进程）状态的变化由 <code>Task</code> 对象实现，通过命令 <code>ctr task</code> 来管理。</p>
+<p>启动 <code>ctr container create</code> 创建的容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx</span><br></pre></td></tr></table></figure>
+<p>以上命令启动之前创建的容器 <code>nginx</code>，未指定其他参数时，容器中的进程在系统前台运行，如需后台运行，可以使用选项 <code>-d</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx -d</span><br></pre></td></tr></table></figure>
+
+<p>也可以直接使用 <code>run</code> 命令，创建并启动容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr run --rm -d docker.io/library/nginx:alpine nginx1</span><br></pre></td></tr></table></figure>
+
+<h3 id="列出容器"><a href="#列出容器" class="headerlink" title="列出容器"></a>列出容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container ls</span><br></pre></td></tr></table></figure>
+
+<p>查看容器中进程的状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task <span class="built_in">ls</span></span></span><br><span class="line">TASK      PID     STATUS    </span><br><span class="line">nginx1    5495    RUNNING</span><br></pre></td></tr></table></figure>
+<p>查看容器中运行的所有的进程</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task ps nginx1</span></span><br><span class="line">PID     INFO</span><br><span class="line">5495    -</span><br><span class="line">5531    -</span><br><span class="line">5532    -</span><br><span class="line">5533    -</span><br><span class="line">5534    -</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><strong>这里的 PID 是宿主机看到的 PID，不是容器中看到的 PID。</strong></p>
+<h3 id="查看容器详细信息"><a href="#查看容器详细信息" class="headerlink" title="查看容器详细信息"></a>查看容器详细信息</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container info nginx</span><br></pre></td></tr></table></figure>
+
+<h3 id="删除容器"><a href="#删除容器" class="headerlink" title="删除容器"></a>删除容器</h3><p>停止&#x2F;删除容器中的进程</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task delete nginx -f</span><br><span class="line"></span><br><span class="line">ctr task pause nginx</span><br></pre></td></tr></table></figure>
+<p>以上命令<strong>删除&#x2F;停止容器中的进程，但是并不删除容器</strong>，执行以上命令后再执行以下命令，可删除容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container delete nginx</span><br></pre></td></tr></table></figure>
+<p><strong>ctr 没有 stop 容器的功能，只能暂停或者杀死容器。</strong></p>
+<h3 id="进入容器"><a href="#进入容器" class="headerlink" title="进入容器"></a>进入容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task exec -t --exec-id 1 nginx1 sh</span><br></pre></td></tr></table></figure>
+<p>执行 <code>ctr task exec</code> 进入容器，必须制定 <code>--exec-id</code>，值可以随便指定。</p>
+<h3 id="namespace-管理"><a href="#namespace-管理" class="headerlink" title="namespace 管理"></a>namespace 管理</h3><p>Containerd 相比于 Docker ，多了 Namespace 的概念，使用以下命令，查看所有的 Namespace</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr ns <span class="built_in">ls</span></span></span><br><span class="line">NAME    LABELS </span><br><span class="line">default        </span><br><span class="line">moby     </span><br></pre></td></tr></table></figure>
+<p><code>docker</code> 默认使用 <code>moby</code> 的 Namespace，要使用 <code>ctr</code> 命令查看 <code>docker</code> 创建的容器，需要使用选项 <code>-n moby</code> 指定命名空间，否则 <code>ctr</code> 默认使用 <code>default</code> 命名空间，无法看到 <code>moby</code> 命名空间中的资源</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr -n moby container ls</span><br><span class="line">CONTAINER                                                           IMAGE    RUNTIME                           </span><br><span class="line">17b16c3699cdb88a1ff80d8a7c84724eff393c42186775b58418c90bd178600f    -        io.containerd.runtime.v1.linux    </span><br><span class="line">27fc19226baa91251d63a375a7b1309122334cfb5ceb39aeb67ab1701b708464    -        io.containerd.runtime.v1.linux</span><br></pre></td></tr></table></figure>
+
+<p><em><strong>Kubernetes 默认使用 <code>k8s.io</code> 命名空间</strong></em>。</p>
+<p><code>ctr</code> 没有配置或者环境变量可以来配置默认的 Namespace，在 Kubernetes 场景中，可以使用 <code>alias</code> 命令配置 <code>ctr</code>，使其自动指向 <code>k8s.io</code> 的 Namespace</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">alias ctr=&#x27;ctr -n k8s.io&#x27;</span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://blog.51cto.com/u_15127639/3256557">Containerd 的前世今生和保姆级入门教程</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>containerd</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Django admin 配置</title>
     <url>/202209021312/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Django 自带的 <code>Admin Site</code> 管理页面可以方便用户快速构建一个简单的后台管理系统，少量代码即可快速实现对数据库中的数据进行展示、修改、保存的可视化页面和功能。当需要对后台展示的数据进行配置时，只需要在 <code>app</code> 的代码文件 <code>admin.py</code> 中进行相应配置即可。</p>
@@ -2617,89 +2700,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Django</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>containerd 使用方法</title>
-    <url>/202212011355/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>containerd.io-1.4.13-3</li>
-</ul>
-<h1 id="containerd-相关配置"><a href="#containerd-相关配置" class="headerlink" title="containerd 相关配置"></a>containerd 相关配置</h1><h2 id="默认配置文件"><a href="#默认配置文件" class="headerlink" title="默认配置文件"></a>默认配置文件</h2><p><code>containerd</code> 服务默认配置文件为 <code>/etc/containerd/config.toml</code></p>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">subreaper = <span class="literal">true</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>Containerd 有两个不同的存储路径，一个用来保存持久化数据，一个用来保存运行时状态。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Containerd 的前世今生和保姆级入门教程](https://blog.51cto.com/u_15127639/3256557)">[1]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br></pre></td></tr></table></figure>
-<ul>
-<li><code>root</code> - 用来保存持久化数据，包括 Snapshots, Content, Metadata 以及各种插件的数据。每一个插件都有自己单独的目录，Containerd 本身不存储任何数据，它的所有功能都来自于已加载的插件。</li>
-<li><code>state</code> - 用来保存临时数据，包括 <code>sockets</code>、<code>pid</code>、<code>挂载点</code>、<code>运行时状态</code> 以及不需要持久化保存的插件数据。</li>
-</ul>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br></pre></td></tr></table></figure>
-<p>Containerd 是容器的守护者，一旦发生内存不足的情况，理想的情况应该是先杀死容器，而不是杀死 Containerd。所以需要调整 Containerd 的 OOM 权重，减少其被 OOM Kill 的几率。<code>oom_score</code> 其取值范围为 <code>-1000</code> 到 <code>1000</code>，如果将该值设置为 <code>-1000</code>，则进程永远不会被杀死，建议 Containerd 将该值设置为 <code>-999</code> 到 <code>0</code> 之间。如果作为 Kubernetes 的 Worker 节点，可以考虑设置为 <code>-999</code>。</p>
-<h2 id="containerd-服务配置文件"><a href="#containerd-服务配置文件" class="headerlink" title="containerd 服务配置文件"></a>containerd 服务配置文件</h2><p>默认的 <code>containerd</code> 服务的配置为 <code>/usr/lib/systemd/system/containerd.service</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/containerd.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=containerd container runtime</span><br><span class="line">Documentation=https://containerd.io</span><br><span class="line">After=network.target local-fs.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">ExecStartPre=-/sbin/modprobe overlay</span><br><span class="line">ExecStart=/usr/bin/containerd</span><br><span class="line"></span><br><span class="line">Type=notify</span><br><span class="line">Delegate=yes</span><br><span class="line">KillMode=process</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=5</span><br><span class="line"></span><br><span class="line">LimitNPROC=infinity</span><br><span class="line">LimitCORE=infinity</span><br><span class="line">LimitNOFILE=1048576</span><br><span class="line"></span><br><span class="line">TasksMax=infinity</span><br><span class="line">OOMScoreAdjust=-999</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<ul>
-<li><p><strong><code>Delegate</code></strong> - 这个选项允许 Containerd 以及运行时自己管理自己创建的容器的 cgroups。如果不设置这个选项，<code>systemd</code> 就会将进程移到自己的 cgroups 中，从而导致 Containerd 无法正确获取容器的资源使用情况。</p>
-</li>
-<li><p><strong><code>KillMode</code></strong> - 这个选项用来处理 Containerd 进程被杀死的方式。默认情况下，<code>systemd</code> 会在进程的 cgroup 中查找并杀死 Containerd 的所有子进程，这肯定不是我们想要的。<code>KillMode</code> 字段可以设置的值如下:</p>
-<ul>
-<li><strong><code>control-group</code></strong> -（默认值）当前控制组里面的所有子进程，都会被杀掉</li>
-<li><strong><code>process</code></strong> - 只杀主进程。</li>
-<li><strong><code>mixed</code></strong> - 主进程将收到 <code>SIGTERM</code> 信号，子进程收到 <code>SIGKILL</code> 信号</li>
-<li><strong><code>none</code></strong> - 没有进程会被杀掉，只是执行服务的 stop 命令。</li>
-</ul>
-<p>  需要将 <code>KillMode</code> 的值设置为<code> process</code>，这样可以确保升级或重启 Containerd 时不杀死现有的容器。</p>
-</li>
-</ul>
-<h1 id="客户端工具-ctr-使用"><a href="#客户端工具-ctr-使用" class="headerlink" title="客户端工具 ctr 使用"></a>客户端工具 ctr 使用</h1><h2 id="ctr-管理镜像"><a href="#ctr-管理镜像" class="headerlink" title="ctr 管理镜像"></a>ctr 管理镜像</h2><h3 id="镜像下载"><a href="#镜像下载" class="headerlink" title="镜像下载"></a>镜像下载</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image pull docker.io/library/nginx:alpine</span><br></pre></td></tr></table></figure>
-
-<h3 id="列出本地镜像"><a href="#列出本地镜像" class="headerlink" title="列出本地镜像"></a>列出本地镜像</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image <span class="built_in">ls</span></span></span><br><span class="line">REF                            TYPE                                                      DIGEST                                                                  SIZE    PLATFORMS                                                                                LABELS </span><br><span class="line">docker.io/library/nginx:alpine application/vnd.docker.distribution.manifest.list.v2+json sha256:455c39afebd4d98ef26dd70284aa86e6810b0485af5f4f222b19b89758cabf1e 9.8 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/s390x -</span><br></pre></td></tr></table></figure>
-<h3 id="将镜像挂载到本地目录"><a href="#将镜像挂载到本地目录" class="headerlink" title="将镜像挂载到本地目录"></a>将镜像挂载到本地目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image mount docker.io/library/nginx:alpine /mnt</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /mnt</span></span><br><span class="line">bin  docker-entrypoint.d   etc   lib    mnt  proc  run   srv  tmp  var</span><br><span class="line">dev  docker-entrypoint.sh  home  media  opt  root  sbin  sys  usr</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>卸载已挂载的镜像</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image unmount /mnt</span><br></pre></td></tr></table></figure>
-
-<h2 id="ctr-管理-容器"><a href="#ctr-管理-容器" class="headerlink" title="ctr 管理 容器"></a>ctr 管理 容器</h2><h3 id="创建容器"><a href="#创建容器" class="headerlink" title="创建容器"></a>创建容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container create docker.io/library/nginx:alpine nginx</span><br></pre></td></tr></table></figure>
-<p>容器创建后，并没有开始运行，只是分配了容器运行所需的资源及配置的数据结构，这意味着 <code>namespaces</code>、<code>rootfs</code> 和容器的配置都已经初始化成功了，只是用户进程(这里是 <code>nginx</code>)还没有启动，容器（进程）状态的变化由 <code>Task</code> 对象实现，通过命令 <code>ctr task</code> 来管理。</p>
-<p>启动 <code>ctr container create</code> 创建的容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx</span><br></pre></td></tr></table></figure>
-<p>以上命令启动之前创建的容器 <code>nginx</code>，未指定其他参数时，容器中的进程在系统前台运行，如需后台运行，可以使用选项 <code>-d</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx -d</span><br></pre></td></tr></table></figure>
-
-<p>也可以直接使用 <code>run</code> 命令，创建并启动容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr run --rm -d docker.io/library/nginx:alpine nginx1</span><br></pre></td></tr></table></figure>
-
-<h3 id="列出容器"><a href="#列出容器" class="headerlink" title="列出容器"></a>列出容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container ls</span><br></pre></td></tr></table></figure>
-
-<p>查看容器中进程的状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task <span class="built_in">ls</span></span></span><br><span class="line">TASK      PID     STATUS    </span><br><span class="line">nginx1    5495    RUNNING</span><br></pre></td></tr></table></figure>
-<p>查看容器中运行的所有的进程</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task ps nginx1</span></span><br><span class="line">PID     INFO</span><br><span class="line">5495    -</span><br><span class="line">5531    -</span><br><span class="line">5532    -</span><br><span class="line">5533    -</span><br><span class="line">5534    -</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><strong>这里的 PID 是宿主机看到的 PID，不是容器中看到的 PID。</strong></p>
-<h3 id="查看容器详细信息"><a href="#查看容器详细信息" class="headerlink" title="查看容器详细信息"></a>查看容器详细信息</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container info nginx</span><br></pre></td></tr></table></figure>
-
-<h3 id="删除容器"><a href="#删除容器" class="headerlink" title="删除容器"></a>删除容器</h3><p>停止&#x2F;删除容器中的进程</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task delete nginx -f</span><br><span class="line"></span><br><span class="line">ctr task pause nginx</span><br></pre></td></tr></table></figure>
-<p>以上命令<strong>删除&#x2F;停止容器中的进程，但是并不删除容器</strong>，执行以上命令后再执行以下命令，可删除容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container delete nginx</span><br></pre></td></tr></table></figure>
-<p><strong>ctr 没有 stop 容器的功能，只能暂停或者杀死容器。</strong></p>
-<h3 id="进入容器"><a href="#进入容器" class="headerlink" title="进入容器"></a>进入容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task exec -t --exec-id 1 nginx1 sh</span><br></pre></td></tr></table></figure>
-<p>执行 <code>ctr task exec</code> 进入容器，必须制定 <code>--exec-id</code>，值可以随便指定。</p>
-<h3 id="namespace-管理"><a href="#namespace-管理" class="headerlink" title="namespace 管理"></a>namespace 管理</h3><p>Containerd 相比于 Docker ，多了 Namespace 的概念，使用以下命令，查看所有的 Namespace</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr ns <span class="built_in">ls</span></span></span><br><span class="line">NAME    LABELS </span><br><span class="line">default        </span><br><span class="line">moby     </span><br></pre></td></tr></table></figure>
-<p><code>docker</code> 默认使用 <code>moby</code> 的 Namespace，要使用 <code>ctr</code> 命令查看 <code>docker</code> 创建的容器，需要使用选项 <code>-n moby</code> 指定命名空间，否则 <code>ctr</code> 默认使用 <code>default</code> 命名空间，无法看到 <code>moby</code> 命名空间中的资源</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr -n moby container ls</span><br><span class="line">CONTAINER                                                           IMAGE    RUNTIME                           </span><br><span class="line">17b16c3699cdb88a1ff80d8a7c84724eff393c42186775b58418c90bd178600f    -        io.containerd.runtime.v1.linux    </span><br><span class="line">27fc19226baa91251d63a375a7b1309122334cfb5ceb39aeb67ab1701b708464    -        io.containerd.runtime.v1.linux</span><br></pre></td></tr></table></figure>
-
-<p><em><strong>Kubernetes 默认使用 <code>k8s.io</code> 命名空间</strong></em>。</p>
-<p><code>ctr</code> 没有配置或者环境变量可以来配置默认的 Namespace，在 Kubernetes 场景中，可以使用 <code>alias</code> 命令配置 <code>ctr</code>，使其自动指向 <code>k8s.io</code> 的 Namespace</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">alias ctr=&#x27;ctr -n k8s.io&#x27;</span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://blog.51cto.com/u_15127639/3256557">Containerd 的前世今生和保姆级入门教程</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>containerd</tag>
       </tags>
   </entry>
   <entry>
@@ -4965,38 +4965,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>elasticsearch 管理操作</title>
-    <url>/202307271329/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>elasticsearch 8.8.2</li>
-</ul>
-<h1 id="安全相关配置管理"><a href="#安全相关配置管理" class="headerlink" title="安全相关配置管理"></a>安全相关配置管理</h1><h2 id="更新-transport-ssl-证书"><a href="#更新-transport-ssl-证书" class="headerlink" title="更新 transport ssl 证书"></a>更新 transport ssl 证书</h2><p>在启用安全配置（<code>xpack.security.enabled: true</code>）的情况下，Elasticsearch 集群节点间通信(<code>transport</code> 默认端口 9300)必须使用 TLS (<code>xpack.security.transport.ssl.enabled: true</code>)。默认使用的证书文件位于 <code>/etc/elasticsearch/certs/</code>。若需要更新或者重新生成此证书，可以参考以下步骤</p>
-<ol>
-<li>生成 CA，如果已有 CA 可跳过此步骤。此命令会生成一个 CA 证书文件，默认名称为 <code>/usr/share/elasticsearch/elastic-stack-ca.p12</code>。根据提示使用 <em>证书密码</em>，如果不配置密码，使直接<code>Enter</code> 键 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil ca</span><br></pre></td></tr></table></figure></li>
-<li>为 Elasticsearch  生成 TLS 证书，证书使用 CA 进行签名，根据提示输入 CA 证书密码等信息，如果无密码，使直接<code>Enter</code> 键。默认生成文件 <code>/usr/share/elasticsearch/elastic-certificates.p12</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil cert --ca elastic-stack-ca.p12</span><br></pre></td></tr></table></figure></li>
-<li>执行以下命令，将 CA 证书密码和服务器证书密码写入 <code>/etc/elasticsearch/elasticsearch.keystore</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.keystore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.keystore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.keystore.secure_password:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.truststore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.truststore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.truststore.secure_password:</span><br></pre></td></tr></table></figure></li>
-<li>将上面生成的 <strong>CA 证书</strong>、<strong>服务器证书</strong> 以及 <strong>证书密码文件</strong> 拷贝到 Elasticsearch 集群的所有节点的 <code>/etc/elasticsearch/certs/</code> 下，并修改权限 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod 660 /etc/elasticsearch/certs/*</span><br><span class="line">chown root:elasticsearch /etc/elasticsearch/certs/*</span><br></pre></td></tr></table></figure></li>
-<li>重启 Elasticsearch 集群的所有节点 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart elasticsearch</span><br></pre></td></tr></table></figure></li>
-<li>检查集群状态 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user newadmin:password localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 18,</span><br><span class="line">  &quot;active_shards&quot; : 37,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="重置用户密码"><a href="#重置用户密码" class="headerlink" title="重置用户密码"></a>重置用户密码</h2><p>可以使用以下命令，创建新的超级管理员账号。首先要 <em>确保集群状态正常</em></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-users useradd newadmin -p password -r superuser</span><br></pre></td></tr></table></figure>
-<p>接下来使用刚刚创建的账号密码对原有的账号（如 <code>elastic</code>） 进行密码重置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl -s --user newadmin:password -XPUT <span class="string">&quot;http://localhost:9200/_security/user/elastic/_password?pretty&quot;</span> -H <span class="string">&#x27;Content-Type: application/json&#x27;</span> -d <span class="string">&#x27;&#123;</span></span></span><br><span class="line">   &quot;password&quot;: &quot;password1&quot;</span><br><span class="line"> &#125;&#x27;</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>密码重置成功后，尝试使用新账号密码访问集群</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user elastic:password1 localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 19,</span><br><span class="line">  &quot;active_shards&quot; : 39,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>elasticsearch 常用 endpoint</title>
     <url>/202307281032/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -5147,6 +5115,38 @@ width: 20%;
 <h2 id="重置用户密码"><a href="#重置用户密码" class="headerlink" title="重置用户密码"></a>重置用户密码</h2><p><a href="https://csms.tech/202307271329/#重置用户密码">具体步骤参考</a></p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/settings.html">elastic 官网介绍</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lucene.apache.org/core/">Apache Lucene</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/cn/elasticsearch/guide/current/_document_oriented.html#_document_oriented">面向文档</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/cn/elasticsearch/guide/current/_indexing_employee_documents.html">索引</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/cn/elasticsearch/guide/current/index-doc.html#index-doc">索引文档</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/cn/elasticsearch/guide/current/get-doc.html">取回一个文档</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/cn/elasticsearch/guide/current/multi-index-multi-type.html#multi-index-multi-type">多索引</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/cn/elasticsearch/guide/current/pagination.html#pagination">分页</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/important-settings.html">重要配置项</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/advanced-configuration.html#set-jvm-heap-size">Set the heap size</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/secure-settings.html#secure-settings">安全相关配置</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/auditing-settings.html">Auditing settings</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li><li id="fn:12"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">12.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/configuring-stack-security.html#configuring-stack-security">启用安全特性启动 Elasticsearch</a><a href="#fnref:12" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>elasticsearch 管理操作</title>
+    <url>/202307271329/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>elasticsearch 8.8.2</li>
+</ul>
+<h1 id="安全相关配置管理"><a href="#安全相关配置管理" class="headerlink" title="安全相关配置管理"></a>安全相关配置管理</h1><h2 id="更新-transport-ssl-证书"><a href="#更新-transport-ssl-证书" class="headerlink" title="更新 transport ssl 证书"></a>更新 transport ssl 证书</h2><p>在启用安全配置（<code>xpack.security.enabled: true</code>）的情况下，Elasticsearch 集群节点间通信(<code>transport</code> 默认端口 9300)必须使用 TLS (<code>xpack.security.transport.ssl.enabled: true</code>)。默认使用的证书文件位于 <code>/etc/elasticsearch/certs/</code>。若需要更新或者重新生成此证书，可以参考以下步骤</p>
+<ol>
+<li>生成 CA，如果已有 CA 可跳过此步骤。此命令会生成一个 CA 证书文件，默认名称为 <code>/usr/share/elasticsearch/elastic-stack-ca.p12</code>。根据提示使用 <em>证书密码</em>，如果不配置密码，使直接<code>Enter</code> 键 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil ca</span><br></pre></td></tr></table></figure></li>
+<li>为 Elasticsearch  生成 TLS 证书，证书使用 CA 进行签名，根据提示输入 CA 证书密码等信息，如果无密码，使直接<code>Enter</code> 键。默认生成文件 <code>/usr/share/elasticsearch/elastic-certificates.p12</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil cert --ca elastic-stack-ca.p12</span><br></pre></td></tr></table></figure></li>
+<li>执行以下命令，将 CA 证书密码和服务器证书密码写入 <code>/etc/elasticsearch/elasticsearch.keystore</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.keystore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.keystore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.keystore.secure_password:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.truststore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.truststore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.truststore.secure_password:</span><br></pre></td></tr></table></figure></li>
+<li>将上面生成的 <strong>CA 证书</strong>、<strong>服务器证书</strong> 以及 <strong>证书密码文件</strong> 拷贝到 Elasticsearch 集群的所有节点的 <code>/etc/elasticsearch/certs/</code> 下，并修改权限 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod 660 /etc/elasticsearch/certs/*</span><br><span class="line">chown root:elasticsearch /etc/elasticsearch/certs/*</span><br></pre></td></tr></table></figure></li>
+<li>重启 Elasticsearch 集群的所有节点 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart elasticsearch</span><br></pre></td></tr></table></figure></li>
+<li>检查集群状态 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user newadmin:password localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 18,</span><br><span class="line">  &quot;active_shards&quot; : 37,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="重置用户密码"><a href="#重置用户密码" class="headerlink" title="重置用户密码"></a>重置用户密码</h2><p>可以使用以下命令，创建新的超级管理员账号。首先要 <em>确保集群状态正常</em></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-users useradd newadmin -p password -r superuser</span><br></pre></td></tr></table></figure>
+<p>接下来使用刚刚创建的账号密码对原有的账号（如 <code>elastic</code>） 进行密码重置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl -s --user newadmin:password -XPUT <span class="string">&quot;http://localhost:9200/_security/user/elastic/_password?pretty&quot;</span> -H <span class="string">&#x27;Content-Type: application/json&#x27;</span> -d <span class="string">&#x27;&#123;</span></span></span><br><span class="line">   &quot;password&quot;: &quot;password1&quot;</span><br><span class="line"> &#125;&#x27;</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>密码重置成功后，尝试使用新账号密码访问集群</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user elastic:password1 localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 19,</span><br><span class="line">  &quot;active_shards&quot; : 39,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -14707,37 +14707,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>python 操作日期及时间</title>
-    <url>/202301231137/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.10</li>
-</ul>
-<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="获取前一天所属月份"><a href="#获取前一天所属月份" class="headerlink" title="获取前一天所属月份"></a>获取前一天所属月份</h2><h3 id="arrow-模块获取"><a href="#arrow-模块获取" class="headerlink" title="arrow 模块获取"></a>arrow 模块获取</h3><p>以下示例使用 <code>arrow</code> 模块获取前一天所属月份 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[时间日期相关操作](https://developer.aliyun.com/article/673245)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install arrow</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a = arrow.now() <span class="comment"># 当前本地时间</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a.shift(months=-1).format(<span class="string">&quot;YYYYMM&quot;</span>)</span></span><br><span class="line">&#x27;202212&#x27;</span><br></pre></td></tr></table></figure>
-
-<p>指定参数 <code>months = -1</code> 就可以计算前一个月的时间。往后一个月就是 <code>month=+1</code>，<code>format</code> 指定时间格式。</p>
-<h2 id="获取前一个月的天数"><a href="#获取前一个月的天数" class="headerlink" title="获取前一个月的天数"></a>获取前一个月的天数</h2><p>通过模块 <code>calendar</code> 获取 </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import calendar</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">获取 2022-1 月份的天数，输出 tuple ，由此月的第一天是星期几和此月的天数构成。</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; calendar.monthrange(2022,1)</span></span><br><span class="line">(5, 31)</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-
-<h2 id="时间转换为时间戳"><a href="#时间转换为时间戳" class="headerlink" title="时间转换为时间戳"></a>时间转换为时间戳</h2><h3 id="time-模块"><a href="#time-模块" class="headerlink" title="time 模块"></a>time 模块</h3><p>使用 <code>time</code> 模块将指定格式的时间，转为时间戳</p>
-<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import time</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; t = <span class="string">&quot;2022-12-01 00:00:00&quot;</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">## 使用 time.strptime 将指定的时间 t 转换为时间数组</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray = time.strptime(t, <span class="string">&quot;%Y-%m-%d %H:%M:%S&quot;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray</span></span><br><span class="line">time.struct_time(tm_year=2022, tm_mon=12, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=335, tm_isdst=-1)</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp = time.mktime(timeArray)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp</span></span><br><span class="line">1669852800.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="datetime-模块使用"><a href="#datetime-模块使用" class="headerlink" title="datetime 模块使用"></a>datetime 模块使用</h1><h2 id="获取日期和时间"><a href="#获取日期和时间" class="headerlink" title="获取日期和时间"></a>获取日期和时间</h2><h3 id="获取今天的日期"><a href="#获取今天的日期" class="headerlink" title="获取今天的日期"></a>获取今天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime)</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today()</span><br><span class="line">datetime.date(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().year</span><br><span class="line"><span class="number">2023</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().day</span><br><span class="line"><span class="number">28</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="获取当前的日期和时间"><a href="#获取当前的日期和时间" class="headerlink" title="获取当前的日期和时间"></a>获取当前的日期和时间</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>, <span class="number">5</span>, <span class="number">2</span>, <span class="number">48</span>, <span class="number">996356</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h3 id="获取明天的日期"><a href="#获取明天的日期" class="headerlink" title="获取明天的日期"></a>获取明天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime.timedelta)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today() + datetime.timedelta(<span class="number">1</span>)</span><br></pre></td></tr></table></figure>
-
-<h2 id="比较时间"><a href="#比较时间" class="headerlink" title="比较时间"></a>比较时间</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">12</span>, <span class="number">23</span>, <span class="number">6</span>, <span class="number">26</span>, <span class="number">2</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期比较</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire.date() &gt; datetime.date.today()</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期和时间比较，tz=datetime.timezone.utc 可以解决时区不同的问题： TypeError: can&#x27;t compare offset-naive and offset-aware datetimes</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire &gt; datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.aliyun.com/article/673245">时间日期相关操作</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Pycharm 常用配置</title>
     <url>/202208041319/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -14769,6 +14738,37 @@ width: 20%;
       </categories>
       <tags>
         <tag>PyCharm</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>python 操作日期及时间</title>
+    <url>/202301231137/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.10</li>
+</ul>
+<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="获取前一天所属月份"><a href="#获取前一天所属月份" class="headerlink" title="获取前一天所属月份"></a>获取前一天所属月份</h2><h3 id="arrow-模块获取"><a href="#arrow-模块获取" class="headerlink" title="arrow 模块获取"></a>arrow 模块获取</h3><p>以下示例使用 <code>arrow</code> 模块获取前一天所属月份 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[时间日期相关操作](https://developer.aliyun.com/article/673245)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install arrow</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a = arrow.now() <span class="comment"># 当前本地时间</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a.shift(months=-1).format(<span class="string">&quot;YYYYMM&quot;</span>)</span></span><br><span class="line">&#x27;202212&#x27;</span><br></pre></td></tr></table></figure>
+
+<p>指定参数 <code>months = -1</code> 就可以计算前一个月的时间。往后一个月就是 <code>month=+1</code>，<code>format</code> 指定时间格式。</p>
+<h2 id="获取前一个月的天数"><a href="#获取前一个月的天数" class="headerlink" title="获取前一个月的天数"></a>获取前一个月的天数</h2><p>通过模块 <code>calendar</code> 获取 </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import calendar</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">获取 2022-1 月份的天数，输出 tuple ，由此月的第一天是星期几和此月的天数构成。</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; calendar.monthrange(2022,1)</span></span><br><span class="line">(5, 31)</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+
+<h2 id="时间转换为时间戳"><a href="#时间转换为时间戳" class="headerlink" title="时间转换为时间戳"></a>时间转换为时间戳</h2><h3 id="time-模块"><a href="#time-模块" class="headerlink" title="time 模块"></a>time 模块</h3><p>使用 <code>time</code> 模块将指定格式的时间，转为时间戳</p>
+<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import time</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; t = <span class="string">&quot;2022-12-01 00:00:00&quot;</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">## 使用 time.strptime 将指定的时间 t 转换为时间数组</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray = time.strptime(t, <span class="string">&quot;%Y-%m-%d %H:%M:%S&quot;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray</span></span><br><span class="line">time.struct_time(tm_year=2022, tm_mon=12, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=335, tm_isdst=-1)</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp = time.mktime(timeArray)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp</span></span><br><span class="line">1669852800.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="datetime-模块使用"><a href="#datetime-模块使用" class="headerlink" title="datetime 模块使用"></a>datetime 模块使用</h1><h2 id="获取日期和时间"><a href="#获取日期和时间" class="headerlink" title="获取日期和时间"></a>获取日期和时间</h2><h3 id="获取今天的日期"><a href="#获取今天的日期" class="headerlink" title="获取今天的日期"></a>获取今天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime)</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today()</span><br><span class="line">datetime.date(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().year</span><br><span class="line"><span class="number">2023</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().day</span><br><span class="line"><span class="number">28</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="获取当前的日期和时间"><a href="#获取当前的日期和时间" class="headerlink" title="获取当前的日期和时间"></a>获取当前的日期和时间</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>, <span class="number">5</span>, <span class="number">2</span>, <span class="number">48</span>, <span class="number">996356</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h3 id="获取明天的日期"><a href="#获取明天的日期" class="headerlink" title="获取明天的日期"></a>获取明天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime.timedelta)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today() + datetime.timedelta(<span class="number">1</span>)</span><br></pre></td></tr></table></figure>
+
+<h2 id="比较时间"><a href="#比较时间" class="headerlink" title="比较时间"></a>比较时间</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">12</span>, <span class="number">23</span>, <span class="number">6</span>, <span class="number">26</span>, <span class="number">2</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期比较</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire.date() &gt; datetime.date.today()</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期和时间比较，tz=datetime.timezone.utc 可以解决时区不同的问题： TypeError: can&#x27;t compare offset-naive and offset-aware datetimes</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire &gt; datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.aliyun.com/article/673245">时间日期相关操作</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
       </tags>
   </entry>
   <entry>
@@ -15391,6 +15391,130 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>redis 配置</title>
+    <url>/202307121459/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Redis 6</li>
+</ul>
+<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
+<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
+<p>创建服务启动需要的数据目录及日志目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
+<p>7380 服务使用如下配置文件</p>
+<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
+
+<p>分别启动服务（7380-7385）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<p><strong>创建集群</strong> 命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>redis-cli</code> 命令参数说明：</p>
+<table>
+<thead>
+<tr>
+<th>命令参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--cluster</code></td>
+<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
+<td><code>redis-cli --cluster create</code><br/>创建集群</td>
+</tr>
+<tr>
+<td><code>--cluster-replicas</code></td>
+<td>redis cluster 副本数比例</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-a</code></td>
+<td>redis 密码</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-c</code></td>
+<td>操作 redis cluster</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td>指定连接的端口</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>查看新建的集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
+<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
+<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
+</ul>
+<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>新增节点的命令示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
+
+<p>再次查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
+<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
+<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
+<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
+<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
+</ul>
+<p>本示例中执行以下命令为新添加的节点分配 slot</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
+
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
+<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
+<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
+<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
+<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
+</ul>
+<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+
+<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
+<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>rsyncd 服务</title>
     <url>/36f703dc/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="命令格式"><a href="#命令格式" class="headerlink" title="命令格式"></a>命令格式</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">rsync [OPTION]... SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]host:DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST:SRC DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST::SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]HOST::DEST</span><br><span class="line">rsync [OPTION]... rsync://[USER@]HOST[:PORT]/SRC [DEST]</span><br></pre></td></tr></table></figure>
@@ -15879,130 +16003,6 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>Rsync</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>redis 配置</title>
-    <url>/202307121459/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Redis 6</li>
-</ul>
-<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
-<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
-<p>创建服务启动需要的数据目录及日志目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
-<p>7380 服务使用如下配置文件</p>
-<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
-
-<p>分别启动服务（7380-7385）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<p><strong>创建集群</strong> 命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>redis-cli</code> 命令参数说明：</p>
-<table>
-<thead>
-<tr>
-<th>命令参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--cluster</code></td>
-<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
-<td><code>redis-cli --cluster create</code><br/>创建集群</td>
-</tr>
-<tr>
-<td><code>--cluster-replicas</code></td>
-<td>redis cluster 副本数比例</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-a</code></td>
-<td>redis 密码</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-c</code></td>
-<td>操作 redis cluster</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-p</code></td>
-<td>指定连接的端口</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看新建的集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
-<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
-<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
-</ul>
-<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>新增节点的命令示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
-
-<p>再次查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
-<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
-<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
-<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
-<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
-</ul>
-<p>本示例中执行以下命令为新添加的节点分配 slot</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
-
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
-<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
-<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
-<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
-<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
-</ul>
-<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-
-<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
-<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
