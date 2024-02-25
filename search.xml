@@ -9135,112 +9135,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes Pod</title>
-    <url>/202304271425/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pod 是由一个或多个容器构成的集合，被 Kubernetes 作为一个整体进行部署和调度，是 Kubernetes 调度的最小单元。同一个 Pod 内的容器共享 <a href="/202304031317/" title="network namespace">network namespace</a>、<a href="/202304191340/" title="UTS nanespace">UTS nanespace</a></p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes v1.24.7</li>
-</ul>
-<h1 id="Pod-创建过程"><a href="#Pod-创建过程" class="headerlink" title="Pod 创建过程"></a>Pod 创建过程</h1><p>当用户在 Kubernetes 中创建了一个 Pod 后，CRI 和 CNI 协同创建 Pod 所属容器，并为 Pod 中的容器初始化网络协议栈的具体过程如下<br><img src="https://i.csms.tech/img_139.png"></p>
-<ol>
-<li><p>用户在 Kubernetes 中创建了一个 Pod 后，Kubelet 接收到创建新 Pod 的任务，首先调用 CRI 创建 Pod 内的容器</p>
-</li>
-<li><p>Pod 中第一个被创建的容器是 <code>pause</code> 容器。<code>pause</code> 容器中运行着一个功能非常简单的 C 程序，具体逻辑是把自己永远阻塞，没有实际的业务逻辑，主要功能是用来占用一个  <a href="/202304031317/" title="network namespace">network namespace</a>。</p>
-<p> 创建 <code>pause</code> 容器，使用 <a href="https://csms.tech/202208301536/#None-模式">docker none 网络模式</a>，创建出来的容器除了 lo 回环网卡外没有其他网络设备。</p>
-</li>
-<li><p>Pod 内的其他用户容器通过加入 <code>pause</code> 容器已占用的 network namespace 的方式共享同一个 network namespace。对应于 docker 的 <a href="https://csms.tech/202208301536/#Container-模式">Container 模式</a></p>
-<p> 其他用户容器都使用 <code>pause</code> 容器的主机名，但并不使用同一个 UTS namespace。</p>
-</li>
-<li><p>CNI 负责 Pod 中容器的网络初始化工作。主要为 Pod 内的 <code>pause</code> 容器添加 <code>eth0</code> 网卡、分配 IP、配置网关等。</p>
-</li>
-</ol>
-<h1 id="pause-容器"><a href="#pause-容器" class="headerlink" title="pause 容器"></a>pause 容器</h1><p><code>pause</code> 容器是 Pod 中被创建的第一个容器，Pod 中的其他容器通过使用 <code>pause</code> 容器的 network namespace 共享网络协议栈和主机名。它是 Pod 中其他容器的父容器。</p>
-<blockquote>
-<p>1.8 以后版本默认不启用 PID namespace 共享。每个容器拥有独立的 PID namespace。</p>
-</blockquote>
-<p>以下步骤通过 docker 演示 Pod 容器创建的整个过程。首先，创建 <code>pause</code> 容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --name=test-pause \</span><br><span class="line">	--hostname=test-pause \</span><br><span class="line">	--network=none \</span><br><span class="line">	--workdir=/ \</span><br><span class="line">	--log-opt max-size=100m \</span><br><span class="line">	--runtime=runc \</span><br><span class="line">	--detach=true \</span><br><span class="line">	k8s.gcr.io/pause:3.4.1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>然后在 Pod 中运行其他容器，本示例启动 2 个应用容器，一个 nginx 容器，里面启动了 nginx 服务，一个自定义的容器，里面包含常用工具</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_nginx_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             nginx</span></span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_centos_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             centos7:my ping 127.1</span>             </span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker ps -a</span></span><br><span class="line">CONTAINER ID   IMAGE                    COMMAND                  CREATED          STATUS          PORTS     NAMES</span><br><span class="line">54d57add44d2   centos7:my               &quot;ping 127.1&quot;             3 seconds ago    Up 2 seconds              pod_centos_test</span><br><span class="line">cd0c661774e2   nginx                    &quot;/docker-entrypoint.…&quot;   2 minutes ago    Up 2 minutes              pod_nginx_test</span><br><span class="line">0eec8dd9d164   k8s.gcr.io/pause:3.4.1   &quot;/pause&quot;                 10 minutes ago   Up 10 minutes             test-pause             </span><br></pre></td></tr></table></figure>
-<p>进入 <code>pod_centos_test</code> 容器，查看网络、端口、主机名信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">hostname</span></span><br><span class="line">test-pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">s -elf</span></span><br><span class="line">F S UID         PID   PPID  C PRI  NI ADDR SZ WCHAN  STIME TTY          TIME CMD</span><br><span class="line">4 S root          1      0  0  80   0 -  6218 skb_wa 17:01 ?        00:00:00 ping 127.1</span><br><span class="line">4 S root          7      0  0  80   0 -  2959 do_wai 17:02 pts/0    00:00:00 bash</span><br><span class="line">0 R root         30      7  0  80   0 - 12935 -      17:08 pts/0    00:00:00 ps -elf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span></span><br><span class="line">Active Internet connections (servers and established)</span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      -                   </span><br><span class="line">tcp6       0      0 :::80                   :::*                    LISTEN      - </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00</span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl  localhost:80</span></span><br><span class="line">&lt;!DOCTYPE html&gt;</span><br><span class="line">&lt;html&gt;</span><br><span class="line">&lt;head&gt;</span><br><span class="line">&lt;title&gt;Welcome to nginx!&lt;/title&gt;</span><br><span class="line">&lt;style&gt;</span><br><span class="line">html &#123; color-scheme: light dark; &#125;</span><br><span class="line">body &#123; width: 35em; margin: 0 auto;</span><br><span class="line">font-family: Tahoma, Verdana, Arial, sans-serif; &#125;</span><br><span class="line">&lt;/style&gt;</span><br><span class="line">&lt;/head&gt;</span><br><span class="line">&lt;body&gt;</span><br><span class="line">&lt;h1&gt;Welcome to nginx!&lt;/h1&gt;</span><br><span class="line">&lt;p&gt;If you see this page, the nginx web server is successfully installed and</span><br><span class="line">working. Further configuration is required.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;For online documentation and support please refer to</span><br><span class="line">&lt;a href=&quot;http://nginx.org/&quot;&gt;nginx.org&lt;/a&gt;.&lt;br/&gt;</span><br><span class="line">Commercial support is available at</span><br><span class="line">&lt;a href=&quot;http://nginx.com/&quot;&gt;nginx.com&lt;/a&gt;.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;&lt;em&gt;Thank you for using nginx.&lt;/em&gt;&lt;/p&gt;</span><br><span class="line">&lt;/body&gt;</span><br><span class="line">&lt;/html&gt;       </span><br></pre></td></tr></table></figure>
-<ul>
-<li>Pod 中的容器主机名相同，都使用 <code>pause</code> 容器的主机名，但实际并未共享 UTS namespace。<blockquote>
-<p>可以通过找到对应 docker 容器的进程 PID，找到对应进程的 namespace 信息对比确认</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep ping</span></span><br><span class="line">4 S root      35333  35311  0  80   0 -  6218 skb_wa 01:01 ?        00:00:00 ping 127.1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/35333/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 ipc -&gt; ipc:[4026532664]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 mnt -&gt; mnt:[4026532662]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 pid -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 pid_for_children -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 uts -&gt; uts:[4026532663]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root      34909  34887  0  80   0 -  2233 sigsus 00:59 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34909/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 ipc -&gt; ipc:[4026532660]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 mnt -&gt; mnt:[4026532658]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 pid -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 pid_for_children -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 uts -&gt; uts:[4026532659]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep pause</span></span><br><span class="line">4 S root      34239  34221  0  80   0 -   241 ia32_s 00:51 ?        00:00:00 /pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34239/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 ipc -&gt; ipc:[4026532585]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 mnt -&gt; mnt:[4026532583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 pid -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 pid_for_children -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 uts -&gt; uts:[4026532584]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>以上观察可以看到，Pod 中的容器共享了 network namespace，未共享 UTS namespace。Kubernetes 中 Pod 中的容器同理。</p>
-</blockquote>
-</li>
-<li>Pod 中容器的 PID namespace 进行了隔离，各个容器的 PID 进行了隔离，PID namespace 不同。</li>
-<li>Pod 中的容器共享了 network namespace，具有相同的网络信息（网卡、IP、端口资源）</li>
-<li>Pod 中的容器直接可以通过 <code>localhost</code> 互相访问</li>
-</ul>
-<span id="more"></span>
-
-<h1 id="Pod-和-Kubernetes-API-服务交互"><a href="#Pod-和-Kubernetes-API-服务交互" class="headerlink" title="Pod 和 Kubernetes API 服务交互"></a>Pod 和 Kubernetes API 服务交互</h1><p><a href="https://kubernetes.io/zh-cn/docs/concepts/workloads/pods/downward-api/"><code>downwardAPI</code></a> 提供了一种简单的方式，可以将 Pod 的 Metadata 和状态数据通过<strong>环境变量</strong>或者 <strong>Volume</strong> 传递（挂载）到 Pod 中，允许内部进程使用。但这种方式仅仅可以暴露一个 Pod 自身的 Metadata ，而且只能暴露一部分数据，某些情况下，应用可能需要知道其他 Pod 的信息，甚至集群中其他资源的信息，这种情况下，<code>downwardAPI</code> 的方式就无能为力了。</p>
-<p>Pod 启动时，系统会主动将部分信息以环境变量的形式注入到每个 Pod 中，比如自定义的 Service 的部分信息，Kubernetes API Service 的信息等，可以登陆 Pod，检查系统环境变量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">printenv</span> | grep <span class="string">&quot;SERVICE&quot;</span></span></span><br><span class="line">KUBERNETES_SERVICE_PORT_HTTPS=443</span><br><span class="line">TEST_API_SERVICE_PORT=tcp://10.106.126.96:10302</span><br><span class="line">KUBERNETES_SERVICE_PORT=443</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PROTO=tcp</span><br><span class="line">TEST_API_SERVICE_SERVICE_HOST=10.106.126.96</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP=tcp://10.106.126.96:10302</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT_TEST_API_PORD=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_ADDR=10.106.126.96</span><br><span class="line">KUBERNETES_SERVICE_HOST=10.96.0.1</span><br></pre></td></tr></table></figure>
-<p>以上示例中的 Pod ，在启动时，系统主动注入了相同 namespace 中的 Service 的信息，包括 Service IP 地址、端口等信息，以及 Kubernetes API Service 的 IP 及端口信息。</p>
-<blockquote>
-<p>Pod 中要使用 Service 的环境变量，要确保 Service 在 Pod 启动之前被创建，否则 Pod 中不存在相关环境变量。</p>
-</blockquote>
-<p>Pod 启动时，系统除了主动注入环境变量，还通过创建 <code>projected</code> 的 Volume 的方式给每个 Pod 挂载了以下信息</p>
-<ul>
-<li>所属 namespace 的默认 ServiceAccount 的 token（<code>serviceAccountToken</code>）</li>
-<li>集群的 CA 证书（<code>configMap</code>）</li>
-<li>Pod 的所属 namespace 信息（<code>downwardAPI</code>）</li>
-</ul>
-<p>可以通过以下命令验证上述信息。其中的 Volume <code>kube-api-access-8ch7r</code> 为系统自动生成并挂载到了 Pod 中的容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit pod -n ops ops-centos7-bfc4d75b5-kjcfs</span></span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    app: ops-centos7</span><br><span class="line">  name: ops-centos7-bfc4d75b5-kjcfs</span><br><span class="line">  namespace: ops</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - command:</span><br><span class="line">    - ping</span><br><span class="line">    - 127.0.0.1</span><br><span class="line">    image: centos:centos7.9.2009</span><br><span class="line">    name: ops-centos7</span><br><span class="line">	</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount</span><br><span class="line">      name: kube-api-access-8ch7r</span><br><span class="line">      readOnly: true</span><br><span class="line"></span><br><span class="line">  volumes:</span><br><span class="line">  - name: kube-api-access-8ch7r</span><br><span class="line">    projected:</span><br><span class="line">      defaultMode: 420</span><br><span class="line">      sources:</span><br><span class="line">      - serviceAccountToken:</span><br><span class="line">          expirationSeconds: 3607</span><br><span class="line">          path: token</span><br><span class="line">      - configMap:</span><br><span class="line">          items:</span><br><span class="line">          - key: ca.crt</span><br><span class="line">            path: ca.crt</span><br><span class="line">          name: kube-root-ca.crt</span><br><span class="line">      - downwardAPI:</span><br><span class="line">          items:</span><br><span class="line">          - fieldRef:</span><br><span class="line">              apiVersion: v1</span><br><span class="line">              fieldPath: metadata.namespace</span><br><span class="line">            path: namespace</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>卷 <code>kube-api-access-8ch7r</code> 主要包含 3 部分内容</p>
-<ul>
-<li><code>serviceAccountToken</code> 每个 namespace 都有个默认的 ServiceAccount，在没有为 Pod 配置 ServiceAccount 的情况下，系统会自动将默认的 ServiceAccount 挂载到 Pod 中的每个容器，作为运行在 Pod 中的进程和 API Server 交互时认证授权的身份（主体）。<a href="/202305161451/" title="ServiceAccount 使用说明参考">ServiceAccount 使用说明参考</a></li>
-<li><code>configMap</code> - 以 <code>configMap</code> 的方式为 Pod 中的容器挂载了集群的 CA 证书</li>
-<li><code>downwardAPI</code> - 以 <code>downwardAPI</code> 的方式，让 Pod 中的容器可以获取到 Pod 所在的 namespace 信息。</li>
-</ul>
-<p>以上内容被挂载到了容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录中，可以在容器中检查此目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /var/run/secrets/kubernetes.io/serviceaccount/</span></span><br><span class="line">ca.crt  namespace  token</span><br></pre></td></tr></table></figure>
-
-
-
-<h2 id="在-Pod-中通过-curl-命令请求-Kubernetes-API"><a href="#在-Pod-中通过-curl-命令请求-Kubernetes-API" class="headerlink" title="在 Pod 中通过 curl 命令请求 Kubernetes API"></a>在 Pod 中通过 curl 命令请求 Kubernetes API</h2><p>默认情况下，Kubernetes API Service 的 Service 名称为 <code>kubernetes</code>，因此在集群内部，可以通过 FQDN <code>kubernetes.default.svc.cluster.local</code> 访问 Kubernetes API Service</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.96.0.1    &lt;none&gt;        443/TCP   156d</span><br></pre></td></tr></table></figure>
-
-<p>在 Pod 中尝试访问 Kubernetes API Service，</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">curl: (60) SSL certificate problem: unable to get local issuer certificate</span><br><span class="line">More details here: https://curl.haxx.se/docs/sslcerts.html</span><br><span class="line"></span><br><span class="line">curl failed to verify the legitimacy of the server and therefore could not</span><br><span class="line">establish a secure connection to it. To learn more about this situation and</span><br><span class="line">how to fix it, please visit the web page mentioned above.</span><br></pre></td></tr></table></figure>
-<p>以上报错，是因为通过 https 访问 Kubernetes API Service，但是无法验证证书。最简单的规避此问题的方法是使用 <code>curl</code> 命令的 <code>-k, --insecure</code> 选项忽略验证证书，但这是存在安全隐患的，不建议在生产环境使用。</p>
-<p>Pod 启动时，系统已经将集群的 CA 证书注入到了每个容器，因此可以使用 CA 证书来验证服务器证书。执行以下命令，使用 CA 证书重新访问 Kubernetes API Service</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;kind&quot;: &quot;Status&quot;,</span><br><span class="line">  &quot;apiVersion&quot;: &quot;v1&quot;,</span><br><span class="line">  &quot;metadata&quot;: &#123;&#125;,</span><br><span class="line">  &quot;status&quot;: &quot;Failure&quot;,</span><br><span class="line">  &quot;message&quot;: &quot;forbidden: User \&quot;system:anonymous\&quot; cannot get path \&quot;/\&quot;&quot;,</span><br><span class="line">  &quot;reason&quot;: &quot;Forbidden&quot;,</span><br><span class="line">  &quot;details&quot;: &#123;&#125;,</span><br><span class="line">  &quot;code&quot;: 403</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>可以看到，使用 CA 证书后，HTTPS 连接成功，Kubernetes API 返回了响应。以上 Kubernetes API 输出中，表面此次请求使用的是匿名用户，不具有 API 服务器的授权，因此拒绝访问。</p>
-<blockquote>
-<p>默认情况下，Pod 使用的是 namespace 中的默认的 ServiceAccount token，默认不具有任何权限。</p>
-</blockquote>
-<p><a href="https://csms.tech/202305161451/#RBAC-配置示例">参考 RBAC 配置认证鉴权使 Pod 的容器可以和 Kubernetes API Server 通信</a></p>
-<h1 id="Pod-计算资源限制"><a href="#Pod-计算资源限制" class="headerlink" title="Pod 计算资源限制"></a>Pod 计算资源限制</h1><p>创建 Pod 时，可以指定<strong>容器</strong>对 CPU 和 Memory 的资源请求量（<code>requests</code>）和资源限制量（’limits&#96;），他们不是针对 Pod，而是针对 Pod 中的容器。Pod 对资源的请求量和限制量是它所包含的所有容器的请求量和限制量之和。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: $&#123;NAME&#125;</span><br><span class="line">  namespace: $&#123;NAMESPACE&#125;</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: $&#123;NAME&#125;</span><br><span class="line">    image: nginx:1.14.2</span><br><span class="line">    ports:</span><br><span class="line">    - containerPort: 80</span><br><span class="line">      name: http-web</span><br><span class="line">      </span><br><span class="line">    resources:</span><br><span class="line">      requests:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br><span class="line">      limits:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>如果为容器的资源申请指定了 <code>limits</code>，但未指定 <code>requests</code>，并且没有应用准入时机制为该资源设置默认请求， 然后 Kubernetes 将复制你所指定的限制值，将其用作资源的请求值。</p>
-</blockquote>
-<h2 id="资源类型"><a href="#资源类型" class="headerlink" title="资源类型"></a>资源类型</h2><p>CPU 和 内存 都是 资源类型。每种资源类型具有其基本单位。 CPU 表达的是计算处理能力，其单位是 Kubernetes CPU。内存的单位是字节。<sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[资源类型](https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types)
-">[2]</span></a></sup></p>
-<h3 id="CPU-资源单位"><a href="#CPU-资源单位" class="headerlink" title="CPU 资源单位"></a>CPU 资源单位</h3><p>CPU 资源的限制和请求以 “cpu” 为单位。 在 Kubernetes 中，一个 CPU 等于 1 个物理 CPU 核 或者 1 个虚拟核， 取决于节点是一台物理主机还是运行在某物理主机上的虚拟机。</p>
-<blockquote>
-<p>1 CPU &#x3D; 1000m 的 CPU 资源</p>
-</blockquote>
-<h3 id="Memory-资源单位"><a href="#Memory-资源单位" class="headerlink" title="Memory 资源单位"></a>Memory 资源单位</h3><p>memory 的限制和请求以字节为单位。 你可以使用普通的整数，或者带有以下 数量后缀 的定点数字来表示内存：E、P、T、G、M、k。 你也可以使用对应的 2 的幂数：Ei、Pi、Ti、Gi、Mi、Ki。</p>
-<h2 id="查看节点资源总量"><a href="#查看节点资源总量" class="headerlink" title="查看节点资源总量"></a>查看节点资源总量</h2><p>通过以下命令输出，可以看到节点的资源总量和可分配资源量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">...</span><br><span class="line">Capacity:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  524276716Ki</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             32068748Ki</span><br><span class="line">  pods:               110</span><br><span class="line">Allocatable:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  483173420666</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             31966348Ki</span><br><span class="line">  pods:               110</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/reference/kubernetes-api/workload-resources/pod-v1/#%E8%B5%84%E6%BA%90">resources</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types">资源类型</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes 安装配置</title>
     <url>/202209121102/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/">Kubernetes 官网文档</a></p>
@@ -9756,6 +9650,112 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes Pod</title>
+    <url>/202304271425/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pod 是由一个或多个容器构成的集合，被 Kubernetes 作为一个整体进行部署和调度，是 Kubernetes 调度的最小单元。同一个 Pod 内的容器共享 <a href="/202304031317/" title="network namespace">network namespace</a>、<a href="/202304191340/" title="UTS nanespace">UTS nanespace</a></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes v1.24.7</li>
+</ul>
+<h1 id="Pod-创建过程"><a href="#Pod-创建过程" class="headerlink" title="Pod 创建过程"></a>Pod 创建过程</h1><p>当用户在 Kubernetes 中创建了一个 Pod 后，CRI 和 CNI 协同创建 Pod 所属容器，并为 Pod 中的容器初始化网络协议栈的具体过程如下<br><img src="https://i.csms.tech/img_139.png"></p>
+<ol>
+<li><p>用户在 Kubernetes 中创建了一个 Pod 后，Kubelet 接收到创建新 Pod 的任务，首先调用 CRI 创建 Pod 内的容器</p>
+</li>
+<li><p>Pod 中第一个被创建的容器是 <code>pause</code> 容器。<code>pause</code> 容器中运行着一个功能非常简单的 C 程序，具体逻辑是把自己永远阻塞，没有实际的业务逻辑，主要功能是用来占用一个  <a href="/202304031317/" title="network namespace">network namespace</a>。</p>
+<p> 创建 <code>pause</code> 容器，使用 <a href="https://csms.tech/202208301536/#None-模式">docker none 网络模式</a>，创建出来的容器除了 lo 回环网卡外没有其他网络设备。</p>
+</li>
+<li><p>Pod 内的其他用户容器通过加入 <code>pause</code> 容器已占用的 network namespace 的方式共享同一个 network namespace。对应于 docker 的 <a href="https://csms.tech/202208301536/#Container-模式">Container 模式</a></p>
+<p> 其他用户容器都使用 <code>pause</code> 容器的主机名，但并不使用同一个 UTS namespace。</p>
+</li>
+<li><p>CNI 负责 Pod 中容器的网络初始化工作。主要为 Pod 内的 <code>pause</code> 容器添加 <code>eth0</code> 网卡、分配 IP、配置网关等。</p>
+</li>
+</ol>
+<h1 id="pause-容器"><a href="#pause-容器" class="headerlink" title="pause 容器"></a>pause 容器</h1><p><code>pause</code> 容器是 Pod 中被创建的第一个容器，Pod 中的其他容器通过使用 <code>pause</code> 容器的 network namespace 共享网络协议栈和主机名。它是 Pod 中其他容器的父容器。</p>
+<blockquote>
+<p>1.8 以后版本默认不启用 PID namespace 共享。每个容器拥有独立的 PID namespace。</p>
+</blockquote>
+<p>以下步骤通过 docker 演示 Pod 容器创建的整个过程。首先，创建 <code>pause</code> 容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --name=test-pause \</span><br><span class="line">	--hostname=test-pause \</span><br><span class="line">	--network=none \</span><br><span class="line">	--workdir=/ \</span><br><span class="line">	--log-opt max-size=100m \</span><br><span class="line">	--runtime=runc \</span><br><span class="line">	--detach=true \</span><br><span class="line">	k8s.gcr.io/pause:3.4.1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>然后在 Pod 中运行其他容器，本示例启动 2 个应用容器，一个 nginx 容器，里面启动了 nginx 服务，一个自定义的容器，里面包含常用工具</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_nginx_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             nginx</span></span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_centos_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             centos7:my ping 127.1</span>             </span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker ps -a</span></span><br><span class="line">CONTAINER ID   IMAGE                    COMMAND                  CREATED          STATUS          PORTS     NAMES</span><br><span class="line">54d57add44d2   centos7:my               &quot;ping 127.1&quot;             3 seconds ago    Up 2 seconds              pod_centos_test</span><br><span class="line">cd0c661774e2   nginx                    &quot;/docker-entrypoint.…&quot;   2 minutes ago    Up 2 minutes              pod_nginx_test</span><br><span class="line">0eec8dd9d164   k8s.gcr.io/pause:3.4.1   &quot;/pause&quot;                 10 minutes ago   Up 10 minutes             test-pause             </span><br></pre></td></tr></table></figure>
+<p>进入 <code>pod_centos_test</code> 容器，查看网络、端口、主机名信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">hostname</span></span><br><span class="line">test-pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">s -elf</span></span><br><span class="line">F S UID         PID   PPID  C PRI  NI ADDR SZ WCHAN  STIME TTY          TIME CMD</span><br><span class="line">4 S root          1      0  0  80   0 -  6218 skb_wa 17:01 ?        00:00:00 ping 127.1</span><br><span class="line">4 S root          7      0  0  80   0 -  2959 do_wai 17:02 pts/0    00:00:00 bash</span><br><span class="line">0 R root         30      7  0  80   0 - 12935 -      17:08 pts/0    00:00:00 ps -elf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span></span><br><span class="line">Active Internet connections (servers and established)</span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      -                   </span><br><span class="line">tcp6       0      0 :::80                   :::*                    LISTEN      - </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00</span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl  localhost:80</span></span><br><span class="line">&lt;!DOCTYPE html&gt;</span><br><span class="line">&lt;html&gt;</span><br><span class="line">&lt;head&gt;</span><br><span class="line">&lt;title&gt;Welcome to nginx!&lt;/title&gt;</span><br><span class="line">&lt;style&gt;</span><br><span class="line">html &#123; color-scheme: light dark; &#125;</span><br><span class="line">body &#123; width: 35em; margin: 0 auto;</span><br><span class="line">font-family: Tahoma, Verdana, Arial, sans-serif; &#125;</span><br><span class="line">&lt;/style&gt;</span><br><span class="line">&lt;/head&gt;</span><br><span class="line">&lt;body&gt;</span><br><span class="line">&lt;h1&gt;Welcome to nginx!&lt;/h1&gt;</span><br><span class="line">&lt;p&gt;If you see this page, the nginx web server is successfully installed and</span><br><span class="line">working. Further configuration is required.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;For online documentation and support please refer to</span><br><span class="line">&lt;a href=&quot;http://nginx.org/&quot;&gt;nginx.org&lt;/a&gt;.&lt;br/&gt;</span><br><span class="line">Commercial support is available at</span><br><span class="line">&lt;a href=&quot;http://nginx.com/&quot;&gt;nginx.com&lt;/a&gt;.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;&lt;em&gt;Thank you for using nginx.&lt;/em&gt;&lt;/p&gt;</span><br><span class="line">&lt;/body&gt;</span><br><span class="line">&lt;/html&gt;       </span><br></pre></td></tr></table></figure>
+<ul>
+<li>Pod 中的容器主机名相同，都使用 <code>pause</code> 容器的主机名，但实际并未共享 UTS namespace。<blockquote>
+<p>可以通过找到对应 docker 容器的进程 PID，找到对应进程的 namespace 信息对比确认</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep ping</span></span><br><span class="line">4 S root      35333  35311  0  80   0 -  6218 skb_wa 01:01 ?        00:00:00 ping 127.1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/35333/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 ipc -&gt; ipc:[4026532664]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 mnt -&gt; mnt:[4026532662]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 pid -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 pid_for_children -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 uts -&gt; uts:[4026532663]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root      34909  34887  0  80   0 -  2233 sigsus 00:59 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34909/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 ipc -&gt; ipc:[4026532660]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 mnt -&gt; mnt:[4026532658]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 pid -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 pid_for_children -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 uts -&gt; uts:[4026532659]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep pause</span></span><br><span class="line">4 S root      34239  34221  0  80   0 -   241 ia32_s 00:51 ?        00:00:00 /pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34239/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 ipc -&gt; ipc:[4026532585]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 mnt -&gt; mnt:[4026532583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 pid -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 pid_for_children -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 uts -&gt; uts:[4026532584]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>以上观察可以看到，Pod 中的容器共享了 network namespace，未共享 UTS namespace。Kubernetes 中 Pod 中的容器同理。</p>
+</blockquote>
+</li>
+<li>Pod 中容器的 PID namespace 进行了隔离，各个容器的 PID 进行了隔离，PID namespace 不同。</li>
+<li>Pod 中的容器共享了 network namespace，具有相同的网络信息（网卡、IP、端口资源）</li>
+<li>Pod 中的容器直接可以通过 <code>localhost</code> 互相访问</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="Pod-和-Kubernetes-API-服务交互"><a href="#Pod-和-Kubernetes-API-服务交互" class="headerlink" title="Pod 和 Kubernetes API 服务交互"></a>Pod 和 Kubernetes API 服务交互</h1><p><a href="https://kubernetes.io/zh-cn/docs/concepts/workloads/pods/downward-api/"><code>downwardAPI</code></a> 提供了一种简单的方式，可以将 Pod 的 Metadata 和状态数据通过<strong>环境变量</strong>或者 <strong>Volume</strong> 传递（挂载）到 Pod 中，允许内部进程使用。但这种方式仅仅可以暴露一个 Pod 自身的 Metadata ，而且只能暴露一部分数据，某些情况下，应用可能需要知道其他 Pod 的信息，甚至集群中其他资源的信息，这种情况下，<code>downwardAPI</code> 的方式就无能为力了。</p>
+<p>Pod 启动时，系统会主动将部分信息以环境变量的形式注入到每个 Pod 中，比如自定义的 Service 的部分信息，Kubernetes API Service 的信息等，可以登陆 Pod，检查系统环境变量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">printenv</span> | grep <span class="string">&quot;SERVICE&quot;</span></span></span><br><span class="line">KUBERNETES_SERVICE_PORT_HTTPS=443</span><br><span class="line">TEST_API_SERVICE_PORT=tcp://10.106.126.96:10302</span><br><span class="line">KUBERNETES_SERVICE_PORT=443</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PROTO=tcp</span><br><span class="line">TEST_API_SERVICE_SERVICE_HOST=10.106.126.96</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP=tcp://10.106.126.96:10302</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT_TEST_API_PORD=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_ADDR=10.106.126.96</span><br><span class="line">KUBERNETES_SERVICE_HOST=10.96.0.1</span><br></pre></td></tr></table></figure>
+<p>以上示例中的 Pod ，在启动时，系统主动注入了相同 namespace 中的 Service 的信息，包括 Service IP 地址、端口等信息，以及 Kubernetes API Service 的 IP 及端口信息。</p>
+<blockquote>
+<p>Pod 中要使用 Service 的环境变量，要确保 Service 在 Pod 启动之前被创建，否则 Pod 中不存在相关环境变量。</p>
+</blockquote>
+<p>Pod 启动时，系统除了主动注入环境变量，还通过创建 <code>projected</code> 的 Volume 的方式给每个 Pod 挂载了以下信息</p>
+<ul>
+<li>所属 namespace 的默认 ServiceAccount 的 token（<code>serviceAccountToken</code>）</li>
+<li>集群的 CA 证书（<code>configMap</code>）</li>
+<li>Pod 的所属 namespace 信息（<code>downwardAPI</code>）</li>
+</ul>
+<p>可以通过以下命令验证上述信息。其中的 Volume <code>kube-api-access-8ch7r</code> 为系统自动生成并挂载到了 Pod 中的容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit pod -n ops ops-centos7-bfc4d75b5-kjcfs</span></span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    app: ops-centos7</span><br><span class="line">  name: ops-centos7-bfc4d75b5-kjcfs</span><br><span class="line">  namespace: ops</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - command:</span><br><span class="line">    - ping</span><br><span class="line">    - 127.0.0.1</span><br><span class="line">    image: centos:centos7.9.2009</span><br><span class="line">    name: ops-centos7</span><br><span class="line">	</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount</span><br><span class="line">      name: kube-api-access-8ch7r</span><br><span class="line">      readOnly: true</span><br><span class="line"></span><br><span class="line">  volumes:</span><br><span class="line">  - name: kube-api-access-8ch7r</span><br><span class="line">    projected:</span><br><span class="line">      defaultMode: 420</span><br><span class="line">      sources:</span><br><span class="line">      - serviceAccountToken:</span><br><span class="line">          expirationSeconds: 3607</span><br><span class="line">          path: token</span><br><span class="line">      - configMap:</span><br><span class="line">          items:</span><br><span class="line">          - key: ca.crt</span><br><span class="line">            path: ca.crt</span><br><span class="line">          name: kube-root-ca.crt</span><br><span class="line">      - downwardAPI:</span><br><span class="line">          items:</span><br><span class="line">          - fieldRef:</span><br><span class="line">              apiVersion: v1</span><br><span class="line">              fieldPath: metadata.namespace</span><br><span class="line">            path: namespace</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>卷 <code>kube-api-access-8ch7r</code> 主要包含 3 部分内容</p>
+<ul>
+<li><code>serviceAccountToken</code> 每个 namespace 都有个默认的 ServiceAccount，在没有为 Pod 配置 ServiceAccount 的情况下，系统会自动将默认的 ServiceAccount 挂载到 Pod 中的每个容器，作为运行在 Pod 中的进程和 API Server 交互时认证授权的身份（主体）。<a href="/202305161451/" title="ServiceAccount 使用说明参考">ServiceAccount 使用说明参考</a></li>
+<li><code>configMap</code> - 以 <code>configMap</code> 的方式为 Pod 中的容器挂载了集群的 CA 证书</li>
+<li><code>downwardAPI</code> - 以 <code>downwardAPI</code> 的方式，让 Pod 中的容器可以获取到 Pod 所在的 namespace 信息。</li>
+</ul>
+<p>以上内容被挂载到了容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录中，可以在容器中检查此目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /var/run/secrets/kubernetes.io/serviceaccount/</span></span><br><span class="line">ca.crt  namespace  token</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="在-Pod-中通过-curl-命令请求-Kubernetes-API"><a href="#在-Pod-中通过-curl-命令请求-Kubernetes-API" class="headerlink" title="在 Pod 中通过 curl 命令请求 Kubernetes API"></a>在 Pod 中通过 curl 命令请求 Kubernetes API</h2><p>默认情况下，Kubernetes API Service 的 Service 名称为 <code>kubernetes</code>，因此在集群内部，可以通过 FQDN <code>kubernetes.default.svc.cluster.local</code> 访问 Kubernetes API Service</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.96.0.1    &lt;none&gt;        443/TCP   156d</span><br></pre></td></tr></table></figure>
+
+<p>在 Pod 中尝试访问 Kubernetes API Service，</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">curl: (60) SSL certificate problem: unable to get local issuer certificate</span><br><span class="line">More details here: https://curl.haxx.se/docs/sslcerts.html</span><br><span class="line"></span><br><span class="line">curl failed to verify the legitimacy of the server and therefore could not</span><br><span class="line">establish a secure connection to it. To learn more about this situation and</span><br><span class="line">how to fix it, please visit the web page mentioned above.</span><br></pre></td></tr></table></figure>
+<p>以上报错，是因为通过 https 访问 Kubernetes API Service，但是无法验证证书。最简单的规避此问题的方法是使用 <code>curl</code> 命令的 <code>-k, --insecure</code> 选项忽略验证证书，但这是存在安全隐患的，不建议在生产环境使用。</p>
+<p>Pod 启动时，系统已经将集群的 CA 证书注入到了每个容器，因此可以使用 CA 证书来验证服务器证书。执行以下命令，使用 CA 证书重新访问 Kubernetes API Service</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;kind&quot;: &quot;Status&quot;,</span><br><span class="line">  &quot;apiVersion&quot;: &quot;v1&quot;,</span><br><span class="line">  &quot;metadata&quot;: &#123;&#125;,</span><br><span class="line">  &quot;status&quot;: &quot;Failure&quot;,</span><br><span class="line">  &quot;message&quot;: &quot;forbidden: User \&quot;system:anonymous\&quot; cannot get path \&quot;/\&quot;&quot;,</span><br><span class="line">  &quot;reason&quot;: &quot;Forbidden&quot;,</span><br><span class="line">  &quot;details&quot;: &#123;&#125;,</span><br><span class="line">  &quot;code&quot;: 403</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>可以看到，使用 CA 证书后，HTTPS 连接成功，Kubernetes API 返回了响应。以上 Kubernetes API 输出中，表面此次请求使用的是匿名用户，不具有 API 服务器的授权，因此拒绝访问。</p>
+<blockquote>
+<p>默认情况下，Pod 使用的是 namespace 中的默认的 ServiceAccount token，默认不具有任何权限。</p>
+</blockquote>
+<p><a href="https://csms.tech/202305161451/#RBAC-配置示例">参考 RBAC 配置认证鉴权使 Pod 的容器可以和 Kubernetes API Server 通信</a></p>
+<h1 id="Pod-计算资源限制"><a href="#Pod-计算资源限制" class="headerlink" title="Pod 计算资源限制"></a>Pod 计算资源限制</h1><p>创建 Pod 时，可以指定<strong>容器</strong>对 CPU 和 Memory 的资源请求量（<code>requests</code>）和资源限制量（’limits&#96;），他们不是针对 Pod，而是针对 Pod 中的容器。Pod 对资源的请求量和限制量是它所包含的所有容器的请求量和限制量之和。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: $&#123;NAME&#125;</span><br><span class="line">  namespace: $&#123;NAMESPACE&#125;</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: $&#123;NAME&#125;</span><br><span class="line">    image: nginx:1.14.2</span><br><span class="line">    ports:</span><br><span class="line">    - containerPort: 80</span><br><span class="line">      name: http-web</span><br><span class="line">      </span><br><span class="line">    resources:</span><br><span class="line">      requests:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br><span class="line">      limits:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>如果为容器的资源申请指定了 <code>limits</code>，但未指定 <code>requests</code>，并且没有应用准入时机制为该资源设置默认请求， 然后 Kubernetes 将复制你所指定的限制值，将其用作资源的请求值。</p>
+</blockquote>
+<h2 id="资源类型"><a href="#资源类型" class="headerlink" title="资源类型"></a>资源类型</h2><p>CPU 和 内存 都是 资源类型。每种资源类型具有其基本单位。 CPU 表达的是计算处理能力，其单位是 Kubernetes CPU。内存的单位是字节。<sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[资源类型](https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types)
+">[2]</span></a></sup></p>
+<h3 id="CPU-资源单位"><a href="#CPU-资源单位" class="headerlink" title="CPU 资源单位"></a>CPU 资源单位</h3><p>CPU 资源的限制和请求以 “cpu” 为单位。 在 Kubernetes 中，一个 CPU 等于 1 个物理 CPU 核 或者 1 个虚拟核， 取决于节点是一台物理主机还是运行在某物理主机上的虚拟机。</p>
+<blockquote>
+<p>1 CPU &#x3D; 1000m 的 CPU 资源</p>
+</blockquote>
+<h3 id="Memory-资源单位"><a href="#Memory-资源单位" class="headerlink" title="Memory 资源单位"></a>Memory 资源单位</h3><p>memory 的限制和请求以字节为单位。 你可以使用普通的整数，或者带有以下 数量后缀 的定点数字来表示内存：E、P、T、G、M、k。 你也可以使用对应的 2 的幂数：Ei、Pi、Ti、Gi、Mi、Ki。</p>
+<h2 id="查看节点资源总量"><a href="#查看节点资源总量" class="headerlink" title="查看节点资源总量"></a>查看节点资源总量</h2><p>通过以下命令输出，可以看到节点的资源总量和可分配资源量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">...</span><br><span class="line">Capacity:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  524276716Ki</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             32068748Ki</span><br><span class="line">  pods:               110</span><br><span class="line">Allocatable:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  483173420666</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             31966348Ki</span><br><span class="line">  pods:               110</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/reference/kubernetes-api/workload-resources/pod-v1/#%E8%B5%84%E6%BA%90">resources</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types">资源类型</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 权限控制</title>
     <url>/202305161451/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -9852,56 +9852,6 @@ width: 20%;
       <categories>
         <category>Linux</category>
         <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux 常用命令总结</title>
-    <url>/202305311658/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="查看系统启动时间"><a href="#查看系统启动时间" class="headerlink" title="查看系统启动时间"></a>查看系统启动时间</h1><h2 id="who"><a href="#who" class="headerlink" title="who"></a>who</h2><p>查看最后一次（上次）系统启动的时间</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">who</span> -b</span> </span><br><span class="line">system boot Dec 27 05:06</span><br></pre></td></tr></table></figure>
-
-<p>查看最后一次（上次）系统启动的时间，及运行级别</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">who</span> -r</span> </span><br><span class="line">run-level 5 Dec 27 05:06</span><br></pre></td></tr></table></figure>
-
-<h2 id="last"><a href="#last" class="headerlink" title="last"></a>last</h2><p>通过查看 <code>reboot</code> 用户的登陆记录，可以知道系统的启动时间</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">last reboot</span></span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Fri Jan 13 19:20 - 15:59 (236+20:38) </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Fri Jan 13 19:00 - 15:59 (236+20:58) </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Tue Dec 20 11:18 - 15:59 (261+04:40) </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Thu Oct 27 12:04 - 11:17 (53+23:12)  </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Fri Sep 16 16:26 - 11:28 (40+19:02)  </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Mon Aug 22 17:52 - 16:15 (24+22:22)  </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Mon Aug 22 17:15 - 17:51  (00:36)</span><br></pre></td></tr></table></figure>
-
-<h1 id="分割文件"><a href="#分割文件" class="headerlink" title="分割文件"></a>分割文件</h1><p>文件太大，需要分割时，可以使用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">split -b 100M -d test.file</span><br></pre></td></tr></table></figure>
-
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-b, --bytes=SIZE</code></td>
-<td>按照指定大小分割文件</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-d, --numeric-suffixes</code></td>
-<td>指定分割后的文件后缀为数字</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-a, --suffix-length=N</code></td>
-<td>分割后的文件后缀的长度</td>
-<td></td>
-</tr>
-</tbody></table>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">split</span> -b 100M -d test.file</span></span><br><span class="line">x00  x03  x06  x09  x12  x15  x18  x21  x24  x27  x30  x33               </span><br><span class="line">x01  x04  x07  x10  x13  x16  x19  x22  x25  x28  x31  test.file</span><br><span class="line">x02  x05  x08  x11  x14  x17  x20  x23  x26  x29  x32  </span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -10063,6 +10013,56 @@ width: 20%;
 </tr>
 </tbody></table>
 ]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux 常用命令总结</title>
+    <url>/202305311658/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="查看系统启动时间"><a href="#查看系统启动时间" class="headerlink" title="查看系统启动时间"></a>查看系统启动时间</h1><h2 id="who"><a href="#who" class="headerlink" title="who"></a>who</h2><p>查看最后一次（上次）系统启动的时间</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">who</span> -b</span> </span><br><span class="line">system boot Dec 27 05:06</span><br></pre></td></tr></table></figure>
+
+<p>查看最后一次（上次）系统启动的时间，及运行级别</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">who</span> -r</span> </span><br><span class="line">run-level 5 Dec 27 05:06</span><br></pre></td></tr></table></figure>
+
+<h2 id="last"><a href="#last" class="headerlink" title="last"></a>last</h2><p>通过查看 <code>reboot</code> 用户的登陆记录，可以知道系统的启动时间</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">last reboot</span></span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Fri Jan 13 19:20 - 15:59 (236+20:38) </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Fri Jan 13 19:00 - 15:59 (236+20:58) </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Tue Dec 20 11:18 - 15:59 (261+04:40) </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Thu Oct 27 12:04 - 11:17 (53+23:12)  </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Fri Sep 16 16:26 - 11:28 (40+19:02)  </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Mon Aug 22 17:52 - 16:15 (24+22:22)  </span><br><span class="line">reboot   system boot  3.10.0-1160.76.1 Mon Aug 22 17:15 - 17:51  (00:36)</span><br></pre></td></tr></table></figure>
+
+<h1 id="分割文件"><a href="#分割文件" class="headerlink" title="分割文件"></a>分割文件</h1><p>文件太大，需要分割时，可以使用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">split -b 100M -d test.file</span><br></pre></td></tr></table></figure>
+
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-b, --bytes=SIZE</code></td>
+<td>按照指定大小分割文件</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-d, --numeric-suffixes</code></td>
+<td>指定分割后的文件后缀为数字</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-a, --suffix-length=N</code></td>
+<td>分割后的文件后缀的长度</td>
+<td></td>
+</tr>
+</tbody></table>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">split</span> -b 100M -d test.file</span></span><br><span class="line">x00  x03  x06  x09  x12  x15  x18  x21  x24  x27  x30  x33               </span><br><span class="line">x01  x04  x07  x10  x13  x16  x19  x22  x25  x28  x31  test.file</span><br><span class="line">x02  x05  x08  x11  x14  x17  x20  x23  x26  x29  x32  </span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -14915,6 +14915,30 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>python requirements 的创建及使用</title>
+    <url>/202208161710/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Python 3.10</li>
+</ul>
+<p><code>python</code> 项目中最好包含一个 <code>requirements.txt</code> 文件，用于记录所有依赖包及其精确的版本号。以便新环境部署。</p>
+<span id="more"></span>
+
+<h3 id="requirements-生成和使用"><a href="#requirements-生成和使用" class="headerlink" title="requirements 生成和使用"></a>requirements 生成和使用</h3><p>在项目中安装新的包之后，可以运行以下命令更新 <code>requirements</code> 文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip freeze &gt; requirements.txt</span><br></pre></td></tr></table></figure>
+<p><code>requirements.txt</code> 文件内容示例：</p>
+<figure class="highlight shell"><figcaption><span>requirements.txt</span></figcaption><table><tr><td class="code"><pre><span class="line">asgiref==3.5.2</span><br><span class="line">Django==4.0</span><br><span class="line">django-mdeditor==0.1.20</span><br><span class="line">Markdown==3.3.7</span><br><span class="line">Pillow==9.2.0</span><br><span class="line">Pygments==2.12.0</span><br><span class="line">PyMySQL==1.0.2</span><br><span class="line">sqlparse==0.4.2</span><br><span class="line">uWSGI==2.0.20</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
+<p>生成的文件中会包含项目需要的所有包以及精确的版本号信息，新环境部署时，可使用以下命令安装依赖包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install -r requirements.txt</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>python requests 使用</title>
     <url>/202303071126/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -14944,30 +14968,6 @@ width: 20%;
 </li>
 </ul>
 ]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>python requirements 的创建及使用</title>
-    <url>/202208161710/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Python 3.10</li>
-</ul>
-<p><code>python</code> 项目中最好包含一个 <code>requirements.txt</code> 文件，用于记录所有依赖包及其精确的版本号。以便新环境部署。</p>
-<span id="more"></span>
-
-<h3 id="requirements-生成和使用"><a href="#requirements-生成和使用" class="headerlink" title="requirements 生成和使用"></a>requirements 生成和使用</h3><p>在项目中安装新的包之后，可以运行以下命令更新 <code>requirements</code> 文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip freeze &gt; requirements.txt</span><br></pre></td></tr></table></figure>
-<p><code>requirements.txt</code> 文件内容示例：</p>
-<figure class="highlight shell"><figcaption><span>requirements.txt</span></figcaption><table><tr><td class="code"><pre><span class="line">asgiref==3.5.2</span><br><span class="line">Django==4.0</span><br><span class="line">django-mdeditor==0.1.20</span><br><span class="line">Markdown==3.3.7</span><br><span class="line">Pillow==9.2.0</span><br><span class="line">Pygments==2.12.0</span><br><span class="line">PyMySQL==1.0.2</span><br><span class="line">sqlparse==0.4.2</span><br><span class="line">uWSGI==2.0.20</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-
-<p>生成的文件中会包含项目需要的所有包以及精确的版本号信息，新环境部署时，可使用以下命令安装依赖包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install -r requirements.txt</span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Python</category>
       </categories>
@@ -15388,130 +15388,6 @@ width: 20%;
       <tags>
         <tag>Kubernetes</tag>
         <tag>Rancher</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>redis 配置</title>
-    <url>/202307121459/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Redis 6</li>
-</ul>
-<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
-<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
-<p>创建服务启动需要的数据目录及日志目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
-<p>7380 服务使用如下配置文件</p>
-<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
-
-<p>分别启动服务（7380-7385）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<p><strong>创建集群</strong> 命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>redis-cli</code> 命令参数说明：</p>
-<table>
-<thead>
-<tr>
-<th>命令参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--cluster</code></td>
-<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
-<td><code>redis-cli --cluster create</code><br/>创建集群</td>
-</tr>
-<tr>
-<td><code>--cluster-replicas</code></td>
-<td>redis cluster 副本数比例</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-a</code></td>
-<td>redis 密码</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-c</code></td>
-<td>操作 redis cluster</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-p</code></td>
-<td>指定连接的端口</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看新建的集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
-<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
-<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
-</ul>
-<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>新增节点的命令示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
-
-<p>再次查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
-<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
-<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
-<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
-<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
-</ul>
-<p>本示例中执行以下命令为新添加的节点分配 slot</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
-
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
-<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
-<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
-<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
-<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
-</ul>
-<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-
-<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
-<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -16006,31 +15882,127 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>sed 命令使用示例</title>
-    <url>/202207291520/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="常用选项说明"><a href="#常用选项说明" class="headerlink" title="常用选项说明"></a>常用选项说明</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-n    使用安静(silent)模式。在一般 sed 的用法中，所有来自 STDIN （例如文件内容）的内容一般都会被列出到屏幕上。但如果加上 -n 参数后，则只有经过sed 特殊处理的那一行(或者动作)才会被列出来。</span><br><span class="line">-i    直接修改读取的内容，而不是由屏幕输出。</span><br><span class="line">-f    直接将 sed 的动作写在一个文件内， -f filename 则可以执行 filename 内的sed 动作；</span><br></pre></td></tr></table></figure>
+    <title>redis 配置</title>
+    <url>/202307121459/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Redis 6</li>
+</ul>
+<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
+<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
+<p>创建服务启动需要的数据目录及日志目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
+<p>7380 服务使用如下配置文件</p>
+<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
+
+<p>分别启动服务（7380-7385）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
 <span id="more"></span>
 
-<h3 id="常用命令"><a href="#常用命令" class="headerlink" title="常用命令"></a>常用命令</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">a    追加， a 的后面可以接字符串，而这些字串会在新的一行出现(当前行的下一行)</span><br><span class="line">i    插入， i 的后面可以接字符串，而这些字串会在新的一行出现(目前行的上一行)；</span><br><span class="line">c    替代， c 的后面可以接字符串，替换整行</span><br><span class="line">s    替换， s/a/b/，a 替换成 b</span><br><span class="line">d    删除</span><br><span class="line">p    打印指定行</span><br></pre></td></tr></table></figure>
+<p><strong>创建集群</strong> 命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>redis-cli</code> 命令参数说明：</p>
+<table>
+<thead>
+<tr>
+<th>命令参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--cluster</code></td>
+<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
+<td><code>redis-cli --cluster create</code><br/>创建集群</td>
+</tr>
+<tr>
+<td><code>--cluster-replicas</code></td>
+<td>redis cluster 副本数比例</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-a</code></td>
+<td>redis 密码</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-c</code></td>
+<td>操作 redis cluster</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td>指定连接的端口</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<h3 id="行定位方法"><a href="#行定位方法" class="headerlink" title="行定位方法"></a>行定位方法</h3><p>根据行号打印出指定行，<code>$</code> 表示最后一行，<code>!</code> 取反，排除行</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -n &#x27;1p&#x27; file</span><br><span class="line">sed -n &#x27;1,10p&#x27; file</span><br><span class="line">sed -n &#x27;2,$p&#x27; file</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">打印除最后一行之外的其他行</span></span><br><span class="line">sed -n &#x27;$!p&#x27; file</span><br></pre></td></tr></table></figure>
-<p>打印出搜索匹配到的行</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -n &#x27;/root/p&#x27; file</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">打印出匹配<span class="string">&#x27;begin&#x27;</span>开始的行，到匹配到<span class="string">&#x27;end&#x27;</span>的行结束</span></span><br><span class="line">sed -n &#x27;/begin/,/end/p&#x27;</span><br><span class="line">sed -n &#x27;/begin/,/end/!p&#x27;</span><br></pre></td></tr></table></figure>
+<p>查看新建的集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<h3 id="常用示例"><a href="#常用示例" class="headerlink" title="常用示例"></a>常用示例</h3><h4 id="搜索包含指定内容的行，并替换整行内容"><a href="#搜索包含指定内容的行，并替换整行内容" class="headerlink" title="搜索包含指定内容的行，并替换整行内容"></a>搜索包含指定内容的行，并替换整行内容</h4><p>使用 <code>c</code> 命令，替换整行内容</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -i &#x27;/^updated/cupdate=1&#x27; file</span><br></pre></td></tr></table></figure>
+<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
 
-<h4 id="每行的行首或行位添加内容"><a href="#每行的行首或行位添加内容" class="headerlink" title="每行的行首或行位添加内容"></a>每行的行首或行位添加内容</h4><p><code>^</code>，<code>$</code> 匹配行首和行尾  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -i `s/^/添加内容/g` file</span><br></pre></td></tr></table></figure>]]></content>
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
+<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
+<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
+</ul>
+<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>新增节点的命令示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
+
+<p>再次查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
+<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
+<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
+<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
+<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
+</ul>
+<p>本示例中执行以下命令为新添加的节点分配 slot</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
+
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
+<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
+<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
+<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
+<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
+</ul>
+<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+
+<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
+<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Linux</category>
-        <category>常用命令</category>
+        <category>常用服务</category>
       </categories>
       <tags>
         <tag>Linux</tag>
-        <tag>sed</tag>
       </tags>
   </entry>
   <entry>
@@ -16066,6 +16038,34 @@ width: 20%;
       </categories>
       <tags>
         <tag>sftp</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>sed 命令使用示例</title>
+    <url>/202207291520/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="常用选项说明"><a href="#常用选项说明" class="headerlink" title="常用选项说明"></a>常用选项说明</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-n    使用安静(silent)模式。在一般 sed 的用法中，所有来自 STDIN （例如文件内容）的内容一般都会被列出到屏幕上。但如果加上 -n 参数后，则只有经过sed 特殊处理的那一行(或者动作)才会被列出来。</span><br><span class="line">-i    直接修改读取的内容，而不是由屏幕输出。</span><br><span class="line">-f    直接将 sed 的动作写在一个文件内， -f filename 则可以执行 filename 内的sed 动作；</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h3 id="常用命令"><a href="#常用命令" class="headerlink" title="常用命令"></a>常用命令</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">a    追加， a 的后面可以接字符串，而这些字串会在新的一行出现(当前行的下一行)</span><br><span class="line">i    插入， i 的后面可以接字符串，而这些字串会在新的一行出现(目前行的上一行)；</span><br><span class="line">c    替代， c 的后面可以接字符串，替换整行</span><br><span class="line">s    替换， s/a/b/，a 替换成 b</span><br><span class="line">d    删除</span><br><span class="line">p    打印指定行</span><br></pre></td></tr></table></figure>
+
+<h3 id="行定位方法"><a href="#行定位方法" class="headerlink" title="行定位方法"></a>行定位方法</h3><p>根据行号打印出指定行，<code>$</code> 表示最后一行，<code>!</code> 取反，排除行</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -n &#x27;1p&#x27; file</span><br><span class="line">sed -n &#x27;1,10p&#x27; file</span><br><span class="line">sed -n &#x27;2,$p&#x27; file</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">打印除最后一行之外的其他行</span></span><br><span class="line">sed -n &#x27;$!p&#x27; file</span><br></pre></td></tr></table></figure>
+<p>打印出搜索匹配到的行</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -n &#x27;/root/p&#x27; file</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">打印出匹配<span class="string">&#x27;begin&#x27;</span>开始的行，到匹配到<span class="string">&#x27;end&#x27;</span>的行结束</span></span><br><span class="line">sed -n &#x27;/begin/,/end/p&#x27;</span><br><span class="line">sed -n &#x27;/begin/,/end/!p&#x27;</span><br></pre></td></tr></table></figure>
+
+<h3 id="常用示例"><a href="#常用示例" class="headerlink" title="常用示例"></a>常用示例</h3><h4 id="搜索包含指定内容的行，并替换整行内容"><a href="#搜索包含指定内容的行，并替换整行内容" class="headerlink" title="搜索包含指定内容的行，并替换整行内容"></a>搜索包含指定内容的行，并替换整行内容</h4><p>使用 <code>c</code> 命令，替换整行内容</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -i &#x27;/^updated/cupdate=1&#x27; file</span><br></pre></td></tr></table></figure>
+
+<h4 id="每行的行首或行位添加内容"><a href="#每行的行首或行位添加内容" class="headerlink" title="每行的行首或行位添加内容"></a>每行的行首或行位添加内容</h4><p><code>^</code>，<code>$</code> 匹配行首和行尾  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sed -i `s/^/添加内容/g` file</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>sed</tag>
       </tags>
   </entry>
   <entry>
