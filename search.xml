@@ -690,6 +690,58 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -784,58 +836,6 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -1101,6 +1101,163 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Ansible playbook 使用介绍</title>
+    <url>/202309011341/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>ansible 2.9.27</li>
+</ul>
+<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
+<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
+<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
+<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
+<span id="more"></span>
+<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
+<ul>
+<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
+<li><code>remote_user</code> 用户名。</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
+
+<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
+
+<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
+<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
+
+<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
+
+<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
+
+<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
+<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
+<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
+<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
+<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
+
+<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
+<ul>
+<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
+">[1]</span></a></sup></li>
+<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
+</ul>
+<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
+">[1]</span></a></sup></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>action </code></td>
+<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain</code></td>
+<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>table </code></td>
+<td>This option specifies the packet matching table which the command should operate on</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain_management </code></td>
+<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>comment </code></td>
+<td>规则的注释说明</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ctstate </code><br/><code>list / elements=string</code></td>
+<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>source </code></td>
+<td>Source specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination</code> <br/><code>string</code></td>
+<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_port </code><br/><code>string</code></td>
+<td>Destination port or port range specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
+<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dst_range </code><br/><code>string</code></td>
+<td>Specifies the destination IP range to match in the iprange module.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>source_port </code></td>
+<td>Source port or port range specification.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>flush</code><br/><code>boolean</code></td>
+<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>jump </code></td>
+<td>This specifies the target of the rule</td>
+<td></td>
+</tr>
+<tr>
+<td><code>protocol </code></td>
+<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>rule_num </code></td>
+<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ansible</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Ansible 使用介绍</title>
     <url>/202308311109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1318,163 +1475,6 @@ width: 20%;
 </ul>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/2.9/installation_guide/intro_installation.html#prerequisites">安装依赖</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Parallelism and Shell Commands</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>ansible</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Ansible playbook 使用介绍</title>
-    <url>/202309011341/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>ansible 2.9.27</li>
-</ul>
-<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
-<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
-<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
-<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
-<span id="more"></span>
-<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
-<ul>
-<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
-<li><code>remote_user</code> 用户名。</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
-
-<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
-
-<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
-<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
-
-<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
-
-<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
-
-<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
-<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
-<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
-<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
-<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
-
-
-
-
-
-<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
-
-<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
-<ul>
-<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
-">[1]</span></a></sup></li>
-<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
-</ul>
-<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
-">[1]</span></a></sup></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>action </code></td>
-<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain</code></td>
-<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>table </code></td>
-<td>This option specifies the packet matching table which the command should operate on</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain_management </code></td>
-<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>comment </code></td>
-<td>规则的注释说明</td>
-<td></td>
-</tr>
-<tr>
-<td><code>ctstate </code><br/><code>list / elements=string</code></td>
-<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>source </code></td>
-<td>Source specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination</code> <br/><code>string</code></td>
-<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_port </code><br/><code>string</code></td>
-<td>Destination port or port range specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
-<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
-<td></td>
-</tr>
-<tr>
-<td><code>dst_range </code><br/><code>string</code></td>
-<td>Specifies the destination IP range to match in the iprange module.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>source_port </code></td>
-<td>Source port or port range specification.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>flush</code><br/><code>boolean</code></td>
-<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>jump </code></td>
-<td>This specifies the target of the rule</td>
-<td></td>
-</tr>
-<tr>
-<td><code>protocol </code></td>
-<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>rule_num </code></td>
-<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -2488,6 +2488,32 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>Confluence 常用基本操作</title>
+    <url>/202208250937/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Confluence 是一个专业的企业知识管理与协同软件，也可以用于构建企业 <a href="https://zh.m.wikipedia.org/zh/Wiki"><code>wiki</code></a>。通过它可以实现团队成员之间的协作和知识共享。在这里，团队成员齐心协力，各擅其能，协同地编写文档和管理项目。从此打破不同团队、不同部门以及个人之间信息孤岛的僵局，Confluence 真正实现了组织资源共享。Confluence 使用简单，但它强大的编辑和站点管理特征能够帮助团队成员之间共享信息、文档协作、集体讨论。</p>
+<span id="more"></span>
+
+<h3 id="根据标题生成文章目录"><a href="#根据标题生成文章目录" class="headerlink" title="根据标题生成文章目录"></a>根据标题生成文章目录</h3><p>在 confluence 中编写文章时，可以根据不同级别的 <code>标题</code> 对文章内容进行分层，如下图所示    </p>
+<p><img src="https://i.csms.tech/img_44.png"></p>
+<p>在此情况之下，可以根据文章中的标题，生成文章目录，在文章内容过长或过多的情况下，可以根据目录轻松快速的定位到需要的内容章节，操作过长如下：<br>编辑需要生成目录的文章，按照下图所示的位置选择 <code>插入目录宏</code>  </p>
+<p><img src="https://i.csms.tech/img_45.png"></p>
+<p>在弹出的 <code>编辑‘目录’宏</code> 页面中配置相关参数，配置完成后，点击 <code>保存</code>，将会在页面中生成文章目录<br><img src="https://i.csms.tech/img_46.png"><br><img src="https://i.csms.tech/img_47.png"></p>
+<p>如果要在特点的地方显示文章目录，可以使用 <code>页面布局</code> 操作，比如选择 <code>页面布局</code> 中的 <code>包含侧边栏的两列节</code> 并将目录放置在右边的侧边栏，示例及效果如下图<br><img src="https://i.csms.tech/img_48.png"><br><img src="https://i.csms.tech/img_49.png"></p>
+<h3 id="链接到文章内的锚点"><a href="#链接到文章内的锚点" class="headerlink" title="链接到文章内的锚点"></a>链接到文章内的锚点</h3><h4 id="创建锚点"><a href="#创建锚点" class="headerlink" title="创建锚点"></a>创建锚点</h4><p>在需要创建 <code>锚点</code> 的地方，选择 <code>插入 ‘锚’ 宏</code>，输入 <code>锚名称</code>，插入后产生对应 <code>锚点</code><br><img src="https://i.csms.tech/img_50.png"></p>
+<h4 id="链接到同一文章内锚点"><a href="#链接到同一文章内锚点" class="headerlink" title="链接到同一文章内锚点"></a>链接到同一文章内锚点</h4><p>在需要链接 <code>锚点</code> 的地方，选择 <code>插入链接</code>，链接中 <code>锚点</code> 使用 <code>#锚点名称</code> 进行链接<br><img src="https://i.csms.tech/img_51.png"></p>
+<h4 id="链接到其他文章内的锚点"><a href="#链接到其他文章内的锚点" class="headerlink" title="链接到其他文章内的锚点"></a>链接到其他文章内的锚点</h4><p><code>confluence</code> 的同一个空间内不允许存在同名的页面（文章），因此所有页面（文章）名具有独一性，当需要链接到其他页面中的锚点时，可以参照以下配置。比如要链接到页面 <code>cs</code> 中的 <code>test</code> 锚点，按照以下配置，在需要链接的地方插入链接<br><img src="https://i.csms.tech/img_52.png"></p>
+<blockquote>
+<p>这种方式下，锚点所在的页面改名，锚点依然生效，使用锚点的链接中页面名也会随之改变  </p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+      <tags>
+        <tag>Confluence</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>containerd 使用方法</title>
     <url>/202212011355/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -2568,32 +2594,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>containerd</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Confluence 常用基本操作</title>
-    <url>/202208250937/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Confluence 是一个专业的企业知识管理与协同软件，也可以用于构建企业 <a href="https://zh.m.wikipedia.org/zh/Wiki"><code>wiki</code></a>。通过它可以实现团队成员之间的协作和知识共享。在这里，团队成员齐心协力，各擅其能，协同地编写文档和管理项目。从此打破不同团队、不同部门以及个人之间信息孤岛的僵局，Confluence 真正实现了组织资源共享。Confluence 使用简单，但它强大的编辑和站点管理特征能够帮助团队成员之间共享信息、文档协作、集体讨论。</p>
-<span id="more"></span>
-
-<h3 id="根据标题生成文章目录"><a href="#根据标题生成文章目录" class="headerlink" title="根据标题生成文章目录"></a>根据标题生成文章目录</h3><p>在 confluence 中编写文章时，可以根据不同级别的 <code>标题</code> 对文章内容进行分层，如下图所示    </p>
-<p><img src="https://i.csms.tech/img_44.png"></p>
-<p>在此情况之下，可以根据文章中的标题，生成文章目录，在文章内容过长或过多的情况下，可以根据目录轻松快速的定位到需要的内容章节，操作过长如下：<br>编辑需要生成目录的文章，按照下图所示的位置选择 <code>插入目录宏</code>  </p>
-<p><img src="https://i.csms.tech/img_45.png"></p>
-<p>在弹出的 <code>编辑‘目录’宏</code> 页面中配置相关参数，配置完成后，点击 <code>保存</code>，将会在页面中生成文章目录<br><img src="https://i.csms.tech/img_46.png"><br><img src="https://i.csms.tech/img_47.png"></p>
-<p>如果要在特点的地方显示文章目录，可以使用 <code>页面布局</code> 操作，比如选择 <code>页面布局</code> 中的 <code>包含侧边栏的两列节</code> 并将目录放置在右边的侧边栏，示例及效果如下图<br><img src="https://i.csms.tech/img_48.png"><br><img src="https://i.csms.tech/img_49.png"></p>
-<h3 id="链接到文章内的锚点"><a href="#链接到文章内的锚点" class="headerlink" title="链接到文章内的锚点"></a>链接到文章内的锚点</h3><h4 id="创建锚点"><a href="#创建锚点" class="headerlink" title="创建锚点"></a>创建锚点</h4><p>在需要创建 <code>锚点</code> 的地方，选择 <code>插入 ‘锚’ 宏</code>，输入 <code>锚名称</code>，插入后产生对应 <code>锚点</code><br><img src="https://i.csms.tech/img_50.png"></p>
-<h4 id="链接到同一文章内锚点"><a href="#链接到同一文章内锚点" class="headerlink" title="链接到同一文章内锚点"></a>链接到同一文章内锚点</h4><p>在需要链接 <code>锚点</code> 的地方，选择 <code>插入链接</code>，链接中 <code>锚点</code> 使用 <code>#锚点名称</code> 进行链接<br><img src="https://i.csms.tech/img_51.png"></p>
-<h4 id="链接到其他文章内的锚点"><a href="#链接到其他文章内的锚点" class="headerlink" title="链接到其他文章内的锚点"></a>链接到其他文章内的锚点</h4><p><code>confluence</code> 的同一个空间内不允许存在同名的页面（文章），因此所有页面（文章）名具有独一性，当需要链接到其他页面中的锚点时，可以参照以下配置。比如要链接到页面 <code>cs</code> 中的 <code>test</code> 锚点，按照以下配置，在需要链接的地方插入链接<br><img src="https://i.csms.tech/img_52.png"></p>
-<blockquote>
-<p>这种方式下，锚点所在的页面改名，锚点依然生效，使用锚点的链接中页面名也会随之改变  </p>
-</blockquote>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Confluence</tag>
       </tags>
   </entry>
   <entry>
@@ -3580,6 +3580,94 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>docker compose 命令</title>
+    <url>/202208311004/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于 <code>Compose</code> 来说，大部分命令的对象既可以是项目本身，也可以指定为项目中的服务或者容器。如果没有特别的说明，命令对象将是项目，这意味着项目中所有的服务都会受到命令影响。  </p>
+<p>执行 <code>docker compose [COMMAND] --help</code>  可以查看具体某个命令的使用格式。  </p>
+<p><code>docker compose</code> 命令的基本的使用格式是  </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose [-f=&lt;arg&gt;...] [options] [COMMAND] [ARGS...]</span><br></pre></td></tr></table></figure>
+<p>常用选项  </p>
+<ul>
+<li><code>-f, --file FILE</code>  指定使用的 Compose 模板文件，默认为 <code>docker-compose.yml</code>，可以多次指定。  </li>
+<li><code>-p, --project-name NAME</code> 指定项目名称，默认将使用所在目录名称作为项目名。</li>
+</ul>
+<span id="more"></span>
+
+<h3 id="build"><a href="#build" class="headerlink" title="build"></a>build</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose build [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>构建（重新构建）项目中的服务容器。  </p>
+<p>服务容器一旦构建后，将会带上一个标记名，例如对于 web 项目中的一个 db 容器，可能是 web_db。<br>可以随时在项目目录下运行 <code>docker compose build</code> 来重新构建服务。<br>常用选项包括：</p>
+<ul>
+<li><code>--no-cache</code>  构建镜像过程中不使用 cache（这将加长构建过程）。</li>
+<li><code>--pull</code>  始终尝试通过 <code>pull</code> 来获取更新版本的镜像。</li>
+<li><code>-q, --quiet</code>  不输出任何内容到 STDOUT</li>
+</ul>
+<h3 id="config"><a href="#config" class="headerlink" title="config"></a>config</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose config</span><br></pre></td></tr></table></figure>
+<p>验证 Compose 文件格式是否正确，若正确则显示配置，若格式错误显示错误原因。</p>
+<h3 id="up"><a href="#up" class="headerlink" title="up"></a>up</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose up [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>该命令十分强大，它将尝试自动完成包括构建镜像，（重新）创建服务，启动服务，并关联服务相关容器的一系列操作。  </p>
+<p>链接的服务都将会被自动启动，除非已经处于运行状态。</p>
+<p>可以说，大部分时候都可以直接通过该命令来启动一个项目。</p>
+<p>默认情况，<code>docker compose up</code> 启动的容器都在前台，控制台将会同时打印所有容器的输出信息，可以很方便进行调试。</p>
+<p>当通过 <code>Ctrl-C</code> 停止命令时，所有容器将会停止。</p>
+<p>如果使用 <code>docker compose up -d</code>，将会在后台启动并运行所有的容器。一般推荐生产环境下使用该选项。</p>
+<p>默认情况，如果服务容器已经存在，<code>docker compose up</code> 将会尝试停止容器，然后重新创建（保持使用 volumes-from 挂载的卷），以保证新启动的服务匹配 <code>docker-compose.yml</code> 文件的最新内容。如果用户不希望容器被停止并重新创建，可以使用 <code>docker compose up --no-recreate</code>。这样将只会启动处于停止状态的容器，而忽略已经运行的服务。如果用户只想重新部署某个服务，可以使用 <code>docker compose up --no-deps -d &lt;SERVICE_NAME&gt;</code> 来重新创建服务并后台停止旧服务，启动新服务，并不会影响到其所依赖的服务。</p>
+<p>常用选项说明：  </p>
+<ul>
+<li><code>-d, --detach</code> 在后台运行服务容器</li>
+<li><code>--no-color</code> 不使用颜色来区分不同的服务的控制台输出</li>
+<li><code>--no-deps</code> 不启动服务所链接的容器。</li>
+<li><code>--force-recreate</code> 强制重新创建容器，不能与 <code>--no-recreate</code> 同时使用</li>
+<li><code>--no-recreate</code> 如果容器已经存在了，则不重新创建，不能与 <code>--force-recreate</code> 同时使用。</li>
+<li><code>--no-build</code> 不自动构建缺失的服务镜像</li>
+<li><code>-t, --timeout TIMEOUT</code> 停止容器时候的超时（默认为 10 秒）时间。</li>
+<li><code>--no-start</code> 创建服务但是不启动服务</li>
+<li><code>--build</code>  启动容器之前，重新构建容器</li>
+</ul>
+<h3 id="down"><a href="#down" class="headerlink" title="down"></a>down</h3><p>此命令将会停止 <code>up</code> 命令所启动的容器，并移除网络</p>
+<h3 id="start"><a href="#start" class="headerlink" title="start"></a>start</h3><p>启动已经存在的服务容器。</p>
+<h3 id="pause"><a href="#pause" class="headerlink" title="pause"></a>pause</h3><p>暂停一个服务容器。</p>
+<h3 id="unpause"><a href="#unpause" class="headerlink" title="unpause"></a>unpause</h3><p>恢复处于暂停状态中的服务。</p>
+<h3 id="restart"><a href="#restart" class="headerlink" title="restart"></a>restart</h3><p>重启项目中的服务。</p>
+<h3 id="stop"><a href="#stop" class="headerlink" title="stop"></a>stop</h3><p>停止已经处于运行状态的容器，但不删除它。通过 <code>docker compose start</code> 可以再次启动这些容器。</p>
+<h3 id="ps"><a href="#ps" class="headerlink" title="ps"></a>ps</h3><p>列出项目中目前的所有容器。</p>
+<h3 id="port"><a href="#port" class="headerlink" title="port"></a>port</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose port [options] SERVICE PRIVATE_PORT</span><br></pre></td></tr></table></figure>
+<p>打印某个容器端口所映射的公共端口  </p>
+<p>常用选项  </p>
+<ul>
+<li><code>--protocol=proto</code> 指定端口协议，tcp（默认值）或者 udp。</li>
+<li><code>--index=index</code> 如果同一服务存在多个容器，指定命令对象容器的序号（默认为 1）</li>
+</ul>
+<h3 id="exec"><a href="#exec" class="headerlink" title="exec"></a>exec</h3><p>进入指定的容器。</p>
+<h3 id="images"><a href="#images" class="headerlink" title="images"></a>images</h3><p>列出 Compose 文件中包含的镜像。</p>
+<h3 id="kill"><a href="#kill" class="headerlink" title="kill"></a>kill</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>通过发送 SIGKILL 信号来强制停止服务容器。</p>
+<p>支持通过 <code>-s</code> 参数来指定发送的信号，例如通过如下指令发送 SIGINT 信号。</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill -s SIGINT</span><br></pre></td></tr></table></figure>
+
+<h3 id="logs"><a href="#logs" class="headerlink" title="logs"></a>logs</h3><p>格式为 </p>
+<pre><code>docker compose logs [options] [SERVICE...]
+</code></pre>
+<p>查看服务容器的输出。默认情况下，<code>docker compose</code> 将对不同的服务输出使用不同的颜色来区分。可以通过 <code>--no-color</code> 来关闭颜色。<br>该命令在调试问题的时候十分有用。</p>
+<h3 id="top"><a href="#top" class="headerlink" title="top"></a>top</h3><p>查看各个服务容器内运行的进程。</p>
+<h3 id="rm"><a href="#rm" class="headerlink" title="rm"></a>rm</h3><p>删除所有（停止状态的）服务容器。推荐先执行 <code>docker compose stop</code> 命令来停止容器。<br>选项：</p>
+<ul>
+<li><code>-f, --force</code> 强制直接删除，包括非停止状态的容器。一般尽量不要使用该选项。</li>
+<li><code>-v</code> 删除容器所挂载的数据卷。</li>
+</ul>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://yeasy.gitbook.io/docker_practice/compose/commands">docker compose 命令说明</a></p>
+]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>docker compose 简介</title>
     <url>/202208301738/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>Compose</code> 项目是 <code>Docker</code> 官方的开源项目，负责实现对 <code>Docker 容器集群</code> 的快速编排。</p>
@@ -3708,94 +3796,6 @@ width: 20%;
 <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line"># 支持 # 号注释</span><br><span class="line">MONGO_VERSION=3.6</span><br></pre></td></tr></table></figure>
 <p>执行 <code>docker compose up</code> 则会启动一个 <code>mongo:3.6</code> 镜像的容器。</p>
 <h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://docs.docker.com/compose/">Compose V2 beta</a><br><a href="https://yeasy.gitbook.io/docker_practice/compose/v2">Docker 从入门到实践</a></p>
-]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>docker compose 命令</title>
-    <url>/202208311004/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于 <code>Compose</code> 来说，大部分命令的对象既可以是项目本身，也可以指定为项目中的服务或者容器。如果没有特别的说明，命令对象将是项目，这意味着项目中所有的服务都会受到命令影响。  </p>
-<p>执行 <code>docker compose [COMMAND] --help</code>  可以查看具体某个命令的使用格式。  </p>
-<p><code>docker compose</code> 命令的基本的使用格式是  </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose [-f=&lt;arg&gt;...] [options] [COMMAND] [ARGS...]</span><br></pre></td></tr></table></figure>
-<p>常用选项  </p>
-<ul>
-<li><code>-f, --file FILE</code>  指定使用的 Compose 模板文件，默认为 <code>docker-compose.yml</code>，可以多次指定。  </li>
-<li><code>-p, --project-name NAME</code> 指定项目名称，默认将使用所在目录名称作为项目名。</li>
-</ul>
-<span id="more"></span>
-
-<h3 id="build"><a href="#build" class="headerlink" title="build"></a>build</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose build [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>构建（重新构建）项目中的服务容器。  </p>
-<p>服务容器一旦构建后，将会带上一个标记名，例如对于 web 项目中的一个 db 容器，可能是 web_db。<br>可以随时在项目目录下运行 <code>docker compose build</code> 来重新构建服务。<br>常用选项包括：</p>
-<ul>
-<li><code>--no-cache</code>  构建镜像过程中不使用 cache（这将加长构建过程）。</li>
-<li><code>--pull</code>  始终尝试通过 <code>pull</code> 来获取更新版本的镜像。</li>
-<li><code>-q, --quiet</code>  不输出任何内容到 STDOUT</li>
-</ul>
-<h3 id="config"><a href="#config" class="headerlink" title="config"></a>config</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose config</span><br></pre></td></tr></table></figure>
-<p>验证 Compose 文件格式是否正确，若正确则显示配置，若格式错误显示错误原因。</p>
-<h3 id="up"><a href="#up" class="headerlink" title="up"></a>up</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose up [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>该命令十分强大，它将尝试自动完成包括构建镜像，（重新）创建服务，启动服务，并关联服务相关容器的一系列操作。  </p>
-<p>链接的服务都将会被自动启动，除非已经处于运行状态。</p>
-<p>可以说，大部分时候都可以直接通过该命令来启动一个项目。</p>
-<p>默认情况，<code>docker compose up</code> 启动的容器都在前台，控制台将会同时打印所有容器的输出信息，可以很方便进行调试。</p>
-<p>当通过 <code>Ctrl-C</code> 停止命令时，所有容器将会停止。</p>
-<p>如果使用 <code>docker compose up -d</code>，将会在后台启动并运行所有的容器。一般推荐生产环境下使用该选项。</p>
-<p>默认情况，如果服务容器已经存在，<code>docker compose up</code> 将会尝试停止容器，然后重新创建（保持使用 volumes-from 挂载的卷），以保证新启动的服务匹配 <code>docker-compose.yml</code> 文件的最新内容。如果用户不希望容器被停止并重新创建，可以使用 <code>docker compose up --no-recreate</code>。这样将只会启动处于停止状态的容器，而忽略已经运行的服务。如果用户只想重新部署某个服务，可以使用 <code>docker compose up --no-deps -d &lt;SERVICE_NAME&gt;</code> 来重新创建服务并后台停止旧服务，启动新服务，并不会影响到其所依赖的服务。</p>
-<p>常用选项说明：  </p>
-<ul>
-<li><code>-d, --detach</code> 在后台运行服务容器</li>
-<li><code>--no-color</code> 不使用颜色来区分不同的服务的控制台输出</li>
-<li><code>--no-deps</code> 不启动服务所链接的容器。</li>
-<li><code>--force-recreate</code> 强制重新创建容器，不能与 <code>--no-recreate</code> 同时使用</li>
-<li><code>--no-recreate</code> 如果容器已经存在了，则不重新创建，不能与 <code>--force-recreate</code> 同时使用。</li>
-<li><code>--no-build</code> 不自动构建缺失的服务镜像</li>
-<li><code>-t, --timeout TIMEOUT</code> 停止容器时候的超时（默认为 10 秒）时间。</li>
-<li><code>--no-start</code> 创建服务但是不启动服务</li>
-<li><code>--build</code>  启动容器之前，重新构建容器</li>
-</ul>
-<h3 id="down"><a href="#down" class="headerlink" title="down"></a>down</h3><p>此命令将会停止 <code>up</code> 命令所启动的容器，并移除网络</p>
-<h3 id="start"><a href="#start" class="headerlink" title="start"></a>start</h3><p>启动已经存在的服务容器。</p>
-<h3 id="pause"><a href="#pause" class="headerlink" title="pause"></a>pause</h3><p>暂停一个服务容器。</p>
-<h3 id="unpause"><a href="#unpause" class="headerlink" title="unpause"></a>unpause</h3><p>恢复处于暂停状态中的服务。</p>
-<h3 id="restart"><a href="#restart" class="headerlink" title="restart"></a>restart</h3><p>重启项目中的服务。</p>
-<h3 id="stop"><a href="#stop" class="headerlink" title="stop"></a>stop</h3><p>停止已经处于运行状态的容器，但不删除它。通过 <code>docker compose start</code> 可以再次启动这些容器。</p>
-<h3 id="ps"><a href="#ps" class="headerlink" title="ps"></a>ps</h3><p>列出项目中目前的所有容器。</p>
-<h3 id="port"><a href="#port" class="headerlink" title="port"></a>port</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose port [options] SERVICE PRIVATE_PORT</span><br></pre></td></tr></table></figure>
-<p>打印某个容器端口所映射的公共端口  </p>
-<p>常用选项  </p>
-<ul>
-<li><code>--protocol=proto</code> 指定端口协议，tcp（默认值）或者 udp。</li>
-<li><code>--index=index</code> 如果同一服务存在多个容器，指定命令对象容器的序号（默认为 1）</li>
-</ul>
-<h3 id="exec"><a href="#exec" class="headerlink" title="exec"></a>exec</h3><p>进入指定的容器。</p>
-<h3 id="images"><a href="#images" class="headerlink" title="images"></a>images</h3><p>列出 Compose 文件中包含的镜像。</p>
-<h3 id="kill"><a href="#kill" class="headerlink" title="kill"></a>kill</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>通过发送 SIGKILL 信号来强制停止服务容器。</p>
-<p>支持通过 <code>-s</code> 参数来指定发送的信号，例如通过如下指令发送 SIGINT 信号。</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill -s SIGINT</span><br></pre></td></tr></table></figure>
-
-<h3 id="logs"><a href="#logs" class="headerlink" title="logs"></a>logs</h3><p>格式为 </p>
-<pre><code>docker compose logs [options] [SERVICE...]
-</code></pre>
-<p>查看服务容器的输出。默认情况下，<code>docker compose</code> 将对不同的服务输出使用不同的颜色来区分。可以通过 <code>--no-color</code> 来关闭颜色。<br>该命令在调试问题的时候十分有用。</p>
-<h3 id="top"><a href="#top" class="headerlink" title="top"></a>top</h3><p>查看各个服务容器内运行的进程。</p>
-<h3 id="rm"><a href="#rm" class="headerlink" title="rm"></a>rm</h3><p>删除所有（停止状态的）服务容器。推荐先执行 <code>docker compose stop</code> 命令来停止容器。<br>选项：</p>
-<ul>
-<li><code>-f, --force</code> 强制直接删除，包括非停止状态的容器。一般尽量不要使用该选项。</li>
-<li><code>-v</code> 删除容器所挂载的数据卷。</li>
-</ul>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://yeasy.gitbook.io/docker_practice/compose/commands">docker compose 命令说明</a></p>
 ]]></content>
       <categories>
         <category>Docker</category>
@@ -6086,35 +6086,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>git 常见错误</title>
-    <url>/202209131721/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403"><a href="#error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403" class="headerlink" title="error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403"></a>error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403</h2><p><strong>错误场景</strong> ： windows 系统中 <code>git push</code> 报错<br><img src="https://i.csms.tech/img_55.png"></p>
-<p><strong>错误原因</strong> ： 大概率为用户密码错误</p>
-<p><strong>排查步骤</strong> ： </p>
-<ol>
-<li>清除 windows 凭据管理中的 git 密码，或更改为正确的密码</li>
-<li>编辑 <code>.git/config</code> 文件，对 <code>url</code> 按照如下格式配置：<figure class="highlight shell"><figcaption><span>.git/config</span></figcaption><table><tr><td class="code"><pre><span class="line">url = http://USERNAME@git.server.com/test.git</span><br></pre></td></tr></table></figure>
-其中 <code>USERNAME</code> 为用户名，重新执行 <code>git push</code>，此时会要求输入用户密码，输入正确的用户密码后，可正常执行</li>
-</ol>
-<h2 id="There-is-no-tracking-information-for-the-current-branch"><a href="#There-is-no-tracking-information-for-the-current-branch" class="headerlink" title="There is no tracking information for the current branch"></a>There is no tracking information for the current branch</h2><p>执行 <code>git pull</code> 命令时报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git pull</span></span><br><span class="line">There is no tracking information for the current branch.</span><br><span class="line">Please specify which branch you want to merge with.</span><br><span class="line">See git-pull(1) for details</span><br><span class="line"></span><br><span class="line">    git pull &lt;remote&gt; &lt;branch&gt;</span><br><span class="line"></span><br><span class="line">If you wish to set tracking information for this branch you can do so with:</span><br><span class="line"></span><br><span class="line">    git branch --set-upstream-to=origin/&lt;branch&gt; activity</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>此错误原因为本地的分支（<code>activity</code>）未和远程分支建立关联，根据提示，执行以下命令建立关联关系</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity origin/xhy-activity</span></span><br><span class="line">warning: refname &#x27;origin/activity&#x27; is ambiguous.</span><br><span class="line">fatal: Ambiguous object name: &#x27;origin/activity&#x27;.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>执行报错： <code>fatal: Ambiguous object name: &#39;origin/activity&#39;.</code>，此报错原因为本地已存在分支 <code>origin/activity</code>，远程也存在此分支，导致 git 无法分辨。可以执行以下命令重命名本地分支</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">git branch -m origin/activity activity</span><br></pre></td></tr></table></figure>
-<p>重新建立关联关系</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity activity</span></span><br><span class="line">Branch activity set up to track remote branch activity from origin.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>关联正常后，执行 <code>git pull</code> 正常。</p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>git</category>
-      </categories>
-      <tags>
-        <tag>git</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>fswatch 安装使用</title>
     <url>/202306081308/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6325,6 +6296,35 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>git 常见错误</title>
+    <url>/202209131721/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403"><a href="#error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403" class="headerlink" title="error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403"></a>error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403</h2><p><strong>错误场景</strong> ： windows 系统中 <code>git push</code> 报错<br><img src="https://i.csms.tech/img_55.png"></p>
+<p><strong>错误原因</strong> ： 大概率为用户密码错误</p>
+<p><strong>排查步骤</strong> ： </p>
+<ol>
+<li>清除 windows 凭据管理中的 git 密码，或更改为正确的密码</li>
+<li>编辑 <code>.git/config</code> 文件，对 <code>url</code> 按照如下格式配置：<figure class="highlight shell"><figcaption><span>.git/config</span></figcaption><table><tr><td class="code"><pre><span class="line">url = http://USERNAME@git.server.com/test.git</span><br></pre></td></tr></table></figure>
+其中 <code>USERNAME</code> 为用户名，重新执行 <code>git push</code>，此时会要求输入用户密码，输入正确的用户密码后，可正常执行</li>
+</ol>
+<h2 id="There-is-no-tracking-information-for-the-current-branch"><a href="#There-is-no-tracking-information-for-the-current-branch" class="headerlink" title="There is no tracking information for the current branch"></a>There is no tracking information for the current branch</h2><p>执行 <code>git pull</code> 命令时报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git pull</span></span><br><span class="line">There is no tracking information for the current branch.</span><br><span class="line">Please specify which branch you want to merge with.</span><br><span class="line">See git-pull(1) for details</span><br><span class="line"></span><br><span class="line">    git pull &lt;remote&gt; &lt;branch&gt;</span><br><span class="line"></span><br><span class="line">If you wish to set tracking information for this branch you can do so with:</span><br><span class="line"></span><br><span class="line">    git branch --set-upstream-to=origin/&lt;branch&gt; activity</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>此错误原因为本地的分支（<code>activity</code>）未和远程分支建立关联，根据提示，执行以下命令建立关联关系</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity origin/xhy-activity</span></span><br><span class="line">warning: refname &#x27;origin/activity&#x27; is ambiguous.</span><br><span class="line">fatal: Ambiguous object name: &#x27;origin/activity&#x27;.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>执行报错： <code>fatal: Ambiguous object name: &#39;origin/activity&#39;.</code>，此报错原因为本地已存在分支 <code>origin/activity</code>，远程也存在此分支，导致 git 无法分辨。可以执行以下命令重命名本地分支</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">git branch -m origin/activity activity</span><br></pre></td></tr></table></figure>
+<p>重新建立关联关系</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity activity</span></span><br><span class="line">Branch activity set up to track remote branch activity from origin.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>关联正常后，执行 <code>git pull</code> 正常。</p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>git</category>
+      </categories>
+      <tags>
+        <tag>git</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>gitlab 安装配置及 git 命令使用</title>
     <url>/8db58ebc/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><p><a href="https://about.gitlab.com/install/#centos-7">安装步骤</a></p>
@@ -6448,6 +6448,59 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Godaddy api 使用</title>
+    <url>/202302251333/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://developer.godaddy.com/getstarted">Godaddy API 参考文档</a></p>
+<p>根据参考文档说明，获取到 <code>key</code> 和 <code>secret</code></p>
+<p>Python3 sdk 可以使用 <code>godaddypy</code></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11.2</li>
+<li>godaddypy</li>
+</ul>
+<p><code>godaddypy</code> 主要提供了 2 个类，分别为</p>
+<ul>
+<li><code>account</code> - 使用 <code>key</code> 和 <code>secret</code> 为 <code>client</code> 生成鉴权头部</li>
+<li><code>client</code> - 连接 Godaddy API 并执行相应的请求</li>
+</ul>
+<p>具体使用方法可以查看帮助信息，或者查看 Godaddy API 参考文档</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(godaddypy)</span><br></pre></td></tr></table></figure>
+<h1 id="godaddypy-常见用法示例"><a href="#godaddypy-常见用法示例" class="headerlink" title="godaddypy 常见用法示例"></a>godaddypy 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">import</span> godaddypy</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>ak = <span class="string">&#x27;AAAAAAAAAAAAAA&#x27;</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>sk = <span class="string">&#x27;BBBBBBBBBBBBBBB&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>account = godaddypy.Account(ak, sk)</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = godaddypy.Client(account)</span><br></pre></td></tr></table></figure>
+<p>根据 Godaddy API 文档说明，获取域名，每次默认获取 500 个，最多可以一次性获取 1000 个。</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 获取域名，默认 100 个。如果账户内的域名数量少于 100，则一次性可以获取完毕，多于 100，获取前 100 个</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains()</span><br><span class="line"></span><br><span class="line"><span class="comment"># 获取前 1000 个，最多一次性获取 1000 个。如果账户内的域名数量少于 1000，则一次性可以获取完毕，多于 1000，获取前 1000 个</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains(limit=<span class="number">1000</span>)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 超过 1000 会报错</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains(limit=<span class="number">1001</span>)</span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">105</span>, <span class="keyword">in</span> _validate_response_success</span><br><span class="line">    response.raise_for_status()</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/requests/models.py&quot;</span>, line <span class="number">1021</span>, <span class="keyword">in</span> raise_for_status</span><br><span class="line">    <span class="keyword">raise</span> HTTPError(http_error_msg, response=self)</span><br><span class="line">requests.exceptions.HTTPError: <span class="number">422</span> Client Error: Unprocessable Entity <span class="keyword">for</span> url: https://api.godaddy.com/v1/domains?limit=<span class="number">1001</span></span><br><span class="line"></span><br><span class="line">During handling of the above exception, another exception occurred:</span><br><span class="line"></span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File <span class="string">&quot;&lt;stdin&gt;&quot;</span>, line <span class="number">1</span>, <span class="keyword">in</span> &lt;module&gt;</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">149</span>, <span class="keyword">in</span> get_domains</span><br><span class="line">    data = self._get_json_from_response(url, params=params)</span><br><span class="line">           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">75</span>, <span class="keyword">in</span> _get_json_from_response</span><br><span class="line">    <span class="keyword">return</span> self._request_submit(requests.get, url=url, json=json, **kwargs).json()</span><br><span class="line">           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">97</span>, <span class="keyword">in</span> _request_submit</span><br><span class="line">    self._validate_response_success(resp)</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">107</span>, <span class="keyword">in</span> _validate_response_success</span><br><span class="line">    <span class="keyword">raise</span> BadResponse(response.json())</span><br><span class="line">godaddypy.client.BadResponse: Response Data: &#123;<span class="string">&#x27;code&#x27;</span>: <span class="string">&#x27;VALUE_OVER&#x27;</span>, <span class="string">&#x27;message&#x27;</span>: <span class="string">&#x27;Limit must have a value no greater than 1000&#x27;</span>&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+<p>如果账户内域名数量大于 1000，可以通过 API 提供的 <code>marker</code> 标记，获取到所有域名。流程为获取到前 100 个域名，使用第 100 个域名作为 <code>marker</code>，会获取到第 101 - 200 个域名，以此类推，获取所有域名</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains()</span><br><span class="line">[..., <span class="string">&#x27;100.com&#x27;</span>]</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains(limit=<span class="number">100</span>, marker=<span class="string">&#x27;100.com&#x27;</span>)</span><br><span class="line">[<span class="string">&#x27;101.com&#x27;</span>, ..., <span class="string">&#x27;200.com&#x27;</span>]</span><br></pre></td></tr></table></figure>
+
+
+<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br></pre></td></tr></table></figure>
+
+
+
+<h1 id="API-REST-接口用法示例"><a href="#API-REST-接口用法示例" class="headerlink" title="API REST 接口用法示例"></a>API REST 接口用法示例</h1><p><code>godaddypy</code> 库无法实现的功能需要调用原生的 API 实现。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Using the GoDaddy API](https://developer.godaddy.com/getstarted)
+">[1]</span></a></sup></p>
+<p>API 调用示例 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Using the GoDaddy API](https://developer.godaddy.com/getstarted)
+">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -X GET -H <span class="string">&quot;Authorization: sso-key TtbYHEHLWmyVvXB:CrezwNmyEsh&quot;</span> <span class="string">&quot;https://api.godaddy.com/v1/domains/available?domain=example.guru&quot;</span></span></span><br><span class="line">&#123;&quot;available&quot;:false,&quot;definitive&quot;:true,&quot;domain&quot;:&quot;example.guru&quot;&#125;</span><br></pre></td></tr></table></figure>
+<p>部分接口需要传入 <code>customerId</code>，需要通过 <code>shopperId</code> 来获取到 <code>customerId</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Documentation: Shoppers API](https://developer.godaddy.com/doc/endpoint/shoppers#/v1/get)">[2]</span></a></sup></p>
+<blockquote>
+<p><code>shopperId</code> 登陆 godaddy 账号后，在账号信息中可以看到<br><img src="https://i.csms.tech/img_147.png"></p>
+</blockquote>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -X GET -H <span class="string">&quot;Authorization: sso-key e42pmipGG8rv:JYHg2i&quot;</span> <span class="string">&quot;https://api.godaddy.com/v1/shoppers/208231111/?includes=customerId&quot;</span></span></span><br><span class="line">&#123;&quot;shopperId&quot;:&quot;208231111&quot;,&quot;marketId&quot;:&quot;en-PH&quot;,&quot;email&quot;:&quot;kdjgies@163.com&quot;,&quot;externalId&quot;:null,&quot;nameFirst&quot;:&quot;dgeaf&quot;,&quot;nameLast&quot;:&quot;F&quot;,&quot;customerId&quot;:&quot;5d072871-6f2d-42d6-96ed-kd09rkjkkg&quot;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>以下示例查询域名的续费信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -X GET -H <span class="string">&quot;Authorization: sso-key e42pmipGG8rv:JYHg2i&quot;</span> <span class="string">&quot;https://api.godaddy.com/v2/customers/5d072871-6f2d-42d6-96ed-kd09rkjkkg/domains/1af7.com&quot;</span></span></span><br><span class="line">&#123;&quot;createdAt&quot;:&quot;2020-12-23T06:26:02.000Z&quot;,&quot;domain&quot;:&quot;1af7.com&quot;,&quot;domainId&quot;:335211690,&quot;expirationProtected&quot;:false,&quot;expiresAt&quot;:&quot;2023-12-23T06:26:02.000Z&quot;,&quot;holdRegistrar&quot;:false,&quot;locked&quot;:true,&quot;modifiedAt&quot;:&quot;2022-11-13T18:54:35.730Z&quot;,&quot;nameServers&quot;:[&quot;b.ns.cloudflare.com&quot;,&quot;d.ns.cloudflare.com&quot;],&quot;privacy&quot;:true,&quot;redemption&quot;:&#123;&quot;redeemable&quot;:false&#125;,&quot;registrarCreatedAt&quot;:&quot;2020-12-23T04:20:54.913Z&quot;,&quot;renewAuto&quot;:false,&quot;renewDeadline&quot;:&quot;2024-02-06T06:26:02.000Z&quot;,&quot;renewal&quot;:&#123;&quot;currency&quot;:&quot;USD&quot;,&quot;price&quot;:9450000,&quot;renewable&quot;:true&#125;,&quot;status&quot;:&quot;ACTIVE&quot;,&quot;transferProtected&quot;:false&#125;</span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.godaddy.com/getstarted">Using the GoDaddy API</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.godaddy.com/doc/endpoint/shoppers#/v1/get">Documentation: Shoppers API</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Godaddy</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
+        <tag>Godaddy</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Grafana 使用</title>
     <url>/202306051707/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Grafana 是一款用 GO 语言开发的开源数据可视化工具，可以做数据监控和数据统计，带有告警功能。</p>
@@ -6533,56 +6586,43 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>Godaddy api 使用</title>
-    <url>/202302251333/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://developer.godaddy.com/getstarted">Godaddy API 参考文档</a></p>
-<p>根据参考文档说明，获取到 <code>key</code> 和 <code>secret</code></p>
-<p>Python3 sdk 可以使用 <code>godaddypy</code></p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.11.2</li>
-<li>godaddypy</li>
+    <title>helm 安装及使用</title>
+    <url>/202210071543/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>centos7 5.4.212-1.el7</li>
+<li>kubernetes Server Version: v1.25.0</li>
+<li>Helm 3.10.0</li>
 </ul>
-<p><code>godaddypy</code> 主要提供了 2 个类，分别为</p>
-<ul>
-<li><code>account</code> - 使用 <code>key</code> 和 <code>secret</code> 为 <code>client</code> 生成鉴权头部</li>
-<li><code>client</code> - 连接 Godaddy API 并执行相应的请求</li>
-</ul>
-<p>具体使用方法可以查看帮助信息，或者查看 Godaddy API 参考文档</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(godaddypy)</span><br></pre></td></tr></table></figure>
-<h1 id="godaddypy-常见用法示例"><a href="#godaddypy-常见用法示例" class="headerlink" title="godaddypy 常见用法示例"></a>godaddypy 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">import</span> godaddypy</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>ak = <span class="string">&#x27;AAAAAAAAAAAAAA&#x27;</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>sk = <span class="string">&#x27;BBBBBBBBBBBBBBB&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>account = godaddypy.Account(ak, sk)</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = godaddypy.Client(account)</span><br></pre></td></tr></table></figure>
-<p>根据 Godaddy API 文档说明，获取域名，每次默认获取 500 个，最多可以一次性获取 1000 个。</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 获取域名，默认 100 个。如果账户内的域名数量少于 100，则一次性可以获取完毕，多于 100，获取前 100 个</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains()</span><br><span class="line"></span><br><span class="line"><span class="comment"># 获取前 1000 个，最多一次性获取 1000 个。如果账户内的域名数量少于 1000，则一次性可以获取完毕，多于 1000，获取前 1000 个</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains(limit=<span class="number">1000</span>)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 超过 1000 会报错</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains(limit=<span class="number">1001</span>)</span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">105</span>, <span class="keyword">in</span> _validate_response_success</span><br><span class="line">    response.raise_for_status()</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/requests/models.py&quot;</span>, line <span class="number">1021</span>, <span class="keyword">in</span> raise_for_status</span><br><span class="line">    <span class="keyword">raise</span> HTTPError(http_error_msg, response=self)</span><br><span class="line">requests.exceptions.HTTPError: <span class="number">422</span> Client Error: Unprocessable Entity <span class="keyword">for</span> url: https://api.godaddy.com/v1/domains?limit=<span class="number">1001</span></span><br><span class="line"></span><br><span class="line">During handling of the above exception, another exception occurred:</span><br><span class="line"></span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File <span class="string">&quot;&lt;stdin&gt;&quot;</span>, line <span class="number">1</span>, <span class="keyword">in</span> &lt;module&gt;</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">149</span>, <span class="keyword">in</span> get_domains</span><br><span class="line">    data = self._get_json_from_response(url, params=params)</span><br><span class="line">           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">75</span>, <span class="keyword">in</span> _get_json_from_response</span><br><span class="line">    <span class="keyword">return</span> self._request_submit(requests.get, url=url, json=json, **kwargs).json()</span><br><span class="line">           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">97</span>, <span class="keyword">in</span> _request_submit</span><br><span class="line">    self._validate_response_success(resp)</span><br><span class="line">  File <span class="string">&quot;/usr/local/lib/python3.11/site-packages/godaddypy/client.py&quot;</span>, line <span class="number">107</span>, <span class="keyword">in</span> _validate_response_success</span><br><span class="line">    <span class="keyword">raise</span> BadResponse(response.json())</span><br><span class="line">godaddypy.client.BadResponse: Response Data: &#123;<span class="string">&#x27;code&#x27;</span>: <span class="string">&#x27;VALUE_OVER&#x27;</span>, <span class="string">&#x27;message&#x27;</span>: <span class="string">&#x27;Limit must have a value no greater than 1000&#x27;</span>&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-<p>如果账户内域名数量大于 1000，可以通过 API 提供的 <code>marker</code> 标记，获取到所有域名。流程为获取到前 100 个域名，使用第 100 个域名作为 <code>marker</code>，会获取到第 101 - 200 个域名，以此类推，获取所有域名</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains()</span><br><span class="line">[..., <span class="string">&#x27;100.com&#x27;</span>]</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domains(limit=<span class="number">100</span>, marker=<span class="string">&#x27;100.com&#x27;</span>)</span><br><span class="line">[<span class="string">&#x27;101.com&#x27;</span>, ..., <span class="string">&#x27;200.com&#x27;</span>]</span><br></pre></td></tr></table></figure>
+<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><ol>
+<li><p>下载 <a href="https://github.com/helm/helm/releases">需要的版本</a></p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">wget https://get.helm.sh/helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
+<li><p>解压</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">tar -xf helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
+<li><p>在解压目中找到 <code>helm</code> 程序，移动到需要的目录中</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">cp linux-amd64/helm /usr/local/bin/</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>验证</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ helm version</span><br><span class="line"> version.BuildInfo&#123;Version:&quot;v3.10.0&quot;, GitCommit:&quot;ce66412a723e4d89555dc67217607c6579ffcb21&quot;, GitTreeState:&quot;clean&quot;, GoVersion:&quot;go1.18.6&quot;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="查看已安装的-release"><a href="#查看已安装的-release" class="headerlink" title="查看已安装的 release"></a>查看已安装的 release</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm ls</span><br><span class="line"></span><br><span class="line">helm ls -A</span><br></pre></td></tr></table></figure>
 
+<h2 id="卸载"><a href="#卸载" class="headerlink" title="卸载"></a>卸载</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm <span class="built_in">ls</span> -A</span></span><br><span class="line">NAME        	NAMESPACE    	REVISION	UPDATED                                	STATUS	CHART                APP VERSION</span><br><span class="line">cert-manager	cert-manager 	1       	2022-11-01 09:57:11.373366484 +0800 CST	failed	cert-manager-v1.7.1  v1.7.1     </span><br><span class="line">rancher     	cattle-system	1       	2022-11-01 10:05:07.370131566 +0800 CST	failed	rancher-2.6.9        v2.6.9     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm uninstall rancher -n cattle-system</span></span><br><span class="line">W1101 10:21:32.764269   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:34.043445   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:39.809766   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">release &quot;rancher&quot; uninstalled</span><br></pre></td></tr></table></figure>
 
-<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br></pre></td></tr></table></figure>
+<h2 id="查看导入的-repo"><a href="#查看导入的-repo" class="headerlink" title="查看导入的 repo"></a>查看导入的 repo</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm repo <span class="built_in">ls</span></span></span><br><span class="line">NAME          	URL                                              </span><br><span class="line">rancher-stable	https://releases.rancher.com/server-charts/stable</span><br><span class="line">jetstack      	https://charts.jetstack.io                       </span><br><span class="line">hashicorp     	https://helm.releases.hashicorp.com</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
+<p>搜索&#x2F;查看可用的 repo</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                          </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart       </span><br><span class="line">hashicorp/vault-secrets-operator	0.1.0        	0.1.0      	Official Vault Secrets Operator Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
+<p>查看可用的 releases</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault -l</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                               </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.1       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.0       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.23.0       	1.12.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.1       	1.12.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.0       	1.11.3     	Official HashiCorp Vault Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<h1 id="API-REST-接口用法示例"><a href="#API-REST-接口用法示例" class="headerlink" title="API REST 接口用法示例"></a>API REST 接口用法示例</h1><p><code>godaddypy</code> 库无法实现的功能需要调用原生的 API 实现。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Using the GoDaddy API](https://developer.godaddy.com/getstarted)
-">[1]</span></a></sup></p>
-<p>API 调用示例 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Using the GoDaddy API](https://developer.godaddy.com/getstarted)
-">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -X GET -H <span class="string">&quot;Authorization: sso-key TtbYHEHLWmyVvXB:CrezwNmyEsh&quot;</span> <span class="string">&quot;https://api.godaddy.com/v1/domains/available?domain=example.guru&quot;</span></span></span><br><span class="line">&#123;&quot;available&quot;:false,&quot;definitive&quot;:true,&quot;domain&quot;:&quot;example.guru&quot;&#125;</span><br></pre></td></tr></table></figure>
-<p>部分接口需要传入 <code>customerId</code>，需要通过 <code>shopperId</code> 来获取到 <code>customerId</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Documentation: Shoppers API](https://developer.godaddy.com/doc/endpoint/shoppers#/v1/get)">[2]</span></a></sup></p>
-<blockquote>
-<p><code>shopperId</code> 登陆 godaddy 账号后，在账号信息中可以看到<br><img src="https://i.csms.tech/img_147.png"></p>
-</blockquote>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -X GET -H <span class="string">&quot;Authorization: sso-key e42pmipGG8rv:JYHg2i&quot;</span> <span class="string">&quot;https://api.godaddy.com/v1/shoppers/208231111/?includes=customerId&quot;</span></span></span><br><span class="line">&#123;&quot;shopperId&quot;:&quot;208231111&quot;,&quot;marketId&quot;:&quot;en-PH&quot;,&quot;email&quot;:&quot;kdjgies@163.com&quot;,&quot;externalId&quot;:null,&quot;nameFirst&quot;:&quot;dgeaf&quot;,&quot;nameLast&quot;:&quot;F&quot;,&quot;customerId&quot;:&quot;5d072871-6f2d-42d6-96ed-kd09rkjkkg&quot;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>以下示例查询域名的续费信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -X GET -H <span class="string">&quot;Authorization: sso-key e42pmipGG8rv:JYHg2i&quot;</span> <span class="string">&quot;https://api.godaddy.com/v2/customers/5d072871-6f2d-42d6-96ed-kd09rkjkkg/domains/1af7.com&quot;</span></span></span><br><span class="line">&#123;&quot;createdAt&quot;:&quot;2020-12-23T06:26:02.000Z&quot;,&quot;domain&quot;:&quot;1af7.com&quot;,&quot;domainId&quot;:335211690,&quot;expirationProtected&quot;:false,&quot;expiresAt&quot;:&quot;2023-12-23T06:26:02.000Z&quot;,&quot;holdRegistrar&quot;:false,&quot;locked&quot;:true,&quot;modifiedAt&quot;:&quot;2022-11-13T18:54:35.730Z&quot;,&quot;nameServers&quot;:[&quot;b.ns.cloudflare.com&quot;,&quot;d.ns.cloudflare.com&quot;],&quot;privacy&quot;:true,&quot;redemption&quot;:&#123;&quot;redeemable&quot;:false&#125;,&quot;registrarCreatedAt&quot;:&quot;2020-12-23T04:20:54.913Z&quot;,&quot;renewAuto&quot;:false,&quot;renewDeadline&quot;:&quot;2024-02-06T06:26:02.000Z&quot;,&quot;renewal&quot;:&#123;&quot;currency&quot;:&quot;USD&quot;,&quot;price&quot;:9450000,&quot;renewable&quot;:true&#125;,&quot;status&quot;:&quot;ACTIVE&quot;,&quot;transferProtected&quot;:false&#125;</span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.godaddy.com/getstarted">Using the GoDaddy API</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.godaddy.com/doc/endpoint/shoppers#/v1/get">Documentation: Shoppers API</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<h2 id="安装-1"><a href="#安装-1" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install vault hashicorp/vault --version 0.25.0</span></span><br><span class="line">NAME: vault</span><br><span class="line">LAST DEPLOYED: Mon Jul 10 14:59:13 2023</span><br><span class="line">NAMESPACE: default</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">NOTES:</span><br><span class="line">Thank you for installing HashiCorp Vault!</span><br><span class="line"></span><br><span class="line">Now that you have deployed Vault, you should look over the docs on using</span><br><span class="line">Vault with Kubernetes available here:</span><br><span class="line"></span><br><span class="line">https://www.vaultproject.io/docs/</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Your release is named vault. To learn more about the release, try:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm status vault</span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm get manifest vault</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
       <categories>
-        <category>云平台</category>
-        <category>Godaddy</category>
+        <category>Kubernetes</category>
       </categories>
       <tags>
-        <tag>云平台</tag>
-        <tag>Godaddy</tag>
+        <tag>Kubernetes</tag>
+        <tag>helm</tag>
       </tags>
   </entry>
   <entry>
@@ -6622,46 +6662,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>生活日常</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>helm 安装及使用</title>
-    <url>/202210071543/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>centos7 5.4.212-1.el7</li>
-<li>kubernetes Server Version: v1.25.0</li>
-<li>Helm 3.10.0</li>
-</ul>
-<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><ol>
-<li><p>下载 <a href="https://github.com/helm/helm/releases">需要的版本</a></p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">wget https://get.helm.sh/helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
-<li><p>解压</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">tar -xf helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
-<li><p>在解压目中找到 <code>helm</code> 程序，移动到需要的目录中</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">cp linux-amd64/helm /usr/local/bin/</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>验证</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ helm version</span><br><span class="line"> version.BuildInfo&#123;Version:&quot;v3.10.0&quot;, GitCommit:&quot;ce66412a723e4d89555dc67217607c6579ffcb21&quot;, GitTreeState:&quot;clean&quot;, GoVersion:&quot;go1.18.6&quot;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ol>
-<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="查看已安装的-release"><a href="#查看已安装的-release" class="headerlink" title="查看已安装的 release"></a>查看已安装的 release</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm ls</span><br><span class="line"></span><br><span class="line">helm ls -A</span><br></pre></td></tr></table></figure>
-
-<h2 id="卸载"><a href="#卸载" class="headerlink" title="卸载"></a>卸载</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm <span class="built_in">ls</span> -A</span></span><br><span class="line">NAME        	NAMESPACE    	REVISION	UPDATED                                	STATUS	CHART                APP VERSION</span><br><span class="line">cert-manager	cert-manager 	1       	2022-11-01 09:57:11.373366484 +0800 CST	failed	cert-manager-v1.7.1  v1.7.1     </span><br><span class="line">rancher     	cattle-system	1       	2022-11-01 10:05:07.370131566 +0800 CST	failed	rancher-2.6.9        v2.6.9     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm uninstall rancher -n cattle-system</span></span><br><span class="line">W1101 10:21:32.764269   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:34.043445   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:39.809766   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">release &quot;rancher&quot; uninstalled</span><br></pre></td></tr></table></figure>
-
-<h2 id="查看导入的-repo"><a href="#查看导入的-repo" class="headerlink" title="查看导入的 repo"></a>查看导入的 repo</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm repo <span class="built_in">ls</span></span></span><br><span class="line">NAME          	URL                                              </span><br><span class="line">rancher-stable	https://releases.rancher.com/server-charts/stable</span><br><span class="line">jetstack      	https://charts.jetstack.io                       </span><br><span class="line">hashicorp     	https://helm.releases.hashicorp.com</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>搜索&#x2F;查看可用的 repo</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                          </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart       </span><br><span class="line">hashicorp/vault-secrets-operator	0.1.0        	0.1.0      	Official Vault Secrets Operator Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看可用的 releases</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault -l</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                               </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.1       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.0       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.23.0       	1.12.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.1       	1.12.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.0       	1.11.3     	Official HashiCorp Vault Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="安装-1"><a href="#安装-1" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install vault hashicorp/vault --version 0.25.0</span></span><br><span class="line">NAME: vault</span><br><span class="line">LAST DEPLOYED: Mon Jul 10 14:59:13 2023</span><br><span class="line">NAMESPACE: default</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">NOTES:</span><br><span class="line">Thank you for installing HashiCorp Vault!</span><br><span class="line"></span><br><span class="line">Now that you have deployed Vault, you should look over the docs on using</span><br><span class="line">Vault with Kubernetes available here:</span><br><span class="line"></span><br><span class="line">https://www.vaultproject.io/docs/</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Your release is named vault. To learn more about the release, try:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm status vault</span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm get manifest vault</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>helm</tag>
       </tags>
   </entry>
   <entry>
@@ -10126,6 +10126,31 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux 系统崩溃问题分析</title>
+    <url>/202304191031/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 5.4.221-1.el7</li>
+<li>Docker Engine - Community 20.10.9</li>
+</ul>
+<p>本文档中的日志分析主要依赖于 <code>journald</code> 服务记录的日志，因此首先需要对 <a href="/202211211437/" title="&#96;journald&#96; 服务记录的日志进行持久化配置">&#96;journald&#96; 服务记录的日志进行持久化配置</a></p>
+<h1 id="场景分析"><a href="#场景分析" class="headerlink" title="场景分析"></a>场景分析</h1><h2 id="k8s-worker-节点经常死机-奔溃"><a href="#k8s-worker-节点经常死机-奔溃" class="headerlink" title="k8s worker 节点经常死机(奔溃)"></a>k8s worker 节点经常死机(奔溃)</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos7 5.4.221-1.el7</li>
+<li>Docker Engine - Community 20.10.9 </li>
+<li>Kubernetes v1.24.7</li>
+</ul>
+<p>k8s 节点经常出现无响应(死机)，重启才能恢复正常。重启恢复后，检查系统 <code>messages</code> 日志。</p>
+<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: INFO: task dockerd:1443 blocked for more than 368 seconds.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel:      Tainted: G            E     5.4.221-1.el7.elrepo.x86_64 #1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: &quot;echo 0 &gt; /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: dockerd         D    0  1443      1 0x00004080</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Call Trace:</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __schedule+0x2d2/0x730</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: schedule+0x42/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: wb_wait_for_completion+0x56/0x90</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? finish_wait+0x80/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_inodes_sb+0xd4/0x2c0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? __filemap_fdatawrite_range+0xf1/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x5f/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ovl_sync_fs+0x39/0x60 [overlay]</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x79/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: generic_shutdown_super+0x27/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: kill_anon_super+0x18/0x30</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_locked_super+0x3b/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_super+0x3e/0x50</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: cleanup_mnt+0x109/0x160</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __cleanup_mnt+0x12/0x20</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: task_work_run+0x8f/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: exit_to_usermode_loop+0x10c/0x130</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: do_syscall_64+0x170/0x1b0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: entry_SYSCALL_64_after_hwframe+0x5c/0xc1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RIP: 0033:0x55cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Code: Bad RIP value.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RSP: 002b:000000c252fea778 EFLAGS: 00000212 ORIG_RAX: 00000000000000a6</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RAX: 0000000000000000 RBX: 000000c000070800 RCX: 000055cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RDX: 0000000000000000 RSI: 0000000000000002 RDI: 000000c2d000c3f0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RBP: 000000c252fea7d0 R08: 0000000000000000 R09: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R10: 0000000000000000 R11: 0000000000000212 R12: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R13: 0000000000000001 R14: 000000000000000a R15: ffffffffffffffff</span><br></pre></td></tr></table></figure>
+<p>从日志中可看出，<code>dockerd</code> 进程处于 <a href="/202304181637/" title="&#96;D&#96; 状态">&#96;D&#96; 状态</a>，说明 <code>dockerd</code> 在等待 IO 操作，根据进程调用的栈信息，显示存在对 <code>overlay</code> 文件系统的同步操作，初步猜测，可能是因为 <code>overlay</code> 文件系统中的某些操作未能及时完成，导致了 <code>dockerd</code> 进程的阻塞。</p>
+<p>继续检查日志，看到系统连接 NFS 服务超时，怀疑可能是因为 NFS 异常导致。</p>
+<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>curl 命令常见用法</title>
     <url>/202302201557/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -10238,25 +10263,87 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux 系统崩溃问题分析</title>
-    <url>/202304191031/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 5.4.221-1.el7</li>
-<li>Docker Engine - Community 20.10.9</li>
+    <title>Linux 文件权限控制</title>
+    <url>/202306261438/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 Linux 系统中，普通的文件权限控制通过关联身份三元组 (<code>user</code>, <code>group</code>,<code>other</code>) 和权限三元组 (<code>r</code>, <code>w</code>, <code>x</code>) 来实现访问控制。</p>
+<p>系统存在一个 <code>umask</code> 值（针对用户），<code>umask</code> 是一个权限掩码，它决定了新建的文件或者目录的默认权限，使用 <code>mask</code> 命令可以查看当前(用户) 的  <code>umask</code> 值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">umask</span></span></span><br><span class="line">0022</span><br></pre></td></tr></table></figure>
+<p>比如如上所示的 <code>umask</code> 值，决定了当前(用户)创建的文件和目录的默认权限</p>
+<ul>
+<li><code>目录</code> - 默认权限为 <code>0755</code> （<code>777-022</code>），即 <code>rwxr-xr-x</code></li>
+<li><code>文件</code> - 默认权限为 <code>644</code> (<code>666-022</code>)，即 <code>rw-r--r--</code></li>
 </ul>
-<p>本文档中的日志分析主要依赖于 <code>journald</code> 服务记录的日志，因此首先需要对 <a href="/202211211437/" title="&#96;journald&#96; 服务记录的日志进行持久化配置">&#96;journald&#96; 服务记录的日志进行持久化配置</a></p>
-<h1 id="场景分析"><a href="#场景分析" class="headerlink" title="场景分析"></a>场景分析</h1><h2 id="k8s-worker-节点经常死机-奔溃"><a href="#k8s-worker-节点经常死机-奔溃" class="headerlink" title="k8s worker 节点经常死机(奔溃)"></a>k8s worker 节点经常死机(奔溃)</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos7 5.4.221-1.el7</li>
-<li>Docker Engine - Community 20.10.9 </li>
-<li>Kubernetes v1.24.7</li>
+<p>因此要配置当前(用户)创建的文件或者目录的默认权限，只需要配置合适的 <code>umask</code> 值即可。配置 <code>umask</code> 值可以通过以下方法</p>
+<ul>
+<li>临时方法  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">umask 027</span><br></pre></td></tr></table></figure></li>
+<li>永久方法<br>  根据需求将 <code>umask 027</code> 配置添加到配置文件中，如 <code>/etc/profile</code>、<code>~/.bashrc</code>、<code>~/.bash_profile</code> 等</li>
 </ul>
-<p>k8s 节点经常出现无响应(死机)，重启才能恢复正常。重启恢复后，检查系统 <code>messages</code> 日志。</p>
-<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: INFO: task dockerd:1443 blocked for more than 368 seconds.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel:      Tainted: G            E     5.4.221-1.el7.elrepo.x86_64 #1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: &quot;echo 0 &gt; /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: dockerd         D    0  1443      1 0x00004080</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Call Trace:</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __schedule+0x2d2/0x730</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: schedule+0x42/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: wb_wait_for_completion+0x56/0x90</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? finish_wait+0x80/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_inodes_sb+0xd4/0x2c0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? __filemap_fdatawrite_range+0xf1/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x5f/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ovl_sync_fs+0x39/0x60 [overlay]</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x79/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: generic_shutdown_super+0x27/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: kill_anon_super+0x18/0x30</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_locked_super+0x3b/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_super+0x3e/0x50</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: cleanup_mnt+0x109/0x160</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __cleanup_mnt+0x12/0x20</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: task_work_run+0x8f/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: exit_to_usermode_loop+0x10c/0x130</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: do_syscall_64+0x170/0x1b0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: entry_SYSCALL_64_after_hwframe+0x5c/0xc1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RIP: 0033:0x55cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Code: Bad RIP value.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RSP: 002b:000000c252fea778 EFLAGS: 00000212 ORIG_RAX: 00000000000000a6</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RAX: 0000000000000000 RBX: 000000c000070800 RCX: 000055cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RDX: 0000000000000000 RSI: 0000000000000002 RDI: 000000c2d000c3f0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RBP: 000000c252fea7d0 R08: 0000000000000000 R09: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R10: 0000000000000000 R11: 0000000000000212 R12: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R13: 0000000000000001 R14: 000000000000000a R15: ffffffffffffffff</span><br></pre></td></tr></table></figure>
-<p>从日志中可看出，<code>dockerd</code> 进程处于 <a href="/202304181637/" title="&#96;D&#96; 状态">&#96;D&#96; 状态</a>，说明 <code>dockerd</code> 在等待 IO 操作，根据进程调用的栈信息，显示存在对 <code>overlay</code> 文件系统的同步操作，初步猜测，可能是因为 <code>overlay</code> 文件系统中的某些操作未能及时完成，导致了 <code>dockerd</code> 进程的阻塞。</p>
-<p>继续检查日志，看到系统连接 NFS 服务超时，怀疑可能是因为 NFS 异常导致。</p>
-<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br></pre></td></tr></table></figure>]]></content>
+<p>如果需要更进一步的权限控制，需要使用到 <code>Sticky Bit</code> 和 ACL</p>
+<h1 id="Sticky-Bit"><a href="#Sticky-Bit" class="headerlink" title="Sticky Bit"></a>Sticky Bit</h1><p>粘滞位 (<code>Sticky Bit</code>) 只能用于目录，并对其中的文件有特殊的权限控制。他的主要作用是确保只有文件的所有者才能够删除或者修改文件。要给某个目录配置 粘滞位 (<code>Sticky Bit</code>)，使用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod +t directoryname</span><br></pre></td></tr></table></figure>
+<p>这将为目录 <code>directoryname</code> 配置粘滞位 (<code>Sticky Bit</code>)，以下命令可以验证 粘滞位 (<code>Sticky Bit</code>)是否存在。如果目录的权限列表中有 <code>t</code> 标志，表示目录设置了 粘滞位 (<code>Sticky Bit</code>)</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l directoryname</span></span><br><span class="line">drwxrwxrwt  2 owner group   4096 Jun 26 10:15 directoryname</span><br></pre></td></tr></table></figure>
+
+<p><strong>设置粘滞位后，只有文件的所有者才能删除或修改该文件。其他用户即使有写权限（<code>w</code>），也无法删除其他用户的文件。</strong></p>
+<span id="more"></span>
+<h1 id="ACL"><a href="#ACL" class="headerlink" title="ACL"></a>ACL</h1><p>使用访问控制列表（ACL），可以为单个文件或目录添加更细粒度的权限控制。使用的命令为 <code>setfacl</code> 和 <code>getfacl</code>。</p>
+<p>相比普通权限控制，文件访问控制列表（ACL）权限的优先级更高，当存在 ACL 权限时，它将覆盖普通权限。需要注意的是 <strong>ACL 权限是基于文件系统的，而不是基于传统的文件权限，因此，如果将具有 ACL 权限的文件移动到另一个文件系统，ACL 权限会丢失</strong></p>
+<p><code>setfacl</code> 命令常用选项</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-m, --modify</code></td>
+<td>修改现有的 ACL 权限</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-x, --remote</code></td>
+<td>移除现有的 ACL 权限</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-b, --remove-all</code></td>
+<td>移除文件的所有 ACL 权限</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-R, --recursive</code></td>
+<td>递归的应用 ACL 权限到目录及其子目录及文件</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-d, --default</code></td>
+<td>设置默认 ACL 权限，只适用于目录，用于控制在该目录中创建的新文件的 ACL 权限，即权限继承<br/><strong>默认 ACL 只影响新建的文件或目录，对现有的文件或目录不影响</strong></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-n, --no-mask</code></td>
+<td>忽略文件系统的默认掩码(<code>umask</code>)，直接应用 ACL 规则</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="ACL-配置示例"><a href="#ACL-配置示例" class="headerlink" title="ACL 配置示例"></a>ACL 配置示例</h2><p>以下示例配置单个用户的 ACL</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m u:username:rwx filename</span><br><span class="line"></span><br><span class="line">setfacl -R -m o::r filename</span><br></pre></td></tr></table></figure>
+
+<p>配置多个目标权限</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m u:user:rwx,g:group:rwx,o::rx directoryname</span><br></pre></td></tr></table></figure>
+
+<p>设置默认 ACL 权限，以下命令将为目录配置指定的默认 ACL 权限，默认的 ACL 权限会被此目录下新建的文件和目录继承，即新创建的目录和文件拥有和默认 ACL 一样的权限设置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m d:u:user:rwx,d:g:group:rwx,d:o::rx directoryname</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>查看默认 ACL</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">getfacl -d directoryname</span><br></pre></td></tr></table></figure>
+
+<p>修改默认 ACL</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m d:u:user:rwx,d:g:group:rw-,d:o::--- directoryname</span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Linux</category>
+        <category>常用命令</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -10436,93 +10523,6 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">find . -anewer FILE1 ! -anewer FILE2</span><br></pre></td></tr></table></figure>
 
 ]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 文件权限控制</title>
-    <url>/202306261438/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 Linux 系统中，普通的文件权限控制通过关联身份三元组 (<code>user</code>, <code>group</code>,<code>other</code>) 和权限三元组 (<code>r</code>, <code>w</code>, <code>x</code>) 来实现访问控制。</p>
-<p>系统存在一个 <code>umask</code> 值（针对用户），<code>umask</code> 是一个权限掩码，它决定了新建的文件或者目录的默认权限，使用 <code>mask</code> 命令可以查看当前(用户) 的  <code>umask</code> 值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">umask</span></span></span><br><span class="line">0022</span><br></pre></td></tr></table></figure>
-<p>比如如上所示的 <code>umask</code> 值，决定了当前(用户)创建的文件和目录的默认权限</p>
-<ul>
-<li><code>目录</code> - 默认权限为 <code>0755</code> （<code>777-022</code>），即 <code>rwxr-xr-x</code></li>
-<li><code>文件</code> - 默认权限为 <code>644</code> (<code>666-022</code>)，即 <code>rw-r--r--</code></li>
-</ul>
-<p>因此要配置当前(用户)创建的文件或者目录的默认权限，只需要配置合适的 <code>umask</code> 值即可。配置 <code>umask</code> 值可以通过以下方法</p>
-<ul>
-<li>临时方法  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">umask 027</span><br></pre></td></tr></table></figure></li>
-<li>永久方法<br>  根据需求将 <code>umask 027</code> 配置添加到配置文件中，如 <code>/etc/profile</code>、<code>~/.bashrc</code>、<code>~/.bash_profile</code> 等</li>
-</ul>
-<p>如果需要更进一步的权限控制，需要使用到 <code>Sticky Bit</code> 和 ACL</p>
-<h1 id="Sticky-Bit"><a href="#Sticky-Bit" class="headerlink" title="Sticky Bit"></a>Sticky Bit</h1><p>粘滞位 (<code>Sticky Bit</code>) 只能用于目录，并对其中的文件有特殊的权限控制。他的主要作用是确保只有文件的所有者才能够删除或者修改文件。要给某个目录配置 粘滞位 (<code>Sticky Bit</code>)，使用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod +t directoryname</span><br></pre></td></tr></table></figure>
-<p>这将为目录 <code>directoryname</code> 配置粘滞位 (<code>Sticky Bit</code>)，以下命令可以验证 粘滞位 (<code>Sticky Bit</code>)是否存在。如果目录的权限列表中有 <code>t</code> 标志，表示目录设置了 粘滞位 (<code>Sticky Bit</code>)</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l directoryname</span></span><br><span class="line">drwxrwxrwt  2 owner group   4096 Jun 26 10:15 directoryname</span><br></pre></td></tr></table></figure>
-
-<p><strong>设置粘滞位后，只有文件的所有者才能删除或修改该文件。其他用户即使有写权限（<code>w</code>），也无法删除其他用户的文件。</strong></p>
-<span id="more"></span>
-<h1 id="ACL"><a href="#ACL" class="headerlink" title="ACL"></a>ACL</h1><p>使用访问控制列表（ACL），可以为单个文件或目录添加更细粒度的权限控制。使用的命令为 <code>setfacl</code> 和 <code>getfacl</code>。</p>
-<p>相比普通权限控制，文件访问控制列表（ACL）权限的优先级更高，当存在 ACL 权限时，它将覆盖普通权限。需要注意的是 <strong>ACL 权限是基于文件系统的，而不是基于传统的文件权限，因此，如果将具有 ACL 权限的文件移动到另一个文件系统，ACL 权限会丢失</strong></p>
-<p><code>setfacl</code> 命令常用选项</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-m, --modify</code></td>
-<td>修改现有的 ACL 权限</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-x, --remote</code></td>
-<td>移除现有的 ACL 权限</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-b, --remove-all</code></td>
-<td>移除文件的所有 ACL 权限</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-R, --recursive</code></td>
-<td>递归的应用 ACL 权限到目录及其子目录及文件</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-d, --default</code></td>
-<td>设置默认 ACL 权限，只适用于目录，用于控制在该目录中创建的新文件的 ACL 权限，即权限继承<br/><strong>默认 ACL 只影响新建的文件或目录，对现有的文件或目录不影响</strong></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-n, --no-mask</code></td>
-<td>忽略文件系统的默认掩码(<code>umask</code>)，直接应用 ACL 规则</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="ACL-配置示例"><a href="#ACL-配置示例" class="headerlink" title="ACL 配置示例"></a>ACL 配置示例</h2><p>以下示例配置单个用户的 ACL</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m u:username:rwx filename</span><br><span class="line"></span><br><span class="line">setfacl -R -m o::r filename</span><br></pre></td></tr></table></figure>
-
-<p>配置多个目标权限</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m u:user:rwx,g:group:rwx,o::rx directoryname</span><br></pre></td></tr></table></figure>
-
-<p>设置默认 ACL 权限，以下命令将为目录配置指定的默认 ACL 权限，默认的 ACL 权限会被此目录下新建的文件和目录继承，即新创建的目录和文件拥有和默认 ACL 一样的权限设置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m d:u:user:rwx,d:g:group:rwx,d:o::rx directoryname</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>查看默认 ACL</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">getfacl -d directoryname</span><br></pre></td></tr></table></figure>
-
-<p>修改默认 ACL</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">setfacl -m d:u:user:rwx,d:g:group:rw-,d:o::--- directoryname</span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Linux</category>
         <category>常用命令</category>
@@ -10880,45 +10880,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>linux namespace 简介</title>
-    <url>/202304191340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 5.4.239-1</li>
-</ul>
-<p>Linux 的 namespace 的作用是 ”隔离内核资源“，目前主要实现了以下 namespace</p>
-<ul>
-<li><code>mount namespace</code> - 文件系统挂载点</li>
-<li><code>UTS namespace</code> - 主机名</li>
-<li><code>IPC namespace</code> - POSIX 进程间通信消息队列</li>
-<li><code>PID namespace</code> - 进程 pid 数字空间</li>
-<li><code>network namespace</code> - network</li>
-<li><code>user namespace</code> - user ID 数字空间</li>
-<li><code>cgroup</code> - 资源使用控制</li>
-</ul>
-<p>其中，除了 <code>network namespace</code>，其他 namespace 的操作需要使用 C 语言调用系统 API 实现。<code>network namespace</code> 的增删改查功能已经集成到了 Linux 的 <code>ip</code> 工具集的 <code>netns</code> 子命令中</p>
-<p>Linux 里面的 namespace 给处在其中的进程造成 2 个错觉：</p>
-<ol>
-<li>它是系统里面唯一的进程</li>
-<li>它独享系统的所有资源</li>
-</ol>
-<p>默认情况下，Linux 里面的所有进程处在和宿主机相同的 namespace ，即初始 namespace 里，默认享有全局系统资源。</p>
-<p>想要查看某个进程都在哪些 namespace 中，可以找到进程 ID （PID），通过查看以下内容或者 namespace 信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root     32679 32659  0  80   0 -  2248 sigsus Apr07 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/32679/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 ipc -&gt; ipc:[4026534784]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 mnt -&gt; mnt:[4026534583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 net -&gt; net:[4026534787]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid_for_children -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 uts -&gt; uts:[4026534877]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>通过以上命令，可以看到 <code>nginx</code> 进程所属的 namespace，要查看系统初始 namespace ，可以查看 PID 为 1 的进程的 namespace 信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/1/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 ipc -&gt; ipc:[4026531839]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 mnt -&gt; mnt:[4026531840]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 net -&gt; net:[4026531992]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid_for_children -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 uts -&gt; uts:[4026531838]</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>链接文件的内容的格式为 ns 类型: [inode number]。这里的 <code>inode number</code> 则用来标识一个 namespace，我们也可以把它理解为 namespace 的 ID。如果两个进程的某个 namespace 文件指向同一个链接文件，说明其相关资源在同一个 namespace 中。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs](https://zhuanlan.zhihu.com/p/374503196)">[1]</span></a></sup></p>
-</blockquote>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://zhuanlan.zhihu.com/p/374503196">不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Linux 常见错误集锦</title>
     <url>/202306081314/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -11005,6 +10966,45 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y make</span><br></pre></td></tr></table></figure>
 
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.cnblogs.com/gyfluck/p/10537383.html">升级 GCC 支持C++11</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://blog.csdn.net/weixin_39278265/article/details/118435463">cannot find crti.o</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux namespace 简介</title>
+    <url>/202304191340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 5.4.239-1</li>
+</ul>
+<p>Linux 的 namespace 的作用是 ”隔离内核资源“，目前主要实现了以下 namespace</p>
+<ul>
+<li><code>mount namespace</code> - 文件系统挂载点</li>
+<li><code>UTS namespace</code> - 主机名</li>
+<li><code>IPC namespace</code> - POSIX 进程间通信消息队列</li>
+<li><code>PID namespace</code> - 进程 pid 数字空间</li>
+<li><code>network namespace</code> - network</li>
+<li><code>user namespace</code> - user ID 数字空间</li>
+<li><code>cgroup</code> - 资源使用控制</li>
+</ul>
+<p>其中，除了 <code>network namespace</code>，其他 namespace 的操作需要使用 C 语言调用系统 API 实现。<code>network namespace</code> 的增删改查功能已经集成到了 Linux 的 <code>ip</code> 工具集的 <code>netns</code> 子命令中</p>
+<p>Linux 里面的 namespace 给处在其中的进程造成 2 个错觉：</p>
+<ol>
+<li>它是系统里面唯一的进程</li>
+<li>它独享系统的所有资源</li>
+</ol>
+<p>默认情况下，Linux 里面的所有进程处在和宿主机相同的 namespace ，即初始 namespace 里，默认享有全局系统资源。</p>
+<p>想要查看某个进程都在哪些 namespace 中，可以找到进程 ID （PID），通过查看以下内容或者 namespace 信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root     32679 32659  0  80   0 -  2248 sigsus Apr07 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/32679/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 ipc -&gt; ipc:[4026534784]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 mnt -&gt; mnt:[4026534583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 net -&gt; net:[4026534787]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid_for_children -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 uts -&gt; uts:[4026534877]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>通过以上命令，可以看到 <code>nginx</code> 进程所属的 namespace，要查看系统初始 namespace ，可以查看 PID 为 1 的进程的 namespace 信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/1/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 ipc -&gt; ipc:[4026531839]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 mnt -&gt; mnt:[4026531840]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 net -&gt; net:[4026531992]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid_for_children -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 uts -&gt; uts:[4026531838]</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>链接文件的内容的格式为 ns 类型: [inode number]。这里的 <code>inode number</code> 则用来标识一个 namespace，我们也可以把它理解为 namespace 的 ID。如果两个进程的某个 namespace 文件指向同一个链接文件，说明其相关资源在同一个 namespace 中。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs](https://zhuanlan.zhihu.com/p/374503196)">[1]</span></a></sup></p>
+</blockquote>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://zhuanlan.zhihu.com/p/374503196">不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -15192,29 +15192,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Python3 安装</title>
-    <url>/202306161337/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 6.3.8-1.el7.elrepo.x86_64</li>
-<li>Python 3.10.12</li>
-</ul>
-<h1 id="编译安装步骤"><a href="#编译安装步骤" class="headerlink" title="编译安装步骤"></a>编译安装步骤</h1><p>安装相关依赖</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y groupinstall &quot;Development tools&quot;</span><br><span class="line"></span><br><span class="line">yum -y install zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel</span><br><span class="line"></span><br><span class="line">yum install libffi-devel -y</span><br></pre></td></tr></table></figure>
-
-<p>Centos 7 默认安装的 <code>openssl</code> 版本太低（<code>1.0.2k-fips</code>），无法满足 <code>Python 3.10.12</code> 对 SSL 的支持，需要 <a href="https://csms.tech/202306081314/#openssl-版本升级">首先升级 OpenSSL 版本</a>。否则编译安装后使用 SSL 相关功能会报错： <code>ImportError: No module named _ssl</code></p>
-<p>下载安装包并编译安装。使用 <code>--with-openssl=/usr/local/openssl/</code> 指定新版本 <code>openssl</code> 位置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://www.python.org/ftp/python/3.10.12/Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">tar -xf Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">cd Python-3.10.12</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/python3 --with-openssl=/usr/local/openssl/</span><br><span class="line"></span><br><span class="line">make &amp;&amp; make install</span><br><span class="line"></span><br><span class="line">ln -s /usr/local/python3/bin/python3 /usr/bin/</span><br><span class="line">ln -s /usr/local/python3/bin/pip3 /usr/bin/</span><br></pre></td></tr></table></figure>
-
-<p>安装完成后，安装目录为 <code>/usr/local/python3</code>，要迁移到其他机器使用，可以安装相关依赖后，将安装目录拷贝到其他机器即可正常使用。<a href="/202302041721/" title="此版本编译后的文件下载链接">此版本编译后的文件下载链接</a></p>
-]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>python 虚拟环境</title>
     <url>/202208161730/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -15234,6 +15211,29 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">deactivate</span><br></pre></td></tr></table></figure>
 <p>退出虚拟环境后，再执行如 <code>pip3 install</code> 命令安装的包，会安装到系统 Python 环境。<br>完全可以针对每个应用创建独立的Python运行环境，这样就可以对每个应用的Python环境进行隔离。</p>
 <p>如果不再使用某个 <code>venv</code> ，例如 <code>project01</code>，删除它也很简单。首先确认该 <code>venv</code> 没有处于 <code>激活</code> 状态，然后直接把整个目录 <code>project01</code> 删掉就行。</p>
+]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Python3 安装</title>
+    <url>/202306161337/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 6.3.8-1.el7.elrepo.x86_64</li>
+<li>Python 3.10.12</li>
+</ul>
+<h1 id="编译安装步骤"><a href="#编译安装步骤" class="headerlink" title="编译安装步骤"></a>编译安装步骤</h1><p>安装相关依赖</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y groupinstall &quot;Development tools&quot;</span><br><span class="line"></span><br><span class="line">yum -y install zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel</span><br><span class="line"></span><br><span class="line">yum install libffi-devel -y</span><br></pre></td></tr></table></figure>
+
+<p>Centos 7 默认安装的 <code>openssl</code> 版本太低（<code>1.0.2k-fips</code>），无法满足 <code>Python 3.10.12</code> 对 SSL 的支持，需要 <a href="https://csms.tech/202306081314/#openssl-版本升级">首先升级 OpenSSL 版本</a>。否则编译安装后使用 SSL 相关功能会报错： <code>ImportError: No module named _ssl</code></p>
+<p>下载安装包并编译安装。使用 <code>--with-openssl=/usr/local/openssl/</code> 指定新版本 <code>openssl</code> 位置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://www.python.org/ftp/python/3.10.12/Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">tar -xf Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">cd Python-3.10.12</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/python3 --with-openssl=/usr/local/openssl/</span><br><span class="line"></span><br><span class="line">make &amp;&amp; make install</span><br><span class="line"></span><br><span class="line">ln -s /usr/local/python3/bin/python3 /usr/bin/</span><br><span class="line">ln -s /usr/local/python3/bin/pip3 /usr/bin/</span><br></pre></td></tr></table></figure>
+
+<p>安装完成后，安装目录为 <code>/usr/local/python3</code>，要迁移到其他机器使用，可以安装相关依赖后，将安装目录拷贝到其他机器即可正常使用。<a href="/202302041721/" title="此版本编译后的文件下载链接">此版本编译后的文件下载链接</a></p>
 ]]></content>
       <categories>
         <category>Python</category>
