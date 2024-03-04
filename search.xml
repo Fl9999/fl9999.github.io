@@ -6821,6 +6821,64 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Jenkins + gitlab 自动构建</title>
+    <url>/202210261456/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Jenkins jenkinsci&#x2F;blueocean:2.346.3</li>
+<li>GitLab Community Edition 13.9.6</li>
+<li>Docker 19.03.15</li>
+</ul>
+<p>本文档记录 GitLab 上面的代码更新时，使用 Jenkins 自动构建 Docker 镜像的过程。 </p>
+<h1 id="配置过程"><a href="#配置过程" class="headerlink" title="配置过程"></a>配置过程</h1><h2 id="使用-docker-启动-Jenkins-容器"><a href="#使用-docker-启动-Jenkins-容器" class="headerlink" title="使用 docker 启动 Jenkins 容器"></a>使用 docker 启动 Jenkins 容器</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d -p 8080:8080 --name jenkins \</span><br><span class="line">          -v /var/run/docker.sock:/var/run/docker.sock  \</span><br><span class="line">          -v /data/JenkinsData_blueocean/:/var/jenkins_home/ \</span><br><span class="line">          -u root \</span><br><span class="line">          jenkinsci/blueocean</span><br></pre></td></tr></table></figure>
+
+<h2 id="Jenkins-配置"><a href="#Jenkins-配置" class="headerlink" title="Jenkins 配置"></a>Jenkins 配置</h2><p>以下分别记录使用 <code>freestyle</code> 和 <code>Pipeline</code> 类型的构建镜像的配置过程</p>
+<h3 id="创建-freestyle-类型的-Item-构建镜像"><a href="#创建-freestyle-类型的-Item-构建镜像" class="headerlink" title="创建 freestyle 类型的 Item 构建镜像"></a>创建 <code>freestyle</code> 类型的 Item 构建镜像</h3><p>在 <code>源码管理（Source Code Management）</code> 中配置 git 地址，并配置认证</p>
+<blockquote>
+<p>默认情况下，在构建时，Jenkins 会先从配置的 Git 地址拉取代码到 Jenkins 目录： <code>/var/jenkins_home/workspace/$&#123;PROJECT_NAME&#125;</code></p>
+</blockquote>
+<p>在 <code>构建（Build）</code> 中 <code>Add build step</code> ，选择构建类型为 <code>Execute shell</code>，此处构建的示例项目代码结构如下，其中 Dockerfile 路径为 <code>k8s/server/Dockerfile</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">.:</span><br><span class="line">index.html	k8s</span><br><span class="line"></span><br><span class="line">./k8s:</span><br><span class="line">server</span><br><span class="line"></span><br><span class="line">./k8s/server:</span><br><span class="line">Dockerfile</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>使用如下 shell 脚本</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">DATA=`date +%Y%m%d%H%M`</span><br><span class="line"></span><br><span class="line">DIR=&#x27;.&#x27;</span><br><span class="line"></span><br><span class="line">LOG=$&#123;DIR&#125;/docker_build_result.log</span><br><span class="line"></span><br><span class="line">DOCKER_REGISTRY=&#x27;harbor.a.com&#x27;</span><br><span class="line"></span><br><span class="line">DOCKER_REGISTRY_PROJECT=&#x27;test&#x27;</span><br><span class="line"></span><br><span class="line">PROJECT=&#x27;test_project&#x27;</span><br><span class="line">ENV=&#x27;uat&#x27;</span><br><span class="line"></span><br><span class="line">docker build -t $&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125; -f k8s/server/Dockerfile $&#123;DIR&#125; | tee $&#123;LOG&#125;</span><br><span class="line"></span><br><span class="line">docker tag $&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125; $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125;</span><br><span class="line"></span><br><span class="line">docker login -u admin -p Harbor12345 $&#123;DOCKER_REGISTRY&#125;</span><br><span class="line"></span><br><span class="line">docker push $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125;</span><br><span class="line"></span><br><span class="line">RESULT=`cat $&#123;LOG&#125; | tail -n 1`</span><br><span class="line"></span><br><span class="line">grep &quot;Successfully tagged &quot; $&#123;LOG&#125;</span><br><span class="line"></span><br><span class="line">exit $?</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_71.png"></p>
+<blockquote>
+<p>其中的 <code>$&#123;Branch&#125;</code> 来自 <strong>参数化的构建</strong><br><img src="https://i.csms.tech/img_69.png"></p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="使用-Jenkins-Pipeline-构建镜像"><a href="#使用-Jenkins-Pipeline-构建镜像" class="headerlink" title="使用 Jenkins Pipeline 构建镜像"></a>使用 Jenkins Pipeline 构建镜像</h3><p>创建 <code>Pipeline</code> 类型的工程</p>
+<p><code>Advanced Project Options</code> 中选择 <code>Pipeline from SCM</code>，并配置 Git 的 url 及认证信息。<code>Script Path</code> 默认为 <code>Jenkinsfile</code>(位于代码根目录)</p>
+<p><code>Jenkinsfile</code> 内容如下：</p>
+<figure class="highlight shell"><figcaption><span>Jenkinsfile</span></figcaption><table><tr><td class="code"><pre><span class="line">pipeline &#123;</span><br><span class="line">    agent any</span><br><span class="line">    environment &#123;</span><br><span class="line">        PROJECT=&#x27;test_admin&#x27;</span><br><span class="line">        </span><br><span class="line">        HARBOR_CREDENTIALS = credentials(&#x27;habor&#x27;)</span><br><span class="line">		GIT_CREDENTIALS = credentials(&#x27;git&#x27;)</span><br><span class="line">		</span><br><span class="line">        GIT_URL = &quot;http://$&#123;GIT_CREDENTIALS_USR&#125;:$&#123;GIT_CREDENTIALS_PSW&#125;@git.wkctrlsys.com:18081/jiafeimao/api.git&quot;</span><br><span class="line">        </span><br><span class="line">        DATA=&quot;$&#123;sh(script: &#x27;date +%Y%m%d%H%M&#x27;, returnStdout:true)&#125;&quot;</span><br><span class="line">        LOG=&#x27;./docker_build_result.log&#x27;</span><br><span class="line">        </span><br><span class="line">        DOCKER_REGISTRY=&#x27;harbor.my.com&#x27;</span><br><span class="line">        DOCKER_REGISTRY_PROJECT=&#x27;test&#x27;</span><br><span class="line">        </span><br><span class="line">        BRANCH = &quot;$&#123;params.Branch&#125;&quot;</span><br><span class="line">        </span><br><span class="line">        DIR = &#x27;.&#x27;</span><br><span class="line">		</span><br><span class="line">		TAG = &quot;$&#123;PROJECT&#125;-$&#123;BRANCH&#125;:$&#123;DATA&#125;&quot;</span><br><span class="line">    &#125;</span><br><span class="line">	</span><br><span class="line">    stages &#123;</span><br><span class="line">        stage(&#x27;CHECKOUT&#x27;) &#123;</span><br><span class="line">            steps &#123;</span><br><span class="line">                // 清空 workspace</span><br><span class="line">                sh &quot;rm -rf $&#123;env.WORKSPACE&#125;/*&quot;</span><br><span class="line">                sh &quot;rm -rf $&#123;env.WORKSPACE&#125;/.git&quot;</span><br><span class="line">                sh &quot;git clone -b $&#123;BRANCH&#125; $&#123;GIT_URL&#125; .&quot;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        stage(&#x27;BUILD&#x27;) &#123;</span><br><span class="line">            steps &#123;</span><br><span class="line">                sh &#x27;docker build -t $&#123;TAG&#125; -f k8s/server/Dockerfile $&#123;DIR&#125; | tee $&#123;LOG&#125;&#x27;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        stage(&#x27;PUSH&#x27;) &#123;</span><br><span class="line">            steps &#123;</span><br><span class="line">                sh &#x27;docker tag $&#123;TAG&#125; $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;TAG&#125;&#x27;</span><br><span class="line">                </span><br><span class="line">                sh &#x27;docker login -u $&#123;HARBOR_CREDENTIALS_USR&#125; -p $&#123;HARBOR_CREDENTIALS_PSW&#125; $&#123;DOCKER_REGISTRY&#125;&#x27;</span><br><span class="line">                </span><br><span class="line">                sh &#x27;docker push $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;TAG&#125;&#x27;</span><br><span class="line">                </span><br><span class="line">            &#125;</span><br><span class="line">		</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
+
+
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Cannot-connect-to-the-Docker-daemon-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock-Is-the-docker-daemon-running"><a href="#Cannot-connect-to-the-Docker-daemon-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock-Is-the-docker-daemon-running" class="headerlink" title="Cannot connect to the Docker daemon at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock. Is the docker daemon running?"></a>Cannot connect to the Docker daemon at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock. Is the docker daemon running?</h2><p><strong>错误场景</strong></p>
+<p>使用 Docker 部署的 Jenkins，在构建 Docker 镜像时，Jenkins 中的 docker 为客户端，使用的 Server 端是宿主机的 Docker Daemon，默认情况下，docker 客户端是通过 <code>unix:///var/run/docker.sock</code> 连接 Docker 服务端，此文件在 Jenkins 容器中不能直接访问，所以导致出现上述错误。</p>
+<p><strong>解决思路</strong></p>
+<p>针对此种情况，需要让 docker 客户端可以正确的连接到 docker 服务端</p>
+<p><strong>解救方法</strong></p>
+<p>为 docker 客户端指定 docker 服务端，可以采取以下方法</p>
+<ul>
+<li>将宿主机的 <code>/var/run/docker.sock</code> 挂载到 Jenkins 容器<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d -p 8080:8080 --name jenkins -v /var/run/docker.sock:/var/run/docker.sock  jenkinsci/blueocean</span><br></pre></td></tr></table></figure></li>
+</ul>
+<h2 id="Got-permission-denied-while-trying-to-connect-to-the-Docker-daemon-socket-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock"><a href="#Got-permission-denied-while-trying-to-connect-to-the-Docker-daemon-socket-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock" class="headerlink" title="Got permission denied while trying to connect to the Docker daemon socket at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock"></a>Got permission denied while trying to connect to the Docker daemon socket at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock</h2><p><strong>错误场景</strong></p>
+<p>使用 Docker 部署的 Jenkins，默认情况下，容器中使用 <code>jenkins</code> 用户运行，无权限访问 <code>/var/run/docker.sock</code>，可以使用如下命令，在启动容器时使用 <code>root</code> 用户运行</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d -p 8080:8080 --name jenkins \</span><br><span class="line">          -v /var/run/docker.sock:/var/run/docker.sock  \</span><br><span class="line">          -v /data/JenkinsData_blueocean/:/var/jenkins_home/ \</span><br><span class="line">          -u root \</span><br><span class="line">          jenkinsci/blueocean</span><br></pre></td></tr></table></figure>
+
+<h2 id="WorkflowScript-3-Invalid-agent-type-“docker”-specified-Must-be-one-of-any-label-none"><a href="#WorkflowScript-3-Invalid-agent-type-“docker”-specified-Must-be-one-of-any-label-none" class="headerlink" title="WorkflowScript: 3: Invalid agent type “docker” specified. Must be one of [any, label, none]"></a>WorkflowScript: 3: Invalid agent type “docker” specified. Must be one of [any, label, none]</h2><p><strong>错误原因</strong></p>
+<p>没有 docker 相关的插件导致，安装插件 <code>Docker Pipeline</code></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+      <tags>
+        <tag>Jenkins</tag>
+        <tag>gitlab</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 上部署 cert-manager 及使用</title>
     <url>/202301050935/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6879,64 +6937,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Jenkins + gitlab 自动构建</title>
-    <url>/202210261456/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Jenkins jenkinsci&#x2F;blueocean:2.346.3</li>
-<li>GitLab Community Edition 13.9.6</li>
-<li>Docker 19.03.15</li>
-</ul>
-<p>本文档记录 GitLab 上面的代码更新时，使用 Jenkins 自动构建 Docker 镜像的过程。 </p>
-<h1 id="配置过程"><a href="#配置过程" class="headerlink" title="配置过程"></a>配置过程</h1><h2 id="使用-docker-启动-Jenkins-容器"><a href="#使用-docker-启动-Jenkins-容器" class="headerlink" title="使用 docker 启动 Jenkins 容器"></a>使用 docker 启动 Jenkins 容器</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d -p 8080:8080 --name jenkins \</span><br><span class="line">          -v /var/run/docker.sock:/var/run/docker.sock  \</span><br><span class="line">          -v /data/JenkinsData_blueocean/:/var/jenkins_home/ \</span><br><span class="line">          -u root \</span><br><span class="line">          jenkinsci/blueocean</span><br></pre></td></tr></table></figure>
-
-<h2 id="Jenkins-配置"><a href="#Jenkins-配置" class="headerlink" title="Jenkins 配置"></a>Jenkins 配置</h2><p>以下分别记录使用 <code>freestyle</code> 和 <code>Pipeline</code> 类型的构建镜像的配置过程</p>
-<h3 id="创建-freestyle-类型的-Item-构建镜像"><a href="#创建-freestyle-类型的-Item-构建镜像" class="headerlink" title="创建 freestyle 类型的 Item 构建镜像"></a>创建 <code>freestyle</code> 类型的 Item 构建镜像</h3><p>在 <code>源码管理（Source Code Management）</code> 中配置 git 地址，并配置认证</p>
-<blockquote>
-<p>默认情况下，在构建时，Jenkins 会先从配置的 Git 地址拉取代码到 Jenkins 目录： <code>/var/jenkins_home/workspace/$&#123;PROJECT_NAME&#125;</code></p>
-</blockquote>
-<p>在 <code>构建（Build）</code> 中 <code>Add build step</code> ，选择构建类型为 <code>Execute shell</code>，此处构建的示例项目代码结构如下，其中 Dockerfile 路径为 <code>k8s/server/Dockerfile</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">.:</span><br><span class="line">index.html	k8s</span><br><span class="line"></span><br><span class="line">./k8s:</span><br><span class="line">server</span><br><span class="line"></span><br><span class="line">./k8s/server:</span><br><span class="line">Dockerfile</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>使用如下 shell 脚本</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">DATA=`date +%Y%m%d%H%M`</span><br><span class="line"></span><br><span class="line">DIR=&#x27;.&#x27;</span><br><span class="line"></span><br><span class="line">LOG=$&#123;DIR&#125;/docker_build_result.log</span><br><span class="line"></span><br><span class="line">DOCKER_REGISTRY=&#x27;harbor.a.com&#x27;</span><br><span class="line"></span><br><span class="line">DOCKER_REGISTRY_PROJECT=&#x27;test&#x27;</span><br><span class="line"></span><br><span class="line">PROJECT=&#x27;test_project&#x27;</span><br><span class="line">ENV=&#x27;uat&#x27;</span><br><span class="line"></span><br><span class="line">docker build -t $&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125; -f k8s/server/Dockerfile $&#123;DIR&#125; | tee $&#123;LOG&#125;</span><br><span class="line"></span><br><span class="line">docker tag $&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125; $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125;</span><br><span class="line"></span><br><span class="line">docker login -u admin -p Harbor12345 $&#123;DOCKER_REGISTRY&#125;</span><br><span class="line"></span><br><span class="line">docker push $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;PROJECT&#125;-$&#123;ENV&#125;-$&#123;Branch&#125;:$&#123;DATA&#125;</span><br><span class="line"></span><br><span class="line">RESULT=`cat $&#123;LOG&#125; | tail -n 1`</span><br><span class="line"></span><br><span class="line">grep &quot;Successfully tagged &quot; $&#123;LOG&#125;</span><br><span class="line"></span><br><span class="line">exit $?</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_71.png"></p>
-<blockquote>
-<p>其中的 <code>$&#123;Branch&#125;</code> 来自 <strong>参数化的构建</strong><br><img src="https://i.csms.tech/img_69.png"></p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="使用-Jenkins-Pipeline-构建镜像"><a href="#使用-Jenkins-Pipeline-构建镜像" class="headerlink" title="使用 Jenkins Pipeline 构建镜像"></a>使用 Jenkins Pipeline 构建镜像</h3><p>创建 <code>Pipeline</code> 类型的工程</p>
-<p><code>Advanced Project Options</code> 中选择 <code>Pipeline from SCM</code>，并配置 Git 的 url 及认证信息。<code>Script Path</code> 默认为 <code>Jenkinsfile</code>(位于代码根目录)</p>
-<p><code>Jenkinsfile</code> 内容如下：</p>
-<figure class="highlight shell"><figcaption><span>Jenkinsfile</span></figcaption><table><tr><td class="code"><pre><span class="line">pipeline &#123;</span><br><span class="line">    agent any</span><br><span class="line">    environment &#123;</span><br><span class="line">        PROJECT=&#x27;test_admin&#x27;</span><br><span class="line">        </span><br><span class="line">        HARBOR_CREDENTIALS = credentials(&#x27;habor&#x27;)</span><br><span class="line">		GIT_CREDENTIALS = credentials(&#x27;git&#x27;)</span><br><span class="line">		</span><br><span class="line">        GIT_URL = &quot;http://$&#123;GIT_CREDENTIALS_USR&#125;:$&#123;GIT_CREDENTIALS_PSW&#125;@git.wkctrlsys.com:18081/jiafeimao/api.git&quot;</span><br><span class="line">        </span><br><span class="line">        DATA=&quot;$&#123;sh(script: &#x27;date +%Y%m%d%H%M&#x27;, returnStdout:true)&#125;&quot;</span><br><span class="line">        LOG=&#x27;./docker_build_result.log&#x27;</span><br><span class="line">        </span><br><span class="line">        DOCKER_REGISTRY=&#x27;harbor.my.com&#x27;</span><br><span class="line">        DOCKER_REGISTRY_PROJECT=&#x27;test&#x27;</span><br><span class="line">        </span><br><span class="line">        BRANCH = &quot;$&#123;params.Branch&#125;&quot;</span><br><span class="line">        </span><br><span class="line">        DIR = &#x27;.&#x27;</span><br><span class="line">		</span><br><span class="line">		TAG = &quot;$&#123;PROJECT&#125;-$&#123;BRANCH&#125;:$&#123;DATA&#125;&quot;</span><br><span class="line">    &#125;</span><br><span class="line">	</span><br><span class="line">    stages &#123;</span><br><span class="line">        stage(&#x27;CHECKOUT&#x27;) &#123;</span><br><span class="line">            steps &#123;</span><br><span class="line">                // 清空 workspace</span><br><span class="line">                sh &quot;rm -rf $&#123;env.WORKSPACE&#125;/*&quot;</span><br><span class="line">                sh &quot;rm -rf $&#123;env.WORKSPACE&#125;/.git&quot;</span><br><span class="line">                sh &quot;git clone -b $&#123;BRANCH&#125; $&#123;GIT_URL&#125; .&quot;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        stage(&#x27;BUILD&#x27;) &#123;</span><br><span class="line">            steps &#123;</span><br><span class="line">                sh &#x27;docker build -t $&#123;TAG&#125; -f k8s/server/Dockerfile $&#123;DIR&#125; | tee $&#123;LOG&#125;&#x27;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        stage(&#x27;PUSH&#x27;) &#123;</span><br><span class="line">            steps &#123;</span><br><span class="line">                sh &#x27;docker tag $&#123;TAG&#125; $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;TAG&#125;&#x27;</span><br><span class="line">                </span><br><span class="line">                sh &#x27;docker login -u $&#123;HARBOR_CREDENTIALS_USR&#125; -p $&#123;HARBOR_CREDENTIALS_PSW&#125; $&#123;DOCKER_REGISTRY&#125;&#x27;</span><br><span class="line">                </span><br><span class="line">                sh &#x27;docker push $&#123;DOCKER_REGISTRY&#125;/$&#123;DOCKER_REGISTRY_PROJECT&#125;/$&#123;TAG&#125;&#x27;</span><br><span class="line">                </span><br><span class="line">            &#125;</span><br><span class="line">		</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-
-
-
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Cannot-connect-to-the-Docker-daemon-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock-Is-the-docker-daemon-running"><a href="#Cannot-connect-to-the-Docker-daemon-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock-Is-the-docker-daemon-running" class="headerlink" title="Cannot connect to the Docker daemon at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock. Is the docker daemon running?"></a>Cannot connect to the Docker daemon at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock. Is the docker daemon running?</h2><p><strong>错误场景</strong></p>
-<p>使用 Docker 部署的 Jenkins，在构建 Docker 镜像时，Jenkins 中的 docker 为客户端，使用的 Server 端是宿主机的 Docker Daemon，默认情况下，docker 客户端是通过 <code>unix:///var/run/docker.sock</code> 连接 Docker 服务端，此文件在 Jenkins 容器中不能直接访问，所以导致出现上述错误。</p>
-<p><strong>解决思路</strong></p>
-<p>针对此种情况，需要让 docker 客户端可以正确的连接到 docker 服务端</p>
-<p><strong>解救方法</strong></p>
-<p>为 docker 客户端指定 docker 服务端，可以采取以下方法</p>
-<ul>
-<li>将宿主机的 <code>/var/run/docker.sock</code> 挂载到 Jenkins 容器<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d -p 8080:8080 --name jenkins -v /var/run/docker.sock:/var/run/docker.sock  jenkinsci/blueocean</span><br></pre></td></tr></table></figure></li>
-</ul>
-<h2 id="Got-permission-denied-while-trying-to-connect-to-the-Docker-daemon-socket-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock"><a href="#Got-permission-denied-while-trying-to-connect-to-the-Docker-daemon-socket-at-unix-x2F-x2F-x2F-var-x2F-run-x2F-docker-sock" class="headerlink" title="Got permission denied while trying to connect to the Docker daemon socket at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock"></a>Got permission denied while trying to connect to the Docker daemon socket at unix:&#x2F;&#x2F;&#x2F;var&#x2F;run&#x2F;docker.sock</h2><p><strong>错误场景</strong></p>
-<p>使用 Docker 部署的 Jenkins，默认情况下，容器中使用 <code>jenkins</code> 用户运行，无权限访问 <code>/var/run/docker.sock</code>，可以使用如下命令，在启动容器时使用 <code>root</code> 用户运行</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -d -p 8080:8080 --name jenkins \</span><br><span class="line">          -v /var/run/docker.sock:/var/run/docker.sock  \</span><br><span class="line">          -v /data/JenkinsData_blueocean/:/var/jenkins_home/ \</span><br><span class="line">          -u root \</span><br><span class="line">          jenkinsci/blueocean</span><br></pre></td></tr></table></figure>
-
-<h2 id="WorkflowScript-3-Invalid-agent-type-“docker”-specified-Must-be-one-of-any-label-none"><a href="#WorkflowScript-3-Invalid-agent-type-“docker”-specified-Must-be-one-of-any-label-none" class="headerlink" title="WorkflowScript: 3: Invalid agent type “docker” specified. Must be one of [any, label, none]"></a>WorkflowScript: 3: Invalid agent type “docker” specified. Must be one of [any, label, none]</h2><p><strong>错误原因</strong></p>
-<p>没有 docker 相关的插件导致，安装插件 <code>Docker Pipeline</code></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Jenkins</tag>
-        <tag>gitlab</tag>
       </tags>
   </entry>
   <entry>
@@ -10071,6 +10071,23 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux 压缩解压缩</title>
+    <url>/202209301257/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
+
+<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
+
+<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>cp 命令用法</title>
     <url>/202210281406/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>常用选项</p>
@@ -10109,17 +10126,25 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux 压缩解压缩</title>
-    <url>/202209301257/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
-
-<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
-
-<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
-]]></content>
+    <title>Linux 系统崩溃问题分析</title>
+    <url>/202304191031/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 5.4.221-1.el7</li>
+<li>Docker Engine - Community 20.10.9</li>
+</ul>
+<p>本文档中的日志分析主要依赖于 <code>journald</code> 服务记录的日志，因此首先需要对 <a href="/202211211437/" title="&#96;journald&#96; 服务记录的日志进行持久化配置">&#96;journald&#96; 服务记录的日志进行持久化配置</a></p>
+<h1 id="场景分析"><a href="#场景分析" class="headerlink" title="场景分析"></a>场景分析</h1><h2 id="k8s-worker-节点经常死机-奔溃"><a href="#k8s-worker-节点经常死机-奔溃" class="headerlink" title="k8s worker 节点经常死机(奔溃)"></a>k8s worker 节点经常死机(奔溃)</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos7 5.4.221-1.el7</li>
+<li>Docker Engine - Community 20.10.9 </li>
+<li>Kubernetes v1.24.7</li>
+</ul>
+<p>k8s 节点经常出现无响应(死机)，重启才能恢复正常。重启恢复后，检查系统 <code>messages</code> 日志。</p>
+<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: INFO: task dockerd:1443 blocked for more than 368 seconds.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel:      Tainted: G            E     5.4.221-1.el7.elrepo.x86_64 #1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: &quot;echo 0 &gt; /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: dockerd         D    0  1443      1 0x00004080</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Call Trace:</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __schedule+0x2d2/0x730</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: schedule+0x42/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: wb_wait_for_completion+0x56/0x90</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? finish_wait+0x80/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_inodes_sb+0xd4/0x2c0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? __filemap_fdatawrite_range+0xf1/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x5f/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ovl_sync_fs+0x39/0x60 [overlay]</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x79/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: generic_shutdown_super+0x27/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: kill_anon_super+0x18/0x30</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_locked_super+0x3b/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_super+0x3e/0x50</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: cleanup_mnt+0x109/0x160</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __cleanup_mnt+0x12/0x20</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: task_work_run+0x8f/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: exit_to_usermode_loop+0x10c/0x130</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: do_syscall_64+0x170/0x1b0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: entry_SYSCALL_64_after_hwframe+0x5c/0xc1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RIP: 0033:0x55cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Code: Bad RIP value.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RSP: 002b:000000c252fea778 EFLAGS: 00000212 ORIG_RAX: 00000000000000a6</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RAX: 0000000000000000 RBX: 000000c000070800 RCX: 000055cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RDX: 0000000000000000 RSI: 0000000000000002 RDI: 000000c2d000c3f0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RBP: 000000c252fea7d0 R08: 0000000000000000 R09: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R10: 0000000000000000 R11: 0000000000000212 R12: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R13: 0000000000000001 R14: 000000000000000a R15: ffffffffffffffff</span><br></pre></td></tr></table></figure>
+<p>从日志中可看出，<code>dockerd</code> 进程处于 <a href="/202304181637/" title="&#96;D&#96; 状态">&#96;D&#96; 状态</a>，说明 <code>dockerd</code> 在等待 IO 操作，根据进程调用的栈信息，显示存在对 <code>overlay</code> 文件系统的同步操作，初步猜测，可能是因为 <code>overlay</code> 文件系统中的某些操作未能及时完成，导致了 <code>dockerd</code> 进程的阻塞。</p>
+<p>继续检查日志，看到系统连接 NFS 服务超时，怀疑可能是因为 NFS 异常导致。</p>
+<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Linux</category>
-        <category>常用命令</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -10230,31 +10255,6 @@ width: 20%;
 <li>重新执行命令，验证证书。</li>
 </ol>
 ]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 系统崩溃问题分析</title>
-    <url>/202304191031/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 5.4.221-1.el7</li>
-<li>Docker Engine - Community 20.10.9</li>
-</ul>
-<p>本文档中的日志分析主要依赖于 <code>journald</code> 服务记录的日志，因此首先需要对 <a href="/202211211437/" title="&#96;journald&#96; 服务记录的日志进行持久化配置">&#96;journald&#96; 服务记录的日志进行持久化配置</a></p>
-<h1 id="场景分析"><a href="#场景分析" class="headerlink" title="场景分析"></a>场景分析</h1><h2 id="k8s-worker-节点经常死机-奔溃"><a href="#k8s-worker-节点经常死机-奔溃" class="headerlink" title="k8s worker 节点经常死机(奔溃)"></a>k8s worker 节点经常死机(奔溃)</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos7 5.4.221-1.el7</li>
-<li>Docker Engine - Community 20.10.9 </li>
-<li>Kubernetes v1.24.7</li>
-</ul>
-<p>k8s 节点经常出现无响应(死机)，重启才能恢复正常。重启恢复后，检查系统 <code>messages</code> 日志。</p>
-<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: INFO: task dockerd:1443 blocked for more than 368 seconds.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel:      Tainted: G            E     5.4.221-1.el7.elrepo.x86_64 #1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: &quot;echo 0 &gt; /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: dockerd         D    0  1443      1 0x00004080</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Call Trace:</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __schedule+0x2d2/0x730</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: schedule+0x42/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: wb_wait_for_completion+0x56/0x90</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? finish_wait+0x80/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_inodes_sb+0xd4/0x2c0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? __filemap_fdatawrite_range+0xf1/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x5f/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ovl_sync_fs+0x39/0x60 [overlay]</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x79/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: generic_shutdown_super+0x27/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: kill_anon_super+0x18/0x30</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_locked_super+0x3b/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_super+0x3e/0x50</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: cleanup_mnt+0x109/0x160</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __cleanup_mnt+0x12/0x20</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: task_work_run+0x8f/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: exit_to_usermode_loop+0x10c/0x130</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: do_syscall_64+0x170/0x1b0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: entry_SYSCALL_64_after_hwframe+0x5c/0xc1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RIP: 0033:0x55cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Code: Bad RIP value.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RSP: 002b:000000c252fea778 EFLAGS: 00000212 ORIG_RAX: 00000000000000a6</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RAX: 0000000000000000 RBX: 000000c000070800 RCX: 000055cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RDX: 0000000000000000 RSI: 0000000000000002 RDI: 000000c2d000c3f0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RBP: 000000c252fea7d0 R08: 0000000000000000 R09: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R10: 0000000000000000 R11: 0000000000000212 R12: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R13: 0000000000000001 R14: 000000000000000a R15: ffffffffffffffff</span><br></pre></td></tr></table></figure>
-<p>从日志中可看出，<code>dockerd</code> 进程处于 <a href="/202304181637/" title="&#96;D&#96; 状态">&#96;D&#96; 状态</a>，说明 <code>dockerd</code> 在等待 IO 操作，根据进程调用的栈信息，显示存在对 <code>overlay</code> 文件系统的同步操作，初步猜测，可能是因为 <code>overlay</code> 文件系统中的某些操作未能及时完成，导致了 <code>dockerd</code> 进程的阻塞。</p>
-<p>继续检查日志，看到系统连接 NFS 服务超时，怀疑可能是因为 NFS 异常导致。</p>
-<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
