@@ -2514,6 +2514,89 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>containerd 使用方法</title>
+    <url>/202212011355/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>containerd.io-1.4.13-3</li>
+</ul>
+<h1 id="containerd-相关配置"><a href="#containerd-相关配置" class="headerlink" title="containerd 相关配置"></a>containerd 相关配置</h1><h2 id="默认配置文件"><a href="#默认配置文件" class="headerlink" title="默认配置文件"></a>默认配置文件</h2><p><code>containerd</code> 服务默认配置文件为 <code>/etc/containerd/config.toml</code></p>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">subreaper = <span class="literal">true</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>Containerd 有两个不同的存储路径，一个用来保存持久化数据，一个用来保存运行时状态。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Containerd 的前世今生和保姆级入门教程](https://blog.51cto.com/u_15127639/3256557)">[1]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br></pre></td></tr></table></figure>
+<ul>
+<li><code>root</code> - 用来保存持久化数据，包括 Snapshots, Content, Metadata 以及各种插件的数据。每一个插件都有自己单独的目录，Containerd 本身不存储任何数据，它的所有功能都来自于已加载的插件。</li>
+<li><code>state</code> - 用来保存临时数据，包括 <code>sockets</code>、<code>pid</code>、<code>挂载点</code>、<code>运行时状态</code> 以及不需要持久化保存的插件数据。</li>
+</ul>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br></pre></td></tr></table></figure>
+<p>Containerd 是容器的守护者，一旦发生内存不足的情况，理想的情况应该是先杀死容器，而不是杀死 Containerd。所以需要调整 Containerd 的 OOM 权重，减少其被 OOM Kill 的几率。<code>oom_score</code> 其取值范围为 <code>-1000</code> 到 <code>1000</code>，如果将该值设置为 <code>-1000</code>，则进程永远不会被杀死，建议 Containerd 将该值设置为 <code>-999</code> 到 <code>0</code> 之间。如果作为 Kubernetes 的 Worker 节点，可以考虑设置为 <code>-999</code>。</p>
+<h2 id="containerd-服务配置文件"><a href="#containerd-服务配置文件" class="headerlink" title="containerd 服务配置文件"></a>containerd 服务配置文件</h2><p>默认的 <code>containerd</code> 服务的配置为 <code>/usr/lib/systemd/system/containerd.service</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/containerd.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=containerd container runtime</span><br><span class="line">Documentation=https://containerd.io</span><br><span class="line">After=network.target local-fs.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">ExecStartPre=-/sbin/modprobe overlay</span><br><span class="line">ExecStart=/usr/bin/containerd</span><br><span class="line"></span><br><span class="line">Type=notify</span><br><span class="line">Delegate=yes</span><br><span class="line">KillMode=process</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=5</span><br><span class="line"></span><br><span class="line">LimitNPROC=infinity</span><br><span class="line">LimitCORE=infinity</span><br><span class="line">LimitNOFILE=1048576</span><br><span class="line"></span><br><span class="line">TasksMax=infinity</span><br><span class="line">OOMScoreAdjust=-999</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<ul>
+<li><p><strong><code>Delegate</code></strong> - 这个选项允许 Containerd 以及运行时自己管理自己创建的容器的 cgroups。如果不设置这个选项，<code>systemd</code> 就会将进程移到自己的 cgroups 中，从而导致 Containerd 无法正确获取容器的资源使用情况。</p>
+</li>
+<li><p><strong><code>KillMode</code></strong> - 这个选项用来处理 Containerd 进程被杀死的方式。默认情况下，<code>systemd</code> 会在进程的 cgroup 中查找并杀死 Containerd 的所有子进程，这肯定不是我们想要的。<code>KillMode</code> 字段可以设置的值如下:</p>
+<ul>
+<li><strong><code>control-group</code></strong> -（默认值）当前控制组里面的所有子进程，都会被杀掉</li>
+<li><strong><code>process</code></strong> - 只杀主进程。</li>
+<li><strong><code>mixed</code></strong> - 主进程将收到 <code>SIGTERM</code> 信号，子进程收到 <code>SIGKILL</code> 信号</li>
+<li><strong><code>none</code></strong> - 没有进程会被杀掉，只是执行服务的 stop 命令。</li>
+</ul>
+<p>  需要将 <code>KillMode</code> 的值设置为<code> process</code>，这样可以确保升级或重启 Containerd 时不杀死现有的容器。</p>
+</li>
+</ul>
+<h1 id="客户端工具-ctr-使用"><a href="#客户端工具-ctr-使用" class="headerlink" title="客户端工具 ctr 使用"></a>客户端工具 ctr 使用</h1><h2 id="ctr-管理镜像"><a href="#ctr-管理镜像" class="headerlink" title="ctr 管理镜像"></a>ctr 管理镜像</h2><h3 id="镜像下载"><a href="#镜像下载" class="headerlink" title="镜像下载"></a>镜像下载</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image pull docker.io/library/nginx:alpine</span><br></pre></td></tr></table></figure>
+
+<h3 id="列出本地镜像"><a href="#列出本地镜像" class="headerlink" title="列出本地镜像"></a>列出本地镜像</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image <span class="built_in">ls</span></span></span><br><span class="line">REF                            TYPE                                                      DIGEST                                                                  SIZE    PLATFORMS                                                                                LABELS </span><br><span class="line">docker.io/library/nginx:alpine application/vnd.docker.distribution.manifest.list.v2+json sha256:455c39afebd4d98ef26dd70284aa86e6810b0485af5f4f222b19b89758cabf1e 9.8 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/s390x -</span><br></pre></td></tr></table></figure>
+<h3 id="将镜像挂载到本地目录"><a href="#将镜像挂载到本地目录" class="headerlink" title="将镜像挂载到本地目录"></a>将镜像挂载到本地目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image mount docker.io/library/nginx:alpine /mnt</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /mnt</span></span><br><span class="line">bin  docker-entrypoint.d   etc   lib    mnt  proc  run   srv  tmp  var</span><br><span class="line">dev  docker-entrypoint.sh  home  media  opt  root  sbin  sys  usr</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>卸载已挂载的镜像</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image unmount /mnt</span><br></pre></td></tr></table></figure>
+
+<h2 id="ctr-管理-容器"><a href="#ctr-管理-容器" class="headerlink" title="ctr 管理 容器"></a>ctr 管理 容器</h2><h3 id="创建容器"><a href="#创建容器" class="headerlink" title="创建容器"></a>创建容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container create docker.io/library/nginx:alpine nginx</span><br></pre></td></tr></table></figure>
+<p>容器创建后，并没有开始运行，只是分配了容器运行所需的资源及配置的数据结构，这意味着 <code>namespaces</code>、<code>rootfs</code> 和容器的配置都已经初始化成功了，只是用户进程(这里是 <code>nginx</code>)还没有启动，容器（进程）状态的变化由 <code>Task</code> 对象实现，通过命令 <code>ctr task</code> 来管理。</p>
+<p>启动 <code>ctr container create</code> 创建的容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx</span><br></pre></td></tr></table></figure>
+<p>以上命令启动之前创建的容器 <code>nginx</code>，未指定其他参数时，容器中的进程在系统前台运行，如需后台运行，可以使用选项 <code>-d</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx -d</span><br></pre></td></tr></table></figure>
+
+<p>也可以直接使用 <code>run</code> 命令，创建并启动容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr run --rm -d docker.io/library/nginx:alpine nginx1</span><br></pre></td></tr></table></figure>
+
+<h3 id="列出容器"><a href="#列出容器" class="headerlink" title="列出容器"></a>列出容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container ls</span><br></pre></td></tr></table></figure>
+
+<p>查看容器中进程的状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task <span class="built_in">ls</span></span></span><br><span class="line">TASK      PID     STATUS    </span><br><span class="line">nginx1    5495    RUNNING</span><br></pre></td></tr></table></figure>
+<p>查看容器中运行的所有的进程</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task ps nginx1</span></span><br><span class="line">PID     INFO</span><br><span class="line">5495    -</span><br><span class="line">5531    -</span><br><span class="line">5532    -</span><br><span class="line">5533    -</span><br><span class="line">5534    -</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><strong>这里的 PID 是宿主机看到的 PID，不是容器中看到的 PID。</strong></p>
+<h3 id="查看容器详细信息"><a href="#查看容器详细信息" class="headerlink" title="查看容器详细信息"></a>查看容器详细信息</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container info nginx</span><br></pre></td></tr></table></figure>
+
+<h3 id="删除容器"><a href="#删除容器" class="headerlink" title="删除容器"></a>删除容器</h3><p>停止&#x2F;删除容器中的进程</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task delete nginx -f</span><br><span class="line"></span><br><span class="line">ctr task pause nginx</span><br></pre></td></tr></table></figure>
+<p>以上命令<strong>删除&#x2F;停止容器中的进程，但是并不删除容器</strong>，执行以上命令后再执行以下命令，可删除容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container delete nginx</span><br></pre></td></tr></table></figure>
+<p><strong>ctr 没有 stop 容器的功能，只能暂停或者杀死容器。</strong></p>
+<h3 id="进入容器"><a href="#进入容器" class="headerlink" title="进入容器"></a>进入容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task exec -t --exec-id 1 nginx1 sh</span><br></pre></td></tr></table></figure>
+<p>执行 <code>ctr task exec</code> 进入容器，必须制定 <code>--exec-id</code>，值可以随便指定。</p>
+<h3 id="namespace-管理"><a href="#namespace-管理" class="headerlink" title="namespace 管理"></a>namespace 管理</h3><p>Containerd 相比于 Docker ，多了 Namespace 的概念，使用以下命令，查看所有的 Namespace</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr ns <span class="built_in">ls</span></span></span><br><span class="line">NAME    LABELS </span><br><span class="line">default        </span><br><span class="line">moby     </span><br></pre></td></tr></table></figure>
+<p><code>docker</code> 默认使用 <code>moby</code> 的 Namespace，要使用 <code>ctr</code> 命令查看 <code>docker</code> 创建的容器，需要使用选项 <code>-n moby</code> 指定命名空间，否则 <code>ctr</code> 默认使用 <code>default</code> 命名空间，无法看到 <code>moby</code> 命名空间中的资源</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr -n moby container ls</span><br><span class="line">CONTAINER                                                           IMAGE    RUNTIME                           </span><br><span class="line">17b16c3699cdb88a1ff80d8a7c84724eff393c42186775b58418c90bd178600f    -        io.containerd.runtime.v1.linux    </span><br><span class="line">27fc19226baa91251d63a375a7b1309122334cfb5ceb39aeb67ab1701b708464    -        io.containerd.runtime.v1.linux</span><br></pre></td></tr></table></figure>
+
+<p><em><strong>Kubernetes 默认使用 <code>k8s.io</code> 命名空间</strong></em>。</p>
+<p><code>ctr</code> 没有配置或者环境变量可以来配置默认的 Namespace，在 Kubernetes 场景中，可以使用 <code>alias</code> 命令配置 <code>ctr</code>，使其自动指向 <code>k8s.io</code> 的 Namespace</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">alias ctr=&#x27;ctr -n k8s.io&#x27;</span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://blog.51cto.com/u_15127639/3256557">Containerd 的前世今生和保姆级入门教程</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>containerd</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Django admin 配置</title>
     <url>/202209021312/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Django 自带的 <code>Admin Site</code> 管理页面可以方便用户快速构建一个简单的后台管理系统，少量代码即可快速实现对数据库中的数据进行展示、修改、保存的可视化页面和功能。当需要对后台展示的数据进行配置时，只需要在 <code>app</code> 的代码文件 <code>admin.py</code> 中进行相应配置即可。</p>
@@ -2617,89 +2700,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Django</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>containerd 使用方法</title>
-    <url>/202212011355/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>containerd.io-1.4.13-3</li>
-</ul>
-<h1 id="containerd-相关配置"><a href="#containerd-相关配置" class="headerlink" title="containerd 相关配置"></a>containerd 相关配置</h1><h2 id="默认配置文件"><a href="#默认配置文件" class="headerlink" title="默认配置文件"></a>默认配置文件</h2><p><code>containerd</code> 服务默认配置文件为 <code>/etc/containerd/config.toml</code></p>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">subreaper = <span class="literal">true</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>Containerd 有两个不同的存储路径，一个用来保存持久化数据，一个用来保存运行时状态。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Containerd 的前世今生和保姆级入门教程](https://blog.51cto.com/u_15127639/3256557)">[1]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">root = <span class="string">&quot;/var/lib/containerd&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">state = <span class="string">&quot;/run/containerd&quot;</span></span></span><br></pre></td></tr></table></figure>
-<ul>
-<li><code>root</code> - 用来保存持久化数据，包括 Snapshots, Content, Metadata 以及各种插件的数据。每一个插件都有自己单独的目录，Containerd 本身不存储任何数据，它的所有功能都来自于已加载的插件。</li>
-<li><code>state</code> - 用来保存临时数据，包括 <code>sockets</code>、<code>pid</code>、<code>挂载点</code>、<code>运行时状态</code> 以及不需要持久化保存的插件数据。</li>
-</ul>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">oom_score = 0</span></span><br></pre></td></tr></table></figure>
-<p>Containerd 是容器的守护者，一旦发生内存不足的情况，理想的情况应该是先杀死容器，而不是杀死 Containerd。所以需要调整 Containerd 的 OOM 权重，减少其被 OOM Kill 的几率。<code>oom_score</code> 其取值范围为 <code>-1000</code> 到 <code>1000</code>，如果将该值设置为 <code>-1000</code>，则进程永远不会被杀死，建议 Containerd 将该值设置为 <code>-999</code> 到 <code>0</code> 之间。如果作为 Kubernetes 的 Worker 节点，可以考虑设置为 <code>-999</code>。</p>
-<h2 id="containerd-服务配置文件"><a href="#containerd-服务配置文件" class="headerlink" title="containerd 服务配置文件"></a>containerd 服务配置文件</h2><p>默认的 <code>containerd</code> 服务的配置为 <code>/usr/lib/systemd/system/containerd.service</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/containerd.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=containerd container runtime</span><br><span class="line">Documentation=https://containerd.io</span><br><span class="line">After=network.target local-fs.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">ExecStartPre=-/sbin/modprobe overlay</span><br><span class="line">ExecStart=/usr/bin/containerd</span><br><span class="line"></span><br><span class="line">Type=notify</span><br><span class="line">Delegate=yes</span><br><span class="line">KillMode=process</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=5</span><br><span class="line"></span><br><span class="line">LimitNPROC=infinity</span><br><span class="line">LimitCORE=infinity</span><br><span class="line">LimitNOFILE=1048576</span><br><span class="line"></span><br><span class="line">TasksMax=infinity</span><br><span class="line">OOMScoreAdjust=-999</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<ul>
-<li><p><strong><code>Delegate</code></strong> - 这个选项允许 Containerd 以及运行时自己管理自己创建的容器的 cgroups。如果不设置这个选项，<code>systemd</code> 就会将进程移到自己的 cgroups 中，从而导致 Containerd 无法正确获取容器的资源使用情况。</p>
-</li>
-<li><p><strong><code>KillMode</code></strong> - 这个选项用来处理 Containerd 进程被杀死的方式。默认情况下，<code>systemd</code> 会在进程的 cgroup 中查找并杀死 Containerd 的所有子进程，这肯定不是我们想要的。<code>KillMode</code> 字段可以设置的值如下:</p>
-<ul>
-<li><strong><code>control-group</code></strong> -（默认值）当前控制组里面的所有子进程，都会被杀掉</li>
-<li><strong><code>process</code></strong> - 只杀主进程。</li>
-<li><strong><code>mixed</code></strong> - 主进程将收到 <code>SIGTERM</code> 信号，子进程收到 <code>SIGKILL</code> 信号</li>
-<li><strong><code>none</code></strong> - 没有进程会被杀掉，只是执行服务的 stop 命令。</li>
-</ul>
-<p>  需要将 <code>KillMode</code> 的值设置为<code> process</code>，这样可以确保升级或重启 Containerd 时不杀死现有的容器。</p>
-</li>
-</ul>
-<h1 id="客户端工具-ctr-使用"><a href="#客户端工具-ctr-使用" class="headerlink" title="客户端工具 ctr 使用"></a>客户端工具 ctr 使用</h1><h2 id="ctr-管理镜像"><a href="#ctr-管理镜像" class="headerlink" title="ctr 管理镜像"></a>ctr 管理镜像</h2><h3 id="镜像下载"><a href="#镜像下载" class="headerlink" title="镜像下载"></a>镜像下载</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image pull docker.io/library/nginx:alpine</span><br></pre></td></tr></table></figure>
-
-<h3 id="列出本地镜像"><a href="#列出本地镜像" class="headerlink" title="列出本地镜像"></a>列出本地镜像</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image <span class="built_in">ls</span></span></span><br><span class="line">REF                            TYPE                                                      DIGEST                                                                  SIZE    PLATFORMS                                                                                LABELS </span><br><span class="line">docker.io/library/nginx:alpine application/vnd.docker.distribution.manifest.list.v2+json sha256:455c39afebd4d98ef26dd70284aa86e6810b0485af5f4f222b19b89758cabf1e 9.8 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/s390x -</span><br></pre></td></tr></table></figure>
-<h3 id="将镜像挂载到本地目录"><a href="#将镜像挂载到本地目录" class="headerlink" title="将镜像挂载到本地目录"></a>将镜像挂载到本地目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image mount docker.io/library/nginx:alpine /mnt</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /mnt</span></span><br><span class="line">bin  docker-entrypoint.d   etc   lib    mnt  proc  run   srv  tmp  var</span><br><span class="line">dev  docker-entrypoint.sh  home  media  opt  root  sbin  sys  usr</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>卸载已挂载的镜像</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image unmount /mnt</span><br></pre></td></tr></table></figure>
-
-<h2 id="ctr-管理-容器"><a href="#ctr-管理-容器" class="headerlink" title="ctr 管理 容器"></a>ctr 管理 容器</h2><h3 id="创建容器"><a href="#创建容器" class="headerlink" title="创建容器"></a>创建容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container create docker.io/library/nginx:alpine nginx</span><br></pre></td></tr></table></figure>
-<p>容器创建后，并没有开始运行，只是分配了容器运行所需的资源及配置的数据结构，这意味着 <code>namespaces</code>、<code>rootfs</code> 和容器的配置都已经初始化成功了，只是用户进程(这里是 <code>nginx</code>)还没有启动，容器（进程）状态的变化由 <code>Task</code> 对象实现，通过命令 <code>ctr task</code> 来管理。</p>
-<p>启动 <code>ctr container create</code> 创建的容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx</span><br></pre></td></tr></table></figure>
-<p>以上命令启动之前创建的容器 <code>nginx</code>，未指定其他参数时，容器中的进程在系统前台运行，如需后台运行，可以使用选项 <code>-d</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx -d</span><br></pre></td></tr></table></figure>
-
-<p>也可以直接使用 <code>run</code> 命令，创建并启动容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr run --rm -d docker.io/library/nginx:alpine nginx1</span><br></pre></td></tr></table></figure>
-
-<h3 id="列出容器"><a href="#列出容器" class="headerlink" title="列出容器"></a>列出容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container ls</span><br></pre></td></tr></table></figure>
-
-<p>查看容器中进程的状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task <span class="built_in">ls</span></span></span><br><span class="line">TASK      PID     STATUS    </span><br><span class="line">nginx1    5495    RUNNING</span><br></pre></td></tr></table></figure>
-<p>查看容器中运行的所有的进程</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task ps nginx1</span></span><br><span class="line">PID     INFO</span><br><span class="line">5495    -</span><br><span class="line">5531    -</span><br><span class="line">5532    -</span><br><span class="line">5533    -</span><br><span class="line">5534    -</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><strong>这里的 PID 是宿主机看到的 PID，不是容器中看到的 PID。</strong></p>
-<h3 id="查看容器详细信息"><a href="#查看容器详细信息" class="headerlink" title="查看容器详细信息"></a>查看容器详细信息</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container info nginx</span><br></pre></td></tr></table></figure>
-
-<h3 id="删除容器"><a href="#删除容器" class="headerlink" title="删除容器"></a>删除容器</h3><p>停止&#x2F;删除容器中的进程</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task delete nginx -f</span><br><span class="line"></span><br><span class="line">ctr task pause nginx</span><br></pre></td></tr></table></figure>
-<p>以上命令<strong>删除&#x2F;停止容器中的进程，但是并不删除容器</strong>，执行以上命令后再执行以下命令，可删除容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container delete nginx</span><br></pre></td></tr></table></figure>
-<p><strong>ctr 没有 stop 容器的功能，只能暂停或者杀死容器。</strong></p>
-<h3 id="进入容器"><a href="#进入容器" class="headerlink" title="进入容器"></a>进入容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task exec -t --exec-id 1 nginx1 sh</span><br></pre></td></tr></table></figure>
-<p>执行 <code>ctr task exec</code> 进入容器，必须制定 <code>--exec-id</code>，值可以随便指定。</p>
-<h3 id="namespace-管理"><a href="#namespace-管理" class="headerlink" title="namespace 管理"></a>namespace 管理</h3><p>Containerd 相比于 Docker ，多了 Namespace 的概念，使用以下命令，查看所有的 Namespace</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr ns <span class="built_in">ls</span></span></span><br><span class="line">NAME    LABELS </span><br><span class="line">default        </span><br><span class="line">moby     </span><br></pre></td></tr></table></figure>
-<p><code>docker</code> 默认使用 <code>moby</code> 的 Namespace，要使用 <code>ctr</code> 命令查看 <code>docker</code> 创建的容器，需要使用选项 <code>-n moby</code> 指定命名空间，否则 <code>ctr</code> 默认使用 <code>default</code> 命名空间，无法看到 <code>moby</code> 命名空间中的资源</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr -n moby container ls</span><br><span class="line">CONTAINER                                                           IMAGE    RUNTIME                           </span><br><span class="line">17b16c3699cdb88a1ff80d8a7c84724eff393c42186775b58418c90bd178600f    -        io.containerd.runtime.v1.linux    </span><br><span class="line">27fc19226baa91251d63a375a7b1309122334cfb5ceb39aeb67ab1701b708464    -        io.containerd.runtime.v1.linux</span><br></pre></td></tr></table></figure>
-
-<p><em><strong>Kubernetes 默认使用 <code>k8s.io</code> 命名空间</strong></em>。</p>
-<p><code>ctr</code> 没有配置或者环境变量可以来配置默认的 Namespace，在 Kubernetes 场景中，可以使用 <code>alias</code> 命令配置 <code>ctr</code>，使其自动指向 <code>k8s.io</code> 的 Namespace</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">alias ctr=&#x27;ctr -n k8s.io&#x27;</span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://blog.51cto.com/u_15127639/3256557">Containerd 的前世今生和保姆级入门教程</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>containerd</tag>
       </tags>
   </entry>
   <entry>
@@ -4508,65 +4508,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>ELK 常见错误</title>
-    <url>/202312151503/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
-<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
-<p>要解决这个问题，可以考虑以下几个选项：</p>
-<ol>
-<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
-<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
-<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
-   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>获取  Elasticsearch 集群的最大分片数限制</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
-</li>
-<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
-</li>
-</ol>
-<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>使用以下 filebeat 配置文件</p>
-<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
-<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
-
-<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
-<ul>
-<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
-</li>
-<li><p><em><strong>ILM 配置问题</strong></em> </p>
-<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
- <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
-</ul>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>elasticsearch 安装使用及常见错误集锦</title>
     <url>/202303301601/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -4689,6 +4630,65 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/targz.html#targz-running">安装运行 Elasticsearch</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>ELK 常见错误</title>
+    <url>/202312151503/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
+<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
+<p>要解决这个问题，可以考虑以下几个选项：</p>
+<ol>
+<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
+<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
+<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
+   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>获取  Elasticsearch 集群的最大分片数限制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
+</li>
+<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
+</li>
+</ol>
+<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>使用以下 filebeat 配置文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
+<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
+
+<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
+<ul>
+<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
+</li>
+<li><p><em><strong>ILM 配置问题</strong></em> </p>
+<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
+ <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -6086,35 +6086,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>git 常见错误</title>
-    <url>/202209131721/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403"><a href="#error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403" class="headerlink" title="error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403"></a>error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403</h2><p><strong>错误场景</strong> ： windows 系统中 <code>git push</code> 报错<br><img src="https://i.csms.tech/img_55.png"></p>
-<p><strong>错误原因</strong> ： 大概率为用户密码错误</p>
-<p><strong>排查步骤</strong> ： </p>
-<ol>
-<li>清除 windows 凭据管理中的 git 密码，或更改为正确的密码</li>
-<li>编辑 <code>.git/config</code> 文件，对 <code>url</code> 按照如下格式配置：<figure class="highlight shell"><figcaption><span>.git/config</span></figcaption><table><tr><td class="code"><pre><span class="line">url = http://USERNAME@git.server.com/test.git</span><br></pre></td></tr></table></figure>
-其中 <code>USERNAME</code> 为用户名，重新执行 <code>git push</code>，此时会要求输入用户密码，输入正确的用户密码后，可正常执行</li>
-</ol>
-<h2 id="There-is-no-tracking-information-for-the-current-branch"><a href="#There-is-no-tracking-information-for-the-current-branch" class="headerlink" title="There is no tracking information for the current branch"></a>There is no tracking information for the current branch</h2><p>执行 <code>git pull</code> 命令时报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git pull</span></span><br><span class="line">There is no tracking information for the current branch.</span><br><span class="line">Please specify which branch you want to merge with.</span><br><span class="line">See git-pull(1) for details</span><br><span class="line"></span><br><span class="line">    git pull &lt;remote&gt; &lt;branch&gt;</span><br><span class="line"></span><br><span class="line">If you wish to set tracking information for this branch you can do so with:</span><br><span class="line"></span><br><span class="line">    git branch --set-upstream-to=origin/&lt;branch&gt; activity</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>此错误原因为本地的分支（<code>activity</code>）未和远程分支建立关联，根据提示，执行以下命令建立关联关系</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity origin/xhy-activity</span></span><br><span class="line">warning: refname &#x27;origin/activity&#x27; is ambiguous.</span><br><span class="line">fatal: Ambiguous object name: &#x27;origin/activity&#x27;.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>执行报错： <code>fatal: Ambiguous object name: &#39;origin/activity&#39;.</code>，此报错原因为本地已存在分支 <code>origin/activity</code>，远程也存在此分支，导致 git 无法分辨。可以执行以下命令重命名本地分支</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">git branch -m origin/activity activity</span><br></pre></td></tr></table></figure>
-<p>重新建立关联关系</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity activity</span></span><br><span class="line">Branch activity set up to track remote branch activity from origin.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>关联正常后，执行 <code>git pull</code> 正常。</p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>git</category>
-      </categories>
-      <tags>
-        <tag>git</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>fswatch 安装使用</title>
     <url>/202306081308/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6325,25 +6296,32 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Go 部署使用</title>
-    <url>/202306231515/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><p>执行以下命令安装 Go 环境</p>
-<p><a href="https://go.dev/dl/">Go 安装包下载地址</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://go.dev/dl/go1.14.15.linux-amd64.tar.gz</span><br><span class="line"></span><br><span class="line">tar -xf go1.14.15.linux-amd64.tar.gz -C /usr/local/</span><br><span class="line"></span><br><span class="line">echo &quot;export PATH=$PATH:/usr/local/go/bin&quot; &gt;&gt; ~/.bash_profile</span><br><span class="line"></span><br><span class="line">source ~/.bash_profile</span><br></pre></td></tr></table></figure>
-
-<p>执行 <code>go</code> 命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">go version</span></span><br><span class="line">go version go1.20.5 linux/amd64</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="bad-ELF-interpreter"><a href="#bad-ELF-interpreter" class="headerlink" title="bad ELF interpreter"></a>bad ELF interpreter</h2><p>安装后执行 <code>go</code> 报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-bash: /usr/local/go/bin/go: /lib/ld-linux.so.2: bad ELF interpreter: No such file or directory</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><em><strong>问题原因</strong></em> 为下载的 <code>go</code> 与运行的目标系统不兼容，比如下载了 <code>x86</code> 的安装包，安装到了 64 位的 OS 上。 </p>
+    <title>git 常见错误</title>
+    <url>/202209131721/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403"><a href="#error-RPC-failed-HTTP-403-curl-22-The-requested-URL-returned-error-403" class="headerlink" title="error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403"></a>error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403</h2><p><strong>错误场景</strong> ： windows 系统中 <code>git push</code> 报错<br><img src="https://i.csms.tech/img_55.png"></p>
+<p><strong>错误原因</strong> ： 大概率为用户密码错误</p>
+<p><strong>排查步骤</strong> ： </p>
+<ol>
+<li>清除 windows 凭据管理中的 git 密码，或更改为正确的密码</li>
+<li>编辑 <code>.git/config</code> 文件，对 <code>url</code> 按照如下格式配置：<figure class="highlight shell"><figcaption><span>.git/config</span></figcaption><table><tr><td class="code"><pre><span class="line">url = http://USERNAME@git.server.com/test.git</span><br></pre></td></tr></table></figure>
+其中 <code>USERNAME</code> 为用户名，重新执行 <code>git push</code>，此时会要求输入用户密码，输入正确的用户密码后，可正常执行</li>
+</ol>
+<h2 id="There-is-no-tracking-information-for-the-current-branch"><a href="#There-is-no-tracking-information-for-the-current-branch" class="headerlink" title="There is no tracking information for the current branch"></a>There is no tracking information for the current branch</h2><p>执行 <code>git pull</code> 命令时报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git pull</span></span><br><span class="line">There is no tracking information for the current branch.</span><br><span class="line">Please specify which branch you want to merge with.</span><br><span class="line">See git-pull(1) for details</span><br><span class="line"></span><br><span class="line">    git pull &lt;remote&gt; &lt;branch&gt;</span><br><span class="line"></span><br><span class="line">If you wish to set tracking information for this branch you can do so with:</span><br><span class="line"></span><br><span class="line">    git branch --set-upstream-to=origin/&lt;branch&gt; activity</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>此错误原因为本地的分支（<code>activity</code>）未和远程分支建立关联，根据提示，执行以下命令建立关联关系</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity origin/xhy-activity</span></span><br><span class="line">warning: refname &#x27;origin/activity&#x27; is ambiguous.</span><br><span class="line">fatal: Ambiguous object name: &#x27;origin/activity&#x27;.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>执行报错： <code>fatal: Ambiguous object name: &#39;origin/activity&#39;.</code>，此报错原因为本地已存在分支 <code>origin/activity</code>，远程也存在此分支，导致 git 无法分辨。可以执行以下命令重命名本地分支</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">git branch -m origin/activity activity</span><br></pre></td></tr></table></figure>
+<p>重新建立关联关系</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">git branch --set-upstream-to=origin/activity activity</span></span><br><span class="line">Branch activity set up to track remote branch activity from origin.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>关联正常后，执行 <code>git pull</code> 正常。</p>
 ]]></content>
       <categories>
-        <category>Linux</category>
+        <category>Tools</category>
+        <category>git</category>
       </categories>
       <tags>
-        <tag>Linux</tag>
+        <tag>git</tag>
       </tags>
   </entry>
   <entry>
@@ -6445,6 +6423,28 @@ width: 20%;
       </categories>
       <tags>
         <tag>gitlab</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Go 部署使用</title>
+    <url>/202306231515/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><p>执行以下命令安装 Go 环境</p>
+<p><a href="https://go.dev/dl/">Go 安装包下载地址</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://go.dev/dl/go1.14.15.linux-amd64.tar.gz</span><br><span class="line"></span><br><span class="line">tar -xf go1.14.15.linux-amd64.tar.gz -C /usr/local/</span><br><span class="line"></span><br><span class="line">echo &quot;export PATH=$PATH:/usr/local/go/bin&quot; &gt;&gt; ~/.bash_profile</span><br><span class="line"></span><br><span class="line">source ~/.bash_profile</span><br></pre></td></tr></table></figure>
+
+<p>执行 <code>go</code> 命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">go version</span></span><br><span class="line">go version go1.20.5 linux/amd64</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="bad-ELF-interpreter"><a href="#bad-ELF-interpreter" class="headerlink" title="bad ELF interpreter"></a>bad ELF interpreter</h2><p>安装后执行 <code>go</code> 报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-bash: /usr/local/go/bin/go: /lib/ld-linux.so.2: bad ELF interpreter: No such file or directory</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><em><strong>问题原因</strong></em> 为下载的 <code>go</code> 与运行的目标系统不兼容，比如下载了 <code>x86</code> 的安装包，安装到了 64 位的 OS 上。 </p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -6586,45 +6586,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>和田玉知识归纳</title>
-    <url>/202401171333/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="和田玉的分类"><a href="#和田玉的分类" class="headerlink" title="和田玉的分类"></a>和田玉的分类</h1><h2 id="山料和籽料"><a href="#山料和籽料" class="headerlink" title="山料和籽料"></a>山料和籽料</h2><p>按照矿产分类，主要分为籽料与山料两种。</p>
-<p><em><strong>山料，是籽料的前身</strong></em>。</p>
-<h3 id="山料"><a href="#山料" class="headerlink" title="山料"></a>山料</h3><p><strong>和田玉山料</strong> 产自昆仑山脉之中，属于原生矿，被称为 <code>璞玉</code></p>
-<p>从质地上说，有的山料的结构较为粗糙，颗粒比较明显或带石性，不带皮色，油性差，有的山料靠近外部有红糖的颜色。也有结构细密，油润度极好的优质山料。</p>
-<p>山料因为没有受到河流的冲刷，自始至终都深藏在岩体中，缺乏外力的打磨，看起来比较干涩，所以外形大多平淡无奇，有棱有角，表面也比较干涩，绺裂现象明显。</p>
-<h3 id="籽料"><a href="#籽料" class="headerlink" title="籽料"></a>籽料</h3><p><strong>和田玉籽料</strong> 是采自河床或者河床泥土中，经过几十万年的侵蚀打磨而得到的玉石。有时又被称为 <code>水籽</code></p>
-<p>籽料是由山料在地质活动时冲刷或滚落到河里，由河水冲刷（还有风化、风干等物理反应一起作用）形成的。籽料产自 <em><strong>河流中下游</strong></em>，是次生矿。产自河流上游的被称为 <em><strong>山流水料</strong></em>。籽料因为长久受到河流的冲刷，一般为卵石形状，表面很光滑圆润，带皮色。</p>
-<p><img src="https://i.csms.tech/img_224.png"></p>
-<p>和山料的存在环境不同，导致籽料有了以下特性：</p>
-<ul>
-<li>籽料常年在河水中浸泡，水流的压力使它的肉质变得更加紧密，水流的冲刷使它变的更加温润油腻，形成了它独特的质地和油润感；</li>
-<li>河水中存在很多的矿物质和微量元素，长时间的水流冲刷和加压过程中，部分矿物质会沉淀到籽料中，形成各种颜色的籽料皮子。带有皮子的籽料，价格有大大提升</li>
-</ul>
-<p>籽料开采出来，外观上看就与鹅卵石一般无二，各个颜色都有，只不过他是和田玉再形成的鹅卵石。仔细观察籽料表面会发现上面密密麻麻都是一些小孔，因为这些小孔跟我们皮肤上的毛孔相似被称之为毛孔或者皮孔。和田玉籽料一般有皮色和皮孔，就算没有皮色，籽料上还是能够找到均匀的毛细孔，这是籽料独有的标志。而山料则没有皮色皮孔。</p>
-<p>一般情况下，籽料都会拥有或深或浅的皮色，表面还会有明显的小凹坑（也就是俗称的皮孔），这是玉石长时间在水中冲刷、浸泡和磕碰造成的。而山料由于生长环境固定，不存在皮色和皮孔。</p>
-<p>同时，由于籽料长年累月泡在水中，水里的微生物和微量元素会渗入到玉石中，所以会造成局部呈现或黄或红或黑的颜色，也就是 <code>沁色</code>。而这一点在山料身上，就非常不明显。</p>
-<p><strong>籽料的水润度是明显高于山料的</strong>，如果比较籽料和山料制作的成品，会很容易发现籽料表面质地非常润泽、光滑、细腻。而山料作品，即使经过抛光处理，表面仍会干涩，缺乏光滑的油润感，这一点用手触摸时尤为明显。</p>
-<p>由于 <strong>和田玉籽料的密度比山料大</strong>，所以同等体积的情况下，籽料相对山料比较重</p>
-<p>山料也有很多可以跟顶级籽料相媲美的。比如 1995 年于田县开采的 8 吨和田玉山料，白度细度等各个方面都是顶级。因品质极佳，入市后引起了轰动，后被称之位“95于田料”。时至今日，“95于田料” 在业内也是传说中的料子，被很多业内人士公认为 <strong>羊脂级</strong>。著名的和氏璧就是一块山料。</p>
-<p>和田玉器的市场价格中羊脂玉最高、籽料高、山流水次之、山料更次之。</p>
-<h1 id="和田玉结构"><a href="#和田玉结构" class="headerlink" title="和田玉结构"></a>和田玉结构</h1><p>和田玉籽料内部结构致密，用肉眼几乎看不到内部结构；而再好的山料，还是能看到其松软质地的结构。</p>
-<p>籽料由于有外力的挤压、打磨，所以密度要明显高过山料。籽料的话，无论是青籽还是白籽，内部结构都是致密的，用肉眼几乎看不到内部结构。而山料，无论结构多致密，在强光手电筒下，总是能看到松软的质地结构。</p>
-<h1 id="广义的籽料"><a href="#广义的籽料" class="headerlink" title="广义的籽料"></a>广义的籽料</h1><p>今天的籽料已不是传统意义上的和田籽料了。在广义和田玉的范围内，籽料也有了更多种类。</p>
-<h2 id="新疆产的岫玉籽料"><a href="#新疆产的岫玉籽料" class="headerlink" title="新疆产的岫玉籽料"></a>新疆产的岫玉籽料</h2><p>新疆除了有和田玉籽料，还出产一种颜色或绿或黑绿色等，里面也有黑点存在的岫玉。岫玉中品质好的，外观与和田玉籽料很相似，并且在市场上的和田籽料中也能看到相当数量的岫玉籽料，大家要留意。</p>
-<h2 id="来自俄罗斯的“籽料”"><a href="#来自俄罗斯的“籽料”" class="headerlink" title="来自俄罗斯的“籽料”"></a>来自俄罗斯的“籽料”</h2><p>俄罗斯玉，近年来随着和田料的减少而逐渐成为软玉舞台的有力竞争者。</p>
-<p>从玉材来看，俄料95%都是山料，但也有籽料，只是俄料中的“籽料”并未达到籽料定义的产状玉料：籽料由于长期的冲刷搬运碰撞，玉质形态韧性都达到了特别的质感，而俄料中的“籽料”其实没有这个长期的过程，严格意义上只能算和田玉的山流水料。</p>
-<h2 id="辽宁产的河磨料"><a href="#辽宁产的河磨料" class="headerlink" title="辽宁产的河磨料"></a>辽宁产的河磨料</h2><p>河磨料是国内确切命名的两种籽料之一，另一种是和田籽料。“河磨”，从河里磨出来的玉，名字起得很传神，可能因为河水的冲击力较小，河磨料多见厚皮料。</p>
-<p>另外，近几年贵州罗甸也出产白度尚可的软玉，透闪石含量达95%，也是广义和田玉中的一种。罗甸玉石性很重，料子干涩，缺乏油性，其实所谓的“籽料”也只能用来骗骗小白玩友；广西大化玉则是这几年才出现的玉种，也是广义和田玉中的一种，大化玉里有籽料，质地也很细腻，有兴趣的宝友可以玩一玩。</p>
-]]></content>
-      <categories>
-        <category>生活日常</category>
-      </categories>
-      <tags>
-        <tag>生活日常</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>helm 安装及使用</title>
     <url>/202210071543/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6662,6 +6623,45 @@ width: 20%;
       <tags>
         <tag>Kubernetes</tag>
         <tag>helm</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>和田玉知识归纳</title>
+    <url>/202401171333/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="和田玉的分类"><a href="#和田玉的分类" class="headerlink" title="和田玉的分类"></a>和田玉的分类</h1><h2 id="山料和籽料"><a href="#山料和籽料" class="headerlink" title="山料和籽料"></a>山料和籽料</h2><p>按照矿产分类，主要分为籽料与山料两种。</p>
+<p><em><strong>山料，是籽料的前身</strong></em>。</p>
+<h3 id="山料"><a href="#山料" class="headerlink" title="山料"></a>山料</h3><p><strong>和田玉山料</strong> 产自昆仑山脉之中，属于原生矿，被称为 <code>璞玉</code></p>
+<p>从质地上说，有的山料的结构较为粗糙，颗粒比较明显或带石性，不带皮色，油性差，有的山料靠近外部有红糖的颜色。也有结构细密，油润度极好的优质山料。</p>
+<p>山料因为没有受到河流的冲刷，自始至终都深藏在岩体中，缺乏外力的打磨，看起来比较干涩，所以外形大多平淡无奇，有棱有角，表面也比较干涩，绺裂现象明显。</p>
+<h3 id="籽料"><a href="#籽料" class="headerlink" title="籽料"></a>籽料</h3><p><strong>和田玉籽料</strong> 是采自河床或者河床泥土中，经过几十万年的侵蚀打磨而得到的玉石。有时又被称为 <code>水籽</code></p>
+<p>籽料是由山料在地质活动时冲刷或滚落到河里，由河水冲刷（还有风化、风干等物理反应一起作用）形成的。籽料产自 <em><strong>河流中下游</strong></em>，是次生矿。产自河流上游的被称为 <em><strong>山流水料</strong></em>。籽料因为长久受到河流的冲刷，一般为卵石形状，表面很光滑圆润，带皮色。</p>
+<p><img src="https://i.csms.tech/img_224.png"></p>
+<p>和山料的存在环境不同，导致籽料有了以下特性：</p>
+<ul>
+<li>籽料常年在河水中浸泡，水流的压力使它的肉质变得更加紧密，水流的冲刷使它变的更加温润油腻，形成了它独特的质地和油润感；</li>
+<li>河水中存在很多的矿物质和微量元素，长时间的水流冲刷和加压过程中，部分矿物质会沉淀到籽料中，形成各种颜色的籽料皮子。带有皮子的籽料，价格有大大提升</li>
+</ul>
+<p>籽料开采出来，外观上看就与鹅卵石一般无二，各个颜色都有，只不过他是和田玉再形成的鹅卵石。仔细观察籽料表面会发现上面密密麻麻都是一些小孔，因为这些小孔跟我们皮肤上的毛孔相似被称之为毛孔或者皮孔。和田玉籽料一般有皮色和皮孔，就算没有皮色，籽料上还是能够找到均匀的毛细孔，这是籽料独有的标志。而山料则没有皮色皮孔。</p>
+<p>一般情况下，籽料都会拥有或深或浅的皮色，表面还会有明显的小凹坑（也就是俗称的皮孔），这是玉石长时间在水中冲刷、浸泡和磕碰造成的。而山料由于生长环境固定，不存在皮色和皮孔。</p>
+<p>同时，由于籽料长年累月泡在水中，水里的微生物和微量元素会渗入到玉石中，所以会造成局部呈现或黄或红或黑的颜色，也就是 <code>沁色</code>。而这一点在山料身上，就非常不明显。</p>
+<p><strong>籽料的水润度是明显高于山料的</strong>，如果比较籽料和山料制作的成品，会很容易发现籽料表面质地非常润泽、光滑、细腻。而山料作品，即使经过抛光处理，表面仍会干涩，缺乏光滑的油润感，这一点用手触摸时尤为明显。</p>
+<p>由于 <strong>和田玉籽料的密度比山料大</strong>，所以同等体积的情况下，籽料相对山料比较重</p>
+<p>山料也有很多可以跟顶级籽料相媲美的。比如 1995 年于田县开采的 8 吨和田玉山料，白度细度等各个方面都是顶级。因品质极佳，入市后引起了轰动，后被称之位“95于田料”。时至今日，“95于田料” 在业内也是传说中的料子，被很多业内人士公认为 <strong>羊脂级</strong>。著名的和氏璧就是一块山料。</p>
+<p>和田玉器的市场价格中羊脂玉最高、籽料高、山流水次之、山料更次之。</p>
+<h1 id="和田玉结构"><a href="#和田玉结构" class="headerlink" title="和田玉结构"></a>和田玉结构</h1><p>和田玉籽料内部结构致密，用肉眼几乎看不到内部结构；而再好的山料，还是能看到其松软质地的结构。</p>
+<p>籽料由于有外力的挤压、打磨，所以密度要明显高过山料。籽料的话，无论是青籽还是白籽，内部结构都是致密的，用肉眼几乎看不到内部结构。而山料，无论结构多致密，在强光手电筒下，总是能看到松软的质地结构。</p>
+<h1 id="广义的籽料"><a href="#广义的籽料" class="headerlink" title="广义的籽料"></a>广义的籽料</h1><p>今天的籽料已不是传统意义上的和田籽料了。在广义和田玉的范围内，籽料也有了更多种类。</p>
+<h2 id="新疆产的岫玉籽料"><a href="#新疆产的岫玉籽料" class="headerlink" title="新疆产的岫玉籽料"></a>新疆产的岫玉籽料</h2><p>新疆除了有和田玉籽料，还出产一种颜色或绿或黑绿色等，里面也有黑点存在的岫玉。岫玉中品质好的，外观与和田玉籽料很相似，并且在市场上的和田籽料中也能看到相当数量的岫玉籽料，大家要留意。</p>
+<h2 id="来自俄罗斯的“籽料”"><a href="#来自俄罗斯的“籽料”" class="headerlink" title="来自俄罗斯的“籽料”"></a>来自俄罗斯的“籽料”</h2><p>俄罗斯玉，近年来随着和田料的减少而逐渐成为软玉舞台的有力竞争者。</p>
+<p>从玉材来看，俄料95%都是山料，但也有籽料，只是俄料中的“籽料”并未达到籽料定义的产状玉料：籽料由于长期的冲刷搬运碰撞，玉质形态韧性都达到了特别的质感，而俄料中的“籽料”其实没有这个长期的过程，严格意义上只能算和田玉的山流水料。</p>
+<h2 id="辽宁产的河磨料"><a href="#辽宁产的河磨料" class="headerlink" title="辽宁产的河磨料"></a>辽宁产的河磨料</h2><p>河磨料是国内确切命名的两种籽料之一，另一种是和田籽料。“河磨”，从河里磨出来的玉，名字起得很传神，可能因为河水的冲击力较小，河磨料多见厚皮料。</p>
+<p>另外，近几年贵州罗甸也出产白度尚可的软玉，透闪石含量达95%，也是广义和田玉中的一种。罗甸玉石性很重，料子干涩，缺乏油性，其实所谓的“籽料”也只能用来骗骗小白玩友；广西大化玉则是这几年才出现的玉种，也是广义和田玉中的一种，大化玉里有籽料，质地也很细腻，有兴趣的宝友可以玩一玩。</p>
+]]></content>
+      <categories>
+        <category>生活日常</category>
+      </categories>
+      <tags>
+        <tag>生活日常</tag>
       </tags>
   </entry>
   <entry>
@@ -7969,6 +7969,95 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 网络</title>
     <url>/202212020941/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8114,95 +8203,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
@@ -10126,6 +10126,31 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux 系统崩溃问题分析</title>
+    <url>/202304191031/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 5.4.221-1.el7</li>
+<li>Docker Engine - Community 20.10.9</li>
+</ul>
+<p>本文档中的日志分析主要依赖于 <code>journald</code> 服务记录的日志，因此首先需要对 <a href="/202211211437/" title="&#96;journald&#96; 服务记录的日志进行持久化配置">&#96;journald&#96; 服务记录的日志进行持久化配置</a></p>
+<h1 id="场景分析"><a href="#场景分析" class="headerlink" title="场景分析"></a>场景分析</h1><h2 id="k8s-worker-节点经常死机-奔溃"><a href="#k8s-worker-节点经常死机-奔溃" class="headerlink" title="k8s worker 节点经常死机(奔溃)"></a>k8s worker 节点经常死机(奔溃)</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos7 5.4.221-1.el7</li>
+<li>Docker Engine - Community 20.10.9 </li>
+<li>Kubernetes v1.24.7</li>
+</ul>
+<p>k8s 节点经常出现无响应(死机)，重启才能恢复正常。重启恢复后，检查系统 <code>messages</code> 日志。</p>
+<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: INFO: task dockerd:1443 blocked for more than 368 seconds.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel:      Tainted: G            E     5.4.221-1.el7.elrepo.x86_64 #1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: &quot;echo 0 &gt; /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: dockerd         D    0  1443      1 0x00004080</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Call Trace:</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __schedule+0x2d2/0x730</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: schedule+0x42/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: wb_wait_for_completion+0x56/0x90</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? finish_wait+0x80/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_inodes_sb+0xd4/0x2c0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? __filemap_fdatawrite_range+0xf1/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x5f/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ovl_sync_fs+0x39/0x60 [overlay]</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x79/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: generic_shutdown_super+0x27/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: kill_anon_super+0x18/0x30</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_locked_super+0x3b/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_super+0x3e/0x50</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: cleanup_mnt+0x109/0x160</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __cleanup_mnt+0x12/0x20</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: task_work_run+0x8f/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: exit_to_usermode_loop+0x10c/0x130</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: do_syscall_64+0x170/0x1b0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: entry_SYSCALL_64_after_hwframe+0x5c/0xc1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RIP: 0033:0x55cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Code: Bad RIP value.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RSP: 002b:000000c252fea778 EFLAGS: 00000212 ORIG_RAX: 00000000000000a6</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RAX: 0000000000000000 RBX: 000000c000070800 RCX: 000055cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RDX: 0000000000000000 RSI: 0000000000000002 RDI: 000000c2d000c3f0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RBP: 000000c252fea7d0 R08: 0000000000000000 R09: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R10: 0000000000000000 R11: 0000000000000212 R12: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R13: 0000000000000001 R14: 000000000000000a R15: ffffffffffffffff</span><br></pre></td></tr></table></figure>
+<p>从日志中可看出，<code>dockerd</code> 进程处于 <a href="/202304181637/" title="&#96;D&#96; 状态">&#96;D&#96; 状态</a>，说明 <code>dockerd</code> 在等待 IO 操作，根据进程调用的栈信息，显示存在对 <code>overlay</code> 文件系统的同步操作，初步猜测，可能是因为 <code>overlay</code> 文件系统中的某些操作未能及时完成，导致了 <code>dockerd</code> 进程的阻塞。</p>
+<p>继续检查日志，看到系统连接 NFS 服务超时，怀疑可能是因为 NFS 异常导致。</p>
+<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>curl 命令常见用法</title>
     <url>/202302201557/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -10230,31 +10255,6 @@ width: 20%;
 <li>重新执行命令，验证证书。</li>
 </ol>
 ]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 系统崩溃问题分析</title>
-    <url>/202304191031/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 5.4.221-1.el7</li>
-<li>Docker Engine - Community 20.10.9</li>
-</ul>
-<p>本文档中的日志分析主要依赖于 <code>journald</code> 服务记录的日志，因此首先需要对 <a href="/202211211437/" title="&#96;journald&#96; 服务记录的日志进行持久化配置">&#96;journald&#96; 服务记录的日志进行持久化配置</a></p>
-<h1 id="场景分析"><a href="#场景分析" class="headerlink" title="场景分析"></a>场景分析</h1><h2 id="k8s-worker-节点经常死机-奔溃"><a href="#k8s-worker-节点经常死机-奔溃" class="headerlink" title="k8s worker 节点经常死机(奔溃)"></a>k8s worker 节点经常死机(奔溃)</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos7 5.4.221-1.el7</li>
-<li>Docker Engine - Community 20.10.9 </li>
-<li>Kubernetes v1.24.7</li>
-</ul>
-<p>k8s 节点经常出现无响应(死机)，重启才能恢复正常。重启恢复后，检查系统 <code>messages</code> 日志。</p>
-<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: INFO: task dockerd:1443 blocked for more than 368 seconds.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel:      Tainted: G            E     5.4.221-1.el7.elrepo.x86_64 #1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: &quot;echo 0 &gt; /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: dockerd         D    0  1443      1 0x00004080</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Call Trace:</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __schedule+0x2d2/0x730</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: schedule+0x42/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: wb_wait_for_completion+0x56/0x90</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? finish_wait+0x80/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_inodes_sb+0xd4/0x2c0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ? __filemap_fdatawrite_range+0xf1/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x5f/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: ovl_sync_fs+0x39/0x60 [overlay]</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: sync_filesystem+0x79/0xa0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: generic_shutdown_super+0x27/0x110</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: kill_anon_super+0x18/0x30</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_locked_super+0x3b/0x80</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: deactivate_super+0x3e/0x50</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: cleanup_mnt+0x109/0x160</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: __cleanup_mnt+0x12/0x20</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: task_work_run+0x8f/0xb0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: exit_to_usermode_loop+0x10c/0x130</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: do_syscall_64+0x170/0x1b0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: entry_SYSCALL_64_after_hwframe+0x5c/0xc1</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RIP: 0033:0x55cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: Code: Bad RIP value.</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RSP: 002b:000000c252fea778 EFLAGS: 00000212 ORIG_RAX: 00000000000000a6</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RAX: 0000000000000000 RBX: 000000c000070800 RCX: 000055cf9a53e13b</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RDX: 0000000000000000 RSI: 0000000000000002 RDI: 000000c2d000c3f0</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: RBP: 000000c252fea7d0 R08: 0000000000000000 R09: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R10: 0000000000000000 R11: 0000000000000212 R12: 0000000000000000</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: R13: 0000000000000001 R14: 000000000000000a R15: ffffffffffffffff</span><br></pre></td></tr></table></figure>
-<p>从日志中可看出，<code>dockerd</code> 进程处于 <a href="/202304181637/" title="&#96;D&#96; 状态">&#96;D&#96; 状态</a>，说明 <code>dockerd</code> 在等待 IO 操作，根据进程调用的栈信息，显示存在对 <code>overlay</code> 文件系统的同步操作，初步猜测，可能是因为 <code>overlay</code> 文件系统中的某些操作未能及时完成，导致了 <code>dockerd</code> 进程的阻塞。</p>
-<p>继续检查日志，看到系统连接 NFS 服务超时，怀疑可能是因为 NFS 异常导致。</p>
-<figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, still trying</span><br><span class="line">Feb 10 12:21:40 k8s-work1 kernel: nfs: server 172.31.88.9 not responding, timed out</span><br></pre></td></tr></table></figure>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -11013,6 +11013,51 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>linux macvlan 网卡虚拟化技术</title>
+    <url>/202304251611/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Macvlan"><a href="#Macvlan" class="headerlink" title="Macvlan"></a>Macvlan</h1><p>Macvlan 本身是 linxu kernel 模块</p>
+<p>Macvlan 接口是物理以太网接口的虚拟子接口，Macvlan 允许用户在一个物理网络接口上面配置多个虚拟的网络接口，每个 Macvlan 接口都有自己的区别与父接口的 MAC 地址，并且可以像普通的物理网络接口一样分配 IP 地址。使用 Macvlan 技术实现的效果是一块物理网卡可以绑定多个 IP 地址，并且每个 IP 地址有自己独立的 MAC 地址。</p>
+<p>Macvlan 虚拟出来的虚拟网卡，在逻辑上和物理网卡是对等的。使用 Macvlan 的虚拟网卡要和父接口在同一个网段。</p>
+<p>Macvlan 的最大优点是性能极好，相比其他方式，macvlan 不需要创建 Linux bridge，而是直接通过interface 连接到物理网络。</p>
+<p>为保证父接口能接收多个不同 MAC 地址的网络包，需要开启网卡的 <a href="/202304041014/" title="混杂模式">混杂模式</a></p>
+<h2 id="docker-中使用-Macvlan-虚拟网卡"><a href="#docker-中使用-Macvlan-虚拟网卡" class="headerlink" title="docker 中使用 Macvlan 虚拟网卡"></a>docker 中使用 Macvlan 虚拟网卡</h2><p>本示例演示 docker 环境中使用 macvlan。首先创建使用 macvlan 驱动的 network，Docker 中 macvlan 只支持 bridge 模式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Docker跨主机通信之macvlan](http://dockeradv.baoshu.red/advanced_network/macvlan.html)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network <span class="built_in">ls</span></span></span><br><span class="line">NETWORK ID     NAME       DRIVER    SCOPE</span><br><span class="line">69324d203c35   bridge     bridge    local</span><br><span class="line">f8943f720d73   host       host      local</span><br><span class="line">0aa95ac8c0f4   macvlan1   macvlan   local</span><br><span class="line">d400c40efdc5   none       null      local</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>在 docker 环境中，创建网络时，会自动将宿主机网卡设置为混杂模式，此时查看网卡信息，未显示混杂模式，但是查看 <code>dmesg</code> 日志，会看到网卡进入了混杂模式</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ dmesg</span><br><span class="line">[93203.228311] device ens33 entered promiscuous mode</span><br></pre></td></tr></table></figure>
+</blockquote>
+<p>运行容器并连接到新建的 macvlan 网络 <code>macvlan1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -itd --name test01 \</span><br><span class="line">                --ip=192.168.142.12 \</span><br><span class="line">                --network macvlan1 centos:centos7.9.2009</span><br></pre></td></tr></table></figure>
+<p>使用命令 <code>docker exec -it test01 bash</code> 进入容器查看容器的 IP 地址信息，可以看到容器中的网卡类型为 <code>macvlan</code>，模式为 <code>bridge</code>，网关为 docker 网络 <code>macvlan1</code> 中配置的网关。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">4: eth0@if2: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default </span><br><span class="line">    link/ether 02:42:c0:a8:8e:0c brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    macvlan mode bridge numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 192.168.142.12/24 brd 192.168.142.255 scope global eth0</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">route -n</span></span><br><span class="line">Kernel IP routing table</span><br><span class="line">Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line">0.0.0.0         192.168.142.2   0.0.0.0         UG    0      0        0 eth0</span><br><span class="line">192.168.142.0   0.0.0.0         255.255.255.0   U     0      0        0 eth0</span><br></pre></td></tr></table></figure>
+<p>测试容器可以和宿主机网络一样访问外网。</p>
+<p>此时检查宿主机网卡信息，系统上只有 <code>lo</code>，<code>ens33</code>，<code>docker0</code>，未出现其他网卡。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span></span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:90:51:eb brd ff:ff:ff:ff:ff:ff promiscuity 1 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:e9:a6:76:56 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:e9:a6:76:56 designated_root 8000.2:42:e9:a6:76:56 root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer  265.03 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br></pre></td></tr></table></figure>
+
+<p>在另一个 docker 节点上同样配置 docker 网络和容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run -itd --name test01 \</span></span><br><span class="line"><span class="language-bash">                --ip=192.168.142.13 \</span></span><br><span class="line"><span class="language-bash">                --network macvlan1 centos:centos7.9.2009</span>                                   </span><br></pre></td></tr></table></figure>
+<p>进入容器 <code>test01</code> ，访问到另一个节点上的容器的连通性</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.12</span></span><br><span class="line">PING 192.168.142.12 (192.168.142.12) 56(84) bytes of data.</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=1 ttl=64 time=0.871 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=2 ttl=64 time=0.403 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=3 ttl=64 time=0.568 ms</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.12 ping statistics ---</span><br><span class="line">3 packets transmitted, 3 received, 0% packet loss, time 2047ms</span><br><span class="line">rtt min/avg/max/mdev = 0.403/0.614/0.871/0.193 ms</span><br></pre></td></tr></table></figure>
+<p>进入容器 <code>test01</code> ，测试和宿主机 ip 的连通性，结果发现不通，原因为：在 macvlan 虚拟网络中，父接口（物理网卡）相当于一个交换机，对于其子 macvlan 网卡的数据包，只进行转发而不处理，于是造成了使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信。 </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.10</span></span><br><span class="line">PING 192.168.142.10 (192.168.142.10) 56(84) bytes of data.</span><br><span class="line">From 192.168.142.13 icmp_seq=1 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=2 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=3 Destination Host Unreachable</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.10 ping statistics ---</span><br><span class="line">5 packets transmitted, 0 received, +3 errors, 100% packet loss, time 4073ms</span><br><span class="line">pipe 4</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+<h2 id="macvlan-网络存的缺点"><a href="#macvlan-网络存的缺点" class="headerlink" title="macvlan 网络存的缺点"></a>macvlan 网络存的缺点</h2><ul>
+<li>macvlan 会独占主机的物理网卡，也就是说一个物理网卡只能创建一个 macvlan 网络</li>
+<li>使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信</li>
+<li>父接口异常，其他所有的虚拟子接口的网络都会异常</li>
+</ul>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="http://dockeradv.baoshu.red/advanced_network/macvlan.html">Docker跨主机通信之macvlan</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>network</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>linux network namespace 使用说明</title>
     <url>/202304031317/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -11136,51 +11181,6 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> vxlan</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN mode DEFAULT group default </span><br><span class="line">    link/ether ce:8c:56:84:e1:7a brd ff:ff:ff:ff:ff:ff</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> veth</span></span><br><span class="line">2350: veth2fd77154@if3: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue master cni0 state UP mode DEFAULT group default </span><br><span class="line">    link/ether 5a:02:6c:65:c8:5f brd ff:ff:ff:ff:ff:ff link-netnsid 0</span><br><span class="line">2352: vethfef50370@if3: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue master cni0 state UP mode DEFAULT group default </span><br><span class="line">    link/ether 3a:1c:0b:4f:af:b2 brd ff:ff:ff:ff:ff:ff link-netnsid 2</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> bridge</span></span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:48:54:ca:75 brd ff:ff:ff:ff:ff:ff</span><br><span class="line">2349: cni0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 26:4e:46:b2:2a:4c brd ff:ff:ff:ff:ff:ff</span><br></pre></td></tr></table></figure>
 <p>以下命令查看网卡的详细信息，包括网卡类型</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show veth1_p</span></span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show docker0</span></span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer   48.83 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 ::1/128 scope host </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:e7:c0:27 brd ff:ff:ff:ff:ff:ff promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 192.168.142.10/24 brd 192.168.142.255 scope global noprefixroute ens33</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::20c:29ff:fee7:c027/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer  147.42 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.10.10.1/24 scope global veth1_p</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::70f1:d6ff:fef6:c953/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">6: veth2_p@if7: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000</span><br><span class="line">    link/ether b6:17:a8:92:57:09 brd ff:ff:ff:ff:ff:ff link-netnsid 1 promiscuity 0 </span><br><span class="line">    veth numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.10.20.1/24 scope global veth2_p</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::b417:a8ff:fe92:5709/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever  </span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span></span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:e7:c0:27 brd ff:ff:ff:ff:ff:ff promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer   67.56 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">6: veth2_p@if7: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether b6:17:a8:92:57:09 brd ff:ff:ff:ff:ff:ff link-netnsid 1 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535       </span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>network</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux macvlan 网卡虚拟化技术</title>
-    <url>/202304251611/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Macvlan"><a href="#Macvlan" class="headerlink" title="Macvlan"></a>Macvlan</h1><p>Macvlan 本身是 linxu kernel 模块</p>
-<p>Macvlan 接口是物理以太网接口的虚拟子接口，Macvlan 允许用户在一个物理网络接口上面配置多个虚拟的网络接口，每个 Macvlan 接口都有自己的区别与父接口的 MAC 地址，并且可以像普通的物理网络接口一样分配 IP 地址。使用 Macvlan 技术实现的效果是一块物理网卡可以绑定多个 IP 地址，并且每个 IP 地址有自己独立的 MAC 地址。</p>
-<p>Macvlan 虚拟出来的虚拟网卡，在逻辑上和物理网卡是对等的。使用 Macvlan 的虚拟网卡要和父接口在同一个网段。</p>
-<p>Macvlan 的最大优点是性能极好，相比其他方式，macvlan 不需要创建 Linux bridge，而是直接通过interface 连接到物理网络。</p>
-<p>为保证父接口能接收多个不同 MAC 地址的网络包，需要开启网卡的 <a href="/202304041014/" title="混杂模式">混杂模式</a></p>
-<h2 id="docker-中使用-Macvlan-虚拟网卡"><a href="#docker-中使用-Macvlan-虚拟网卡" class="headerlink" title="docker 中使用 Macvlan 虚拟网卡"></a>docker 中使用 Macvlan 虚拟网卡</h2><p>本示例演示 docker 环境中使用 macvlan。首先创建使用 macvlan 驱动的 network，Docker 中 macvlan 只支持 bridge 模式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Docker跨主机通信之macvlan](http://dockeradv.baoshu.red/advanced_network/macvlan.html)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network <span class="built_in">ls</span></span></span><br><span class="line">NETWORK ID     NAME       DRIVER    SCOPE</span><br><span class="line">69324d203c35   bridge     bridge    local</span><br><span class="line">f8943f720d73   host       host      local</span><br><span class="line">0aa95ac8c0f4   macvlan1   macvlan   local</span><br><span class="line">d400c40efdc5   none       null      local</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>在 docker 环境中，创建网络时，会自动将宿主机网卡设置为混杂模式，此时查看网卡信息，未显示混杂模式，但是查看 <code>dmesg</code> 日志，会看到网卡进入了混杂模式</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ dmesg</span><br><span class="line">[93203.228311] device ens33 entered promiscuous mode</span><br></pre></td></tr></table></figure>
-</blockquote>
-<p>运行容器并连接到新建的 macvlan 网络 <code>macvlan1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -itd --name test01 \</span><br><span class="line">                --ip=192.168.142.12 \</span><br><span class="line">                --network macvlan1 centos:centos7.9.2009</span><br></pre></td></tr></table></figure>
-<p>使用命令 <code>docker exec -it test01 bash</code> 进入容器查看容器的 IP 地址信息，可以看到容器中的网卡类型为 <code>macvlan</code>，模式为 <code>bridge</code>，网关为 docker 网络 <code>macvlan1</code> 中配置的网关。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">4: eth0@if2: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default </span><br><span class="line">    link/ether 02:42:c0:a8:8e:0c brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    macvlan mode bridge numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 192.168.142.12/24 brd 192.168.142.255 scope global eth0</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">route -n</span></span><br><span class="line">Kernel IP routing table</span><br><span class="line">Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line">0.0.0.0         192.168.142.2   0.0.0.0         UG    0      0        0 eth0</span><br><span class="line">192.168.142.0   0.0.0.0         255.255.255.0   U     0      0        0 eth0</span><br></pre></td></tr></table></figure>
-<p>测试容器可以和宿主机网络一样访问外网。</p>
-<p>此时检查宿主机网卡信息，系统上只有 <code>lo</code>，<code>ens33</code>，<code>docker0</code>，未出现其他网卡。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span></span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:90:51:eb brd ff:ff:ff:ff:ff:ff promiscuity 1 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:e9:a6:76:56 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:e9:a6:76:56 designated_root 8000.2:42:e9:a6:76:56 root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer  265.03 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br></pre></td></tr></table></figure>
-
-<p>在另一个 docker 节点上同样配置 docker 网络和容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker network create -d macvlan --subnet=192.168.142.0/24 \</span></span><br><span class="line"><span class="language-bash">                                   --gateway=192.168.142.2 \</span></span><br><span class="line"><span class="language-bash">                                   -o parent=ens33 \</span></span><br><span class="line"><span class="language-bash">                                   macvlan1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run -itd --name test01 \</span></span><br><span class="line"><span class="language-bash">                --ip=192.168.142.13 \</span></span><br><span class="line"><span class="language-bash">                --network macvlan1 centos:centos7.9.2009</span>                                   </span><br></pre></td></tr></table></figure>
-<p>进入容器 <code>test01</code> ，访问到另一个节点上的容器的连通性</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.12</span></span><br><span class="line">PING 192.168.142.12 (192.168.142.12) 56(84) bytes of data.</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=1 ttl=64 time=0.871 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=2 ttl=64 time=0.403 ms</span><br><span class="line">64 bytes from 192.168.142.12: icmp_seq=3 ttl=64 time=0.568 ms</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.12 ping statistics ---</span><br><span class="line">3 packets transmitted, 3 received, 0% packet loss, time 2047ms</span><br><span class="line">rtt min/avg/max/mdev = 0.403/0.614/0.871/0.193 ms</span><br></pre></td></tr></table></figure>
-<p>进入容器 <code>test01</code> ，测试和宿主机 ip 的连通性，结果发现不通，原因为：在 macvlan 虚拟网络中，父接口（物理网卡）相当于一个交换机，对于其子 macvlan 网卡的数据包，只进行转发而不处理，于是造成了使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信。 </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ping 192.168.142.10</span></span><br><span class="line">PING 192.168.142.10 (192.168.142.10) 56(84) bytes of data.</span><br><span class="line">From 192.168.142.13 icmp_seq=1 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=2 Destination Host Unreachable</span><br><span class="line">From 192.168.142.13 icmp_seq=3 Destination Host Unreachable</span><br><span class="line">^C</span><br><span class="line">--- 192.168.142.10 ping statistics ---</span><br><span class="line">5 packets transmitted, 0 received, +3 errors, 100% packet loss, time 4073ms</span><br><span class="line">pipe 4</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-<h2 id="macvlan-网络存的缺点"><a href="#macvlan-网络存的缺点" class="headerlink" title="macvlan 网络存的缺点"></a>macvlan 网络存的缺点</h2><ul>
-<li>macvlan 会独占主机的物理网卡，也就是说一个物理网卡只能创建一个 macvlan 网络</li>
-<li>使用本机 macvlan 网卡的虚拟 IP 无法和本机物理网卡的 IP 通信</li>
-<li>父接口异常，其他所有的虚拟子接口的网络都会异常</li>
-</ul>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="http://dockeradv.baoshu.red/advanced_network/macvlan.html">Docker跨主机通信之macvlan</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
         <category>network</category>
@@ -12296,6 +12296,22 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>mongodb 配置</title>
+    <url>/202303311747/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 </li>
+<li>mongodb 4.0.26</li>
+</ul>
+<h1 id="下载安装"><a href="#下载安装" class="headerlink" title="下载安装"></a>下载安装</h1><p><a href="https://www.mongodb.com/try/download/community">官方社区版下载页面</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-shell-4.0.28-1.el7.x86_64.rpm</span><br><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-mongos-4.0.28-1.el7.x86_64.rpm</span><br><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-server-4.0.28-1.el7.x86_64.rpm</span><br><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-tools-4.0.28-1.el7.x86_64.rpm</span><br><span class="line"></span><br><span class="line">yum localinstall mongodb-org-mongos-4.0.28-1.el7.x86_64.rpm mongodb-org-tools-4.0.28-1.el7.x86_64.rpm mongodb-org-server-4.0.28-1.el7.x86_64.rpm mongodb-org-shell-4.0.28-1.el7.x86_64.rpm</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Mysql 常见错误</title>
     <url>/22072111/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息说明"><a href="#环境信息说明" class="headerlink" title="环境信息说明"></a>环境信息说明</h1><ul>
@@ -12420,22 +12436,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>mongodb 配置</title>
-    <url>/202303311747/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 </li>
-<li>mongodb 4.0.26</li>
-</ul>
-<h1 id="下载安装"><a href="#下载安装" class="headerlink" title="下载安装"></a>下载安装</h1><p><a href="https://www.mongodb.com/try/download/community">官方社区版下载页面</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-shell-4.0.28-1.el7.x86_64.rpm</span><br><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-mongos-4.0.28-1.el7.x86_64.rpm</span><br><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-server-4.0.28-1.el7.x86_64.rpm</span><br><span class="line">wget https://repo.mongodb.org/yum/redhat/7/mongodb-org/4.0/x86_64/RPMS/mongodb-org-tools-4.0.28-1.el7.x86_64.rpm</span><br><span class="line"></span><br><span class="line">yum localinstall mongodb-org-mongos-4.0.28-1.el7.x86_64.rpm mongodb-org-tools-4.0.28-1.el7.x86_64.rpm mongodb-org-server-4.0.28-1.el7.x86_64.rpm mongodb-org-shell-4.0.28-1.el7.x86_64.rpm</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -14345,40 +14345,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Pycharm 常用配置</title>
-    <url>/202208041319/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>PyCharm 2022.1 (Professional Edition)</li>
-</ul>
-<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="快速插入时间"><a href="#快速插入时间" class="headerlink" title="快速插入时间"></a>快速插入时间</h2><p>通过配置 <code>Live Template</code> 实现快速插入时间  </p>
-<ol>
-<li><p>打开 File &gt; Setting &gt; Editor: Live Templates</p>
-</li>
-<li><p>选中常用的语言，比如 <code>Python</code>，点击右上角的 <code>+</code>，添加 <code>Live Template</code><br> <code>Abbreviation</code> 输入快捷输入的名称，比如 <code>currentTime</code><br> <code>Description</code> 输入描述信息<br> <code>Template Text</code> 输入 <code>$time$</code><br> <img src="https://i.csms.tech/img_32.png"></p>
-</li>
-<li><p>点击 <code>Edit Variables</code> 配置命令及格式<br> <img src="https://i.csms.tech/img_33.png"></p>
-</li>
-<li><p><code>Define</code> 选择 <code>Everywhere</code>，<code>Apply</code>让配置生效</p>
-</li>
-<li><p>编辑时输入 <code>currentTime</code>,可以直接插入当前时间<br> <img src="https://i.csms.tech/img_34.png"></p>
-</li>
-</ol>
-<h2 id="配置-git-仓库"><a href="#配置-git-仓库" class="headerlink" title="配置 git 仓库"></a>配置 git 仓库</h2><ol>
-<li><p>打开 <code>File</code> -&gt; <code>Settings</code> -&gt; <code>Version Control</code> -&gt; <code>Git</code>，在 <code>Path to Git executable</code> 处选择 git 的安装位置。配置完成之后，点击<code>【Test】</code>按钮，如果成功，则会显示 Git 版本信息<br><img src="https://i.csms.tech/img_114.png"></p>
-</li>
-<li><p>点击 <code>VCS</code> -&gt; <code>Get from Version Control</code>，输入 Git 仓库的地址和本地目录。<br><img src="https://i.csms.tech/img_115.png"></p>
-</li>
-</ol>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>PyCharm</category>
-      </categories>
-      <tags>
-        <tag>PyCharm</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Prometheus Node exporter 使用</title>
     <url>/202306071109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -14738,6 +14704,40 @@ width: 20%;
       </categories>
       <tags>
         <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Pycharm 常用配置</title>
+    <url>/202208041319/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>PyCharm 2022.1 (Professional Edition)</li>
+</ul>
+<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="快速插入时间"><a href="#快速插入时间" class="headerlink" title="快速插入时间"></a>快速插入时间</h2><p>通过配置 <code>Live Template</code> 实现快速插入时间  </p>
+<ol>
+<li><p>打开 File &gt; Setting &gt; Editor: Live Templates</p>
+</li>
+<li><p>选中常用的语言，比如 <code>Python</code>，点击右上角的 <code>+</code>，添加 <code>Live Template</code><br> <code>Abbreviation</code> 输入快捷输入的名称，比如 <code>currentTime</code><br> <code>Description</code> 输入描述信息<br> <code>Template Text</code> 输入 <code>$time$</code><br> <img src="https://i.csms.tech/img_32.png"></p>
+</li>
+<li><p>点击 <code>Edit Variables</code> 配置命令及格式<br> <img src="https://i.csms.tech/img_33.png"></p>
+</li>
+<li><p><code>Define</code> 选择 <code>Everywhere</code>，<code>Apply</code>让配置生效</p>
+</li>
+<li><p>编辑时输入 <code>currentTime</code>,可以直接插入当前时间<br> <img src="https://i.csms.tech/img_34.png"></p>
+</li>
+</ol>
+<h2 id="配置-git-仓库"><a href="#配置-git-仓库" class="headerlink" title="配置 git 仓库"></a>配置 git 仓库</h2><ol>
+<li><p>打开 <code>File</code> -&gt; <code>Settings</code> -&gt; <code>Version Control</code> -&gt; <code>Git</code>，在 <code>Path to Git executable</code> 处选择 git 的安装位置。配置完成之后，点击<code>【Test】</code>按钮，如果成功，则会显示 Git 版本信息<br><img src="https://i.csms.tech/img_114.png"></p>
+</li>
+<li><p>点击 <code>VCS</code> -&gt; <code>Get from Version Control</code>，输入 Git 仓库的地址和本地目录。<br><img src="https://i.csms.tech/img_115.png"></p>
+</li>
+</ol>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>PyCharm</category>
+      </categories>
+      <tags>
+        <tag>PyCharm</tag>
       </tags>
   </entry>
   <entry>
@@ -17017,18 +17017,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Windows 小脚本</title>
-    <url>/202302251557/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="定时同步数据到-Linux-rsync-服务器"><a href="#定时同步数据到-Linux-rsync-服务器" class="headerlink" title="定时同步数据到 Linux rsync 服务器"></a>定时同步数据到 Linux rsync 服务器</h1><p>脚本内容如下，本示例中 Windows 版 <code>rsync</code> 客户端安装位置： <code>d:\cwrsync_6.2.4_x64_free\</code>，密码文件路径：<code>d:\cwrsync_6.2.4_x64_free\rsync.client.pswd</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">:start</span><br><span class="line">cd d:\</span><br><span class="line">cd cwrsync_6.2.4_x64_free</span><br><span class="line"></span><br><span class="line">.\bin\rsync.exe --progress -a -c -r -u -t --timeout=300 -z --password-file rsync.client.pswd --exclude &#x27;.idea&#x27; --exclude &#x27;rsync2Server.bat&#x27; /cygdrive/d/cwrsync_6.2.4_x64_free/data/ rsync@$&#123;RSYNC_SERVER&#125;:backup</span><br><span class="line"></span><br><span class="line">choice /t 5 /d y /n &gt;nul</span><br><span class="line"></span><br><span class="line">goto start</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Windows</category>
-      </categories>
-      <tags>
-        <tag>Windows</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>网宿云存储 python sdk 常用操作</title>
     <url>/f63bf868/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -17057,6 +17045,42 @@ width: 20%;
       <tags>
         <tag>云平台</tag>
         <tag>网宿</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Windows 小脚本</title>
+    <url>/202302251557/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="定时同步数据到-Linux-rsync-服务器"><a href="#定时同步数据到-Linux-rsync-服务器" class="headerlink" title="定时同步数据到 Linux rsync 服务器"></a>定时同步数据到 Linux rsync 服务器</h1><p>脚本内容如下，本示例中 Windows 版 <code>rsync</code> 客户端安装位置： <code>d:\cwrsync_6.2.4_x64_free\</code>，密码文件路径：<code>d:\cwrsync_6.2.4_x64_free\rsync.client.pswd</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">:start</span><br><span class="line">cd d:\</span><br><span class="line">cd cwrsync_6.2.4_x64_free</span><br><span class="line"></span><br><span class="line">.\bin\rsync.exe --progress -a -c -r -u -t --timeout=300 -z --password-file rsync.client.pswd --exclude &#x27;.idea&#x27; --exclude &#x27;rsync2Server.bat&#x27; /cygdrive/d/cwrsync_6.2.4_x64_free/data/ rsync@$&#123;RSYNC_SERVER&#125;:backup</span><br><span class="line"></span><br><span class="line">choice /t 5 /d y /n &gt;nul</span><br><span class="line"></span><br><span class="line">goto start</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Windows</category>
+      </categories>
+      <tags>
+        <tag>Windows</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>windows 远程登录失败</title>
+    <url>/f5e030ac/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="场景"><a href="#场景" class="headerlink" title="场景"></a>场景</h3><p>远程登录 windows 失败，报错:</p>
+<blockquote>
+<p>由于没有远程桌面授权服务器可以提供许可证，远程会话连接已断开，请跟服务器管理员联系</p>
+</blockquote>
+<h3 id="解决方法"><a href="#解决方法" class="headerlink" title="解决方法"></a>解决方法</h3><ol>
+<li>打开 cmd，执行以下命令远程登录无法登录的 Windows 主机<figure class="highlight cmd"><table><tr><td class="code"><pre><span class="line">mstsc /v:<span class="number">1</span>.<span class="number">1</span>.<span class="number">1</span>.<span class="number">1</span> /admin</span><br></pre></td></tr></table></figure></li>
+<li>打开注册表</li>
+</ol>
+<p><img src="https://i.csms.tech/img_1.png"><br>3. 找到路径： HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\RCM\GracePeriod.如果超过120天后RCM下面会有一个GracePeriod,先备份这项注册表，再删除除了默认的的注册表项。</p>
+<ol start="4">
+<li>重启电脑后生效.</li>
+</ol>
+]]></content>
+      <categories>
+        <category>Windows</category>
+        <category>常见错误</category>
+      </categories>
+      <tags>
+        <tag>Windows</tag>
       </tags>
   </entry>
   <entry>
@@ -17163,30 +17187,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>wireshark</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>windows 远程登录失败</title>
-    <url>/f5e030ac/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="场景"><a href="#场景" class="headerlink" title="场景"></a>场景</h3><p>远程登录 windows 失败，报错:</p>
-<blockquote>
-<p>由于没有远程桌面授权服务器可以提供许可证，远程会话连接已断开，请跟服务器管理员联系</p>
-</blockquote>
-<h3 id="解决方法"><a href="#解决方法" class="headerlink" title="解决方法"></a>解决方法</h3><ol>
-<li>打开 cmd，执行以下命令远程登录无法登录的 Windows 主机<figure class="highlight cmd"><table><tr><td class="code"><pre><span class="line">mstsc /v:<span class="number">1</span>.<span class="number">1</span>.<span class="number">1</span>.<span class="number">1</span> /admin</span><br></pre></td></tr></table></figure></li>
-<li>打开注册表</li>
-</ol>
-<p><img src="https://i.csms.tech/img_1.png"><br>3. 找到路径： HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server\RCM\GracePeriod.如果超过120天后RCM下面会有一个GracePeriod,先备份这项注册表，再删除除了默认的的注册表项。</p>
-<ol start="4">
-<li>重启电脑后生效.</li>
-</ol>
-]]></content>
-      <categories>
-        <category>Windows</category>
-        <category>常见错误</category>
-      </categories>
-      <tags>
-        <tag>Windows</tag>
       </tags>
   </entry>
   <entry>
