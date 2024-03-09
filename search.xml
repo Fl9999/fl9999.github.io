@@ -10532,6 +10532,244 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>iptables 服务使用说明</title>
+    <url>/202210241051/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，netfilter 的架构是在整个网络流程的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
+<p>IP 层的 5 个钩子点的位置，对应就是 iptables 的 5 条内置链，分别是</p>
+<ul>
+<li><code>PREROUTING</code></li>
+<li><code>FORWARD</code></li>
+<li><code>INPUT</code></li>
+<li><code>OUTPUT</code></li>
+<li><code>POSTROUTING</code></li>
+</ul>
+<p><img src="https://i.csms.tech/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 netfilter 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过查询本地路由表决定这个数据包的流向</p>
+<ul>
+<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
+<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 netfilter 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
+</ul>
+<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
+<p>除了 5 条内置的链，iptables 还有 5 张表，这 5 张表主要是用来给 iptables 中的规则（rule）分类，系统中所有的 iptables 规则都被划分到不同的表集合中。5 张表分别为</p>
+<ul>
+<li><code>raw</code> - iptables 是有状态的，即 iptables 对数据包有连接追踪 (connection trackong) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
+<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
+<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
+<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(drop)、或拒绝(reject)</li>
+<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
+</ul>
+<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，iptables 不支持自定义表。不是每个链上都能挂表，iptables 表与链的对应关系如下图</p>
+<table>
+<thead>
+<tr>
+<th>-</th>
+<th>PREROUTING</th>
+<th>FORWARD</th>
+<th>INPUT</th>
+<th>OUTPUT</th>
+<th>POSTROUTING</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>raw</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>mangle</code></td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (SNAT)</code></td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (DNAT)</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>filter</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>security</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+</tbody></table>
+<p>iptables 表和链的工作流程图如下</p>
+<p><img src="https://i.csms.tech/img_134.png"></p>
+<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-F ,--flush</code></td>
+<td>清除所有规则，默认规则除外</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-P ,--policy</code></td>
+<td>设置默认规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-t ,--table</code></td>
+<td>指定要操作的表，默认为 <code>filter</code> 表</td>
+<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--list ,-L [chain [rulenum]]</code></td>
+<td>列出（指定的链或所有链）的规则</td>
+<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
+</tr>
+<tr>
+<td><code>--verbose	,-v</code></td>
+<td>verbose mode</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--numeric	,-n</code></td>
+<td>不解析协议和端口号，以数字的形式显示</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--line-numbers</code></td>
+<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--jump	,-j</code></td>
+<td>匹配的规则的处理 target</td>
+<td><code>iptables -A INPUT  -j LOG</code></td>
+</tr>
+<tr>
+<td><code>--append  ,-A chain</code></td>
+<td>像指定的链中追加规则</td>
+<td><code>-A INPUT -i lo -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--insert  ,-I chain [rulenum]</code></td>
+<td>向指定的链中指定的位置插入规则</td>
+<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--delete  ,-D chain rulenum</code></td>
+<td>删除指定链中的指定位置的规则</td>
+<td><code>iptables -D INPUT 10 </code></td>
+</tr>
+<tr>
+<td><code>--replace ,-R chain rulenum</code></td>
+<td>更新指定链中的指定位置的规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-S, --list-rules [chain]</code></td>
+<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
+<td></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>删除指定行号的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
+
+<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
+<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
+<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
+<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
+<p>重启 <code>rsyslog</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
+<li><p><code>journalctl -k</code> 命令查看</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
+</ul>
+<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
+<p>iptables 中日志相关的选项：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--log-prefix</code></td>
+<td>记录的日志的内容前缀</td>
+<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
+</tr>
+<tr>
+<td><code>--log-level</code></td>
+<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
+<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
+</tr>
+</tbody></table>
+<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
+<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
+
+<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
+
+<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
+
+<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
+<p>ssh 连接失败后查看日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
+<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
+<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
+<p>将其默认规则改为 <code>ACCEPT</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
+<p>重新使用 ssh 登陆，连接正常。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>iptables</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>linux logrotate 服务</title>
     <url>/202208191317/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -11231,19 +11469,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux Shell 脚本</title>
-    <url>/202306210936/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="脚本示例"><a href="#脚本示例" class="headerlink" title="脚本示例"></a>脚本示例</h1><h2 id="一分钟内访问指定-url-一百次"><a href="#一分钟内访问指定-url-一百次" class="headerlink" title="一分钟内访问指定 url 一百次"></a>一分钟内访问指定 url 一百次</h2><p>其中 <code>$&#123;COUNT&#125; * $&#123;SLEEP_INTERVAL&#125; = 60</code> ，要改变频率，可以更改这 2 个值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/bash</span></span><br><span class="line"></span><br><span class="line">URL=&quot;url&quot;  # 指定要访问的 URL</span><br><span class="line">COUNT=200  # 指定访问次数</span><br><span class="line">SLEEP_INTERVAL=0.3  # 休眠时间间隔（秒）</span><br><span class="line"></span><br><span class="line">for ((i=1; i&lt;=COUNT; i++))</span><br><span class="line">do</span><br><span class="line">    echo &quot;Request $i: $(date)&quot;</span><br><span class="line">    curl -s -o /dev/null -w %&#123;http_code&#125; $URL </span><br><span class="line">    sleep $SLEEP_INTERVAL</span><br><span class="line">done</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>Shell 脚本</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>linux 系统状态查看</title>
     <url>/202301171137/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -11285,6 +11510,19 @@ width: 20%;
 ]]></content>
       <categories>
         <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux Shell 脚本</title>
+    <url>/202306210936/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="脚本示例"><a href="#脚本示例" class="headerlink" title="脚本示例"></a>脚本示例</h1><h2 id="一分钟内访问指定-url-一百次"><a href="#一分钟内访问指定-url-一百次" class="headerlink" title="一分钟内访问指定 url 一百次"></a>一分钟内访问指定 url 一百次</h2><p>其中 <code>$&#123;COUNT&#125; * $&#123;SLEEP_INTERVAL&#125; = 60</code> ，要改变频率，可以更改这 2 个值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/bash</span></span><br><span class="line"></span><br><span class="line">URL=&quot;url&quot;  # 指定要访问的 URL</span><br><span class="line">COUNT=200  # 指定访问次数</span><br><span class="line">SLEEP_INTERVAL=0.3  # 休眠时间间隔（秒）</span><br><span class="line"></span><br><span class="line">for ((i=1; i&lt;=COUNT; i++))</span><br><span class="line">do</span><br><span class="line">    echo &quot;Request $i: $(date)&quot;</span><br><span class="line">    curl -s -o /dev/null -w %&#123;http_code&#125; $URL </span><br><span class="line">    sleep $SLEEP_INTERVAL</span><br><span class="line">done</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>Shell 脚本</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -12510,6 +12748,30 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>namesilo api 使用</title>
+    <url>/202303031036/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.namesilo.com/api-reference">Namesilo api 官方文档</a></p>
+<p>Python SDK 为 <a href="https://pypi.org/project/python-namesilo/">python-namesilo</a>，安装方法</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">pip install python-namesilo</span><br></pre></td></tr></table></figure>
+
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11.2</li>
+<li>python-namesilo&#x3D;&#x3D;1.1.3</li>
+</ul>
+<h1 id="python-namesilo-常见用法示例"><a href="#python-namesilo-常见用法示例" class="headerlink" title="python-namesilo 常见用法示例"></a>python-namesilo 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><p>使用 SDK 之前需要先登陆账号创建 API Token，详细使用方法可以查看帮助信息，获取所有域名使用方法 <code>list_domains</code></p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">from</span> namesilo.core <span class="keyword">import</span> NameSilo</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>key = <span class="string">&#x27;KKKKKKKKKKKKKKKKKK&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = NameSilo(token=key, sandbox=<span class="literal">False</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(client)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.list_domains()</span><br></pre></td></tr></table></figure>
+
+<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><p>获取指定域名的详细信息使用 <code>get_domain_info</code>，此方法返回一个 <code>DomainInfo</code> 对象，里面包括域名创建时间，过期时间，nameserver等信息</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br><span class="line">&lt;namesilo.common.models.DomainInfo <span class="built_in">object</span> at <span class="number">0x7f71a0530a50</span>&gt;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">dir</span>(client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>))</span><br><span class="line">[<span class="string">&#x27;auto_renew&#x27;</span>, <span class="string">&#x27;contacts&#x27;</span>, <span class="string">&#x27;created&#x27;</span>, <span class="string">&#x27;expires&#x27;</span>, <span class="string">&#x27;locked&#x27;</span>, <span class="string">&#x27;name_servers&#x27;</span>, <span class="string">&#x27;private&#x27;</span>, <span class="string">&#x27;status&#x27;</span>, <span class="string">&#x27;traffic_type&#x27;</span>]</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Namesilo</category>
+      </categories>
+      <tags>
+        <tag>Namesilo</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>安装 Mysql</title>
     <url>/202211021345/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -12550,30 +12812,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>namesilo api 使用</title>
-    <url>/202303031036/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.namesilo.com/api-reference">Namesilo api 官方文档</a></p>
-<p>Python SDK 为 <a href="https://pypi.org/project/python-namesilo/">python-namesilo</a>，安装方法</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">pip install python-namesilo</span><br></pre></td></tr></table></figure>
-
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.11.2</li>
-<li>python-namesilo&#x3D;&#x3D;1.1.3</li>
-</ul>
-<h1 id="python-namesilo-常见用法示例"><a href="#python-namesilo-常见用法示例" class="headerlink" title="python-namesilo 常见用法示例"></a>python-namesilo 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><p>使用 SDK 之前需要先登陆账号创建 API Token，详细使用方法可以查看帮助信息，获取所有域名使用方法 <code>list_domains</code></p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">from</span> namesilo.core <span class="keyword">import</span> NameSilo</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>key = <span class="string">&#x27;KKKKKKKKKKKKKKKKKK&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = NameSilo(token=key, sandbox=<span class="literal">False</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(client)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.list_domains()</span><br></pre></td></tr></table></figure>
-
-<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><p>获取指定域名的详细信息使用 <code>get_domain_info</code>，此方法返回一个 <code>DomainInfo</code> 对象，里面包括域名创建时间，过期时间，nameserver等信息</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br><span class="line">&lt;namesilo.common.models.DomainInfo <span class="built_in">object</span> at <span class="number">0x7f71a0530a50</span>&gt;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">dir</span>(client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>))</span><br><span class="line">[<span class="string">&#x27;auto_renew&#x27;</span>, <span class="string">&#x27;contacts&#x27;</span>, <span class="string">&#x27;created&#x27;</span>, <span class="string">&#x27;expires&#x27;</span>, <span class="string">&#x27;locked&#x27;</span>, <span class="string">&#x27;name_servers&#x27;</span>, <span class="string">&#x27;private&#x27;</span>, <span class="string">&#x27;status&#x27;</span>, <span class="string">&#x27;traffic_type&#x27;</span>]</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Namesilo</category>
-      </categories>
-      <tags>
-        <tag>Namesilo</tag>
       </tags>
   </entry>
   <entry>
@@ -15947,24 +16185,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>腾讯云相关配置</title>
-    <url>/202305260914/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Python-SDK"><a href="#Python-SDK" class="headerlink" title="Python SDK"></a>Python SDK</h1><p><a href="https://www.tencentcloud.com/zh/document/product/494/7244">Python SDK 官网使用说明</a></p>
-<h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install tencentcloud-sdk-python-intl-en</span><br></pre></td></tr></table></figure>
-
-<h2 id="预热功能"><a href="#预热功能" class="headerlink" title="预热功能"></a>预热功能</h2><p><a href="https://console.tencentcloud.com/api/explorer?Product=vod&Version=2018-07-17&Action=PushUrlCache">参考文档</a></p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">import</span> json</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common <span class="keyword">import</span> credential</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common.profile.client_profile <span class="keyword">import</span> ClientProfile</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common.profile.http_profile <span class="keyword">import</span> HttpProfile</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common.exception.tencent_cloud_sdk_exception <span class="keyword">import</span> TencentCloudSDKException</span><br><span class="line"><span class="keyword">from</span> tencentcloud.vod.v20180717 <span class="keyword">import</span> vod_client, models</span><br><span class="line"><span class="keyword">try</span>:</span><br><span class="line">    <span class="comment"># 实例化一个认证对象，入参需要传入腾讯云账户 SecretId 和 SecretKey，此处还需注意密钥对的保密</span></span><br><span class="line">    <span class="comment"># 代码泄露可能会导致 SecretId 和 SecretKey 泄露，并威胁账号下所有资源的安全性。密钥可前往官网控制台 https://console.tencentcloud.com/capi 进行获取</span></span><br><span class="line">    cred = credential.Credential(<span class="string">&quot;SecretId&quot;</span>, <span class="string">&quot;SecretKey&quot;</span>)</span><br><span class="line">    <span class="comment"># 实例化一个http选项，可选的，没有特殊需求可以跳过</span></span><br><span class="line">    httpProfile = HttpProfile()</span><br><span class="line">    httpProfile.endpoint = <span class="string">&quot;vod.tencentcloudapi.com&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="comment"># 实例化一个client选项，可选的，没有特殊需求可以跳过</span></span><br><span class="line">    clientProfile = ClientProfile()</span><br><span class="line">    clientProfile.httpProfile = httpProfile</span><br><span class="line">    <span class="comment"># 实例化要请求产品的client对象,clientProfile是可选的</span></span><br><span class="line">    client = vod_client.VodClient(cred, <span class="string">&quot;&quot;</span>, clientProfile)</span><br><span class="line"></span><br><span class="line">    <span class="comment"># 实例化一个请求对象,每个接口都会对应一个request对象</span></span><br><span class="line">    req = models.PushUrlCacheRequest()</span><br><span class="line">    params = &#123;</span><br><span class="line">        <span class="string">&quot;Urls&quot;</span>: [ <span class="string">&quot;https://test.domain.com/z44R8F4D.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/z70TBUet.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/zB2OEC1t.ts&quot;</span>, </span><br><span class="line">                  <span class="string">&quot;https://test.domain.com/zZw91TCL.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/zbJ9U6Su.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/zbvqkOMN.ts&quot;</span>]</span><br><span class="line">    &#125;</span><br><span class="line">    req.from_json_string(json.dumps(params))</span><br><span class="line"></span><br><span class="line">    <span class="comment"># 返回的resp是一个PushUrlCacheResponse的实例，与请求对象对应</span></span><br><span class="line">    resp = client.PushUrlCache(req)</span><br><span class="line">    <span class="comment"># 输出json格式的字符串回包</span></span><br><span class="line">    <span class="built_in">print</span>(resp.to_json_string())</span><br><span class="line"></span><br><span class="line"><span class="keyword">except</span> TencentCloudSDKException <span class="keyword">as</span> err:</span><br><span class="line">    <span class="built_in">print</span>(err)</span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.tencentcloud.com/zh/document/product/494/7244">Python SDK 官网使用说明</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>腾讯云</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>常用工具下载链接</title>
     <url>/202302041721/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常用工具下载目录"><a href="#常用工具下载目录" class="headerlink" title="常用工具下载目录"></a>常用工具下载目录</h1><p><a href="https://s.csms.tech/file/">常用工具下载目录</a></p>
@@ -16034,6 +16254,24 @@ width: 20%;
       <categories>
         <category>Tools</category>
       </categories>
+  </entry>
+  <entry>
+    <title>腾讯云相关配置</title>
+    <url>/202305260914/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Python-SDK"><a href="#Python-SDK" class="headerlink" title="Python SDK"></a>Python SDK</h1><p><a href="https://www.tencentcloud.com/zh/document/product/494/7244">Python SDK 官网使用说明</a></p>
+<h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install tencentcloud-sdk-python-intl-en</span><br></pre></td></tr></table></figure>
+
+<h2 id="预热功能"><a href="#预热功能" class="headerlink" title="预热功能"></a>预热功能</h2><p><a href="https://console.tencentcloud.com/api/explorer?Product=vod&Version=2018-07-17&Action=PushUrlCache">参考文档</a></p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">import</span> json</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common <span class="keyword">import</span> credential</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common.profile.client_profile <span class="keyword">import</span> ClientProfile</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common.profile.http_profile <span class="keyword">import</span> HttpProfile</span><br><span class="line"><span class="keyword">from</span> tencentcloud.common.exception.tencent_cloud_sdk_exception <span class="keyword">import</span> TencentCloudSDKException</span><br><span class="line"><span class="keyword">from</span> tencentcloud.vod.v20180717 <span class="keyword">import</span> vod_client, models</span><br><span class="line"><span class="keyword">try</span>:</span><br><span class="line">    <span class="comment"># 实例化一个认证对象，入参需要传入腾讯云账户 SecretId 和 SecretKey，此处还需注意密钥对的保密</span></span><br><span class="line">    <span class="comment"># 代码泄露可能会导致 SecretId 和 SecretKey 泄露，并威胁账号下所有资源的安全性。密钥可前往官网控制台 https://console.tencentcloud.com/capi 进行获取</span></span><br><span class="line">    cred = credential.Credential(<span class="string">&quot;SecretId&quot;</span>, <span class="string">&quot;SecretKey&quot;</span>)</span><br><span class="line">    <span class="comment"># 实例化一个http选项，可选的，没有特殊需求可以跳过</span></span><br><span class="line">    httpProfile = HttpProfile()</span><br><span class="line">    httpProfile.endpoint = <span class="string">&quot;vod.tencentcloudapi.com&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="comment"># 实例化一个client选项，可选的，没有特殊需求可以跳过</span></span><br><span class="line">    clientProfile = ClientProfile()</span><br><span class="line">    clientProfile.httpProfile = httpProfile</span><br><span class="line">    <span class="comment"># 实例化要请求产品的client对象,clientProfile是可选的</span></span><br><span class="line">    client = vod_client.VodClient(cred, <span class="string">&quot;&quot;</span>, clientProfile)</span><br><span class="line"></span><br><span class="line">    <span class="comment"># 实例化一个请求对象,每个接口都会对应一个request对象</span></span><br><span class="line">    req = models.PushUrlCacheRequest()</span><br><span class="line">    params = &#123;</span><br><span class="line">        <span class="string">&quot;Urls&quot;</span>: [ <span class="string">&quot;https://test.domain.com/z44R8F4D.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/z70TBUet.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/zB2OEC1t.ts&quot;</span>, </span><br><span class="line">                  <span class="string">&quot;https://test.domain.com/zZw91TCL.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/zbJ9U6Su.ts&quot;</span>, <span class="string">&quot;https://test.domain.com/zbvqkOMN.ts&quot;</span>]</span><br><span class="line">    &#125;</span><br><span class="line">    req.from_json_string(json.dumps(params))</span><br><span class="line"></span><br><span class="line">    <span class="comment"># 返回的resp是一个PushUrlCacheResponse的实例，与请求对象对应</span></span><br><span class="line">    resp = client.PushUrlCache(req)</span><br><span class="line">    <span class="comment"># 输出json格式的字符串回包</span></span><br><span class="line">    <span class="built_in">print</span>(resp.to_json_string())</span><br><span class="line"></span><br><span class="line"><span class="keyword">except</span> TencentCloudSDKException <span class="keyword">as</span> err:</span><br><span class="line">    <span class="built_in">print</span>(err)</span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.tencentcloud.com/zh/document/product/494/7244">Python SDK 官网使用说明</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>腾讯云</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
+      </tags>
   </entry>
   <entry>
     <title>tcp/udp 端口连通性测试</title>
@@ -16217,40 +16455,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Vault Policy</title>
-    <url>/202307131545/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
-<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
-<p>以下示例创建一个只读策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
-<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>读取策略内容</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
-</blockquote>
-<p>使用新建的 token 登陆并尝试更新相关键</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>读取键，可以看到只能读取键值，无法写入</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Vault</category>
-      </categories>
-      <tags>
-        <tag>Vault</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Vault 介绍及安装配置</title>
     <url>/202307100928/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -16341,6 +16545,40 @@ width: 20%;
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://thiscute.world/posts/experience-of-vault/#4-vault-agent-%E9%85%8D%E7%BD%AE">secrets 管理工具 Vault 的介绍、安装及使用</a></p>
 <p><a href="https://lonegunmanb.github.io/essential-vault/">Vault 中文手册</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/internals/architecture">Vault High-Level Overview</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#install-vault">Installing Vault</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#dev-mode">Dev mode</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#ha-mode">HA mode</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#initialize-and-unseal-vault">Initialize and unseal Vault</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/5.%E5%90%AF%E5%8A%A8%E6%A0%87%E5%87%86%E7%9A%84Vault%E6%9C%8D%E5%8A%A1.html">Vault 中文手册</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/6.Vault%E7%9A%84%E6%9E%B6%E6%9E%84.html">Vault的架构</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5.html">基本概念</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/2.%E5%B0%81%E5%8D%B0%E4%B8%8E%E8%A7%A3%E5%B0%81.html">封印与解封</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/4.%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6/overview.html">Vault 配置文件</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/9.%E5%AE%9E%E9%99%85%E6%A1%88%E4%BE%8B/1.%E5%8A%A0%E5%AF%86%E5%8D%B3%E6%9C%8D%E5%8A%A1.html">加密即服务</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Vault</category>
+      </categories>
+      <tags>
+        <tag>Vault</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Vault Policy</title>
+    <url>/202307131545/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
+<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
+<p>以下示例创建一个只读策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
+<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>读取策略内容</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
+</blockquote>
+<p>使用新建的 token 登陆并尝试更新相关键</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>读取键，可以看到只能读取键值，无法写入</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Tools</category>
         <category>Vault</category>
@@ -16997,244 +17235,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>iptables 服务使用说明</title>
-    <url>/202210241051/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，netfilter 的架构是在整个网络流程的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
-<p>IP 层的 5 个钩子点的位置，对应就是 iptables 的 5 条内置链，分别是</p>
-<ul>
-<li><code>PREROUTING</code></li>
-<li><code>FORWARD</code></li>
-<li><code>INPUT</code></li>
-<li><code>OUTPUT</code></li>
-<li><code>POSTROUTING</code></li>
-</ul>
-<p><img src="https://i.csms.tech/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 netfilter 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过查询本地路由表决定这个数据包的流向</p>
-<ul>
-<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
-<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 netfilter 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
-</ul>
-<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
-<p>除了 5 条内置的链，iptables 还有 5 张表，这 5 张表主要是用来给 iptables 中的规则（rule）分类，系统中所有的 iptables 规则都被划分到不同的表集合中。5 张表分别为</p>
-<ul>
-<li><code>raw</code> - iptables 是有状态的，即 iptables 对数据包有连接追踪 (connection trackong) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
-<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
-<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
-<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(drop)、或拒绝(reject)</li>
-<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
-</ul>
-<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，iptables 不支持自定义表。不是每个链上都能挂表，iptables 表与链的对应关系如下图</p>
-<table>
-<thead>
-<tr>
-<th>-</th>
-<th>PREROUTING</th>
-<th>FORWARD</th>
-<th>INPUT</th>
-<th>OUTPUT</th>
-<th>POSTROUTING</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>raw</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>mangle</code></td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (SNAT)</code></td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (DNAT)</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>filter</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>security</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-</tbody></table>
-<p>iptables 表和链的工作流程图如下</p>
-<p><img src="https://i.csms.tech/img_134.png"></p>
-<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-F ,--flush</code></td>
-<td>清除所有规则，默认规则除外</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-P ,--policy</code></td>
-<td>设置默认规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t ,--table</code></td>
-<td>指定要操作的表，默认为 <code>filter</code> 表</td>
-<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--list ,-L [chain [rulenum]]</code></td>
-<td>列出（指定的链或所有链）的规则</td>
-<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
-</tr>
-<tr>
-<td><code>--verbose	,-v</code></td>
-<td>verbose mode</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--numeric	,-n</code></td>
-<td>不解析协议和端口号，以数字的形式显示</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--line-numbers</code></td>
-<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--jump	,-j</code></td>
-<td>匹配的规则的处理 target</td>
-<td><code>iptables -A INPUT  -j LOG</code></td>
-</tr>
-<tr>
-<td><code>--append  ,-A chain</code></td>
-<td>像指定的链中追加规则</td>
-<td><code>-A INPUT -i lo -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--insert  ,-I chain [rulenum]</code></td>
-<td>向指定的链中指定的位置插入规则</td>
-<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--delete  ,-D chain rulenum</code></td>
-<td>删除指定链中的指定位置的规则</td>
-<td><code>iptables -D INPUT 10 </code></td>
-</tr>
-<tr>
-<td><code>--replace ,-R chain rulenum</code></td>
-<td>更新指定链中的指定位置的规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-S, --list-rules [chain]</code></td>
-<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
-<td></td>
-</tr>
-</tbody></table>
-<span id="more"></span>
-<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>删除指定行号的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
-
-<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
-<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
-<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
-<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
-<p>重启 <code>rsyslog</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
-<li><p><code>journalctl -k</code> 命令查看</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
-</ul>
-<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
-<p>iptables 中日志相关的选项：</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--log-prefix</code></td>
-<td>记录的日志的内容前缀</td>
-<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
-</tr>
-<tr>
-<td><code>--log-level</code></td>
-<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
-<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
-</tr>
-</tbody></table>
-<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
-<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
-
-<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
-
-<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
-
-<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
-<p>ssh 连接失败后查看日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
-<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
-<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
-<p>将其默认规则改为 <code>ACCEPT</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
-<p>重新使用 ssh 登陆，连接正常。</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>iptables</tag>
       </tags>
   </entry>
 </search>
