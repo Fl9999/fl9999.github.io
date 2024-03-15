@@ -690,6 +690,58 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -787,58 +839,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>TCP 协议</title>
     <url>/202211251549/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="TCP-协议抓包分析"><a href="#TCP-协议抓包分析" class="headerlink" title="TCP 协议抓包分析"></a>TCP 协议抓包分析</h1><h2 id="TCP-通信过程中-seq-和-ACK-值说明"><a href="#TCP-通信过程中-seq-和-ACK-值说明" class="headerlink" title="TCP 通信过程中 seq 和 ACK 值说明"></a>TCP 通信过程中 seq 和 ACK 值说明</h2><p><img src="https://i.csms.tech/img_96.png"></p>
@@ -886,6 +886,46 @@ width: 20%;
       </categories>
       <tags>
         <tag>生活日常</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>akamai cdn api 使用</title>
+    <url>/202302011153/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://techdocs.akamai.com/developer/docs/make-your-first-api-call">Akamai CDN API 说明文档</a>，调用 API 之前需要先根据官方文档说明 <code>Create API Client</code></p>
+<h1 id="Python-SDK-使用"><a href="#Python-SDK-使用" class="headerlink" title="Python SDK 使用"></a>Python SDK 使用</h1><p>根据官方文档说明安装 <code>edgegrid-python</code>，并配置 <code>Create API Client Key</code> 信息 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Create a basic API client](https://techdocs.akamai.com/developer/docs/make-your-first-api-call)">[1]</span></a></sup>。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install edgegrid-python</span><br></pre></td></tr></table></figure>
+
+<p><a href="https://techdocs.akamai.com/developer/docs/python">Python SDK 使用官方示例</a></p>
+<p><a href="https://techdocs.akamai.com/home/page/apis">Akamai API 列表</a></p>
+<h2 id="获取账号信息"><a href="#获取账号信息" class="headerlink" title="获取账号信息"></a>获取账号信息</h2><p>大多数 API 使用都需要提供 <code>groupId</code>，<code>accountId</code>，<code>contractIds</code>，通过以下接口获取这些信息 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[List groups](https://techdocs.akamai.com/property-mgr/reference/get-groups)">[2]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import requests</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from akamai.edgegrid import EdgeGridAuth, EdgeRc</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from urllib.parse import urljoin</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; edgerc = EdgeRc(<span class="string">&#x27;~/.edgerc&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; section = <span class="string">&#x27;default&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; baseurl = <span class="string">&#x27;https://%s&#x27;</span> % edgerc.get(section, <span class="string">&#x27;host&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/papi/v1/groups&#x27;</span>))</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result.json()</span></span><br><span class="line">&#123;&#x27;accountId&#x27;: &#x27;act_F-AC-488298736&#x27;, &#x27;accountName&#x27;: &#x27;Guangzhou kl Network Technology Co., Ltd&#x27;, &#x27;groups&#x27;: &#123;&#x27;items&#x27;: [&#123;&#x27;groupName&#x27;: &#x27;Guangzhou extreme-G-8HGkt-DSA&#x27;, &#x27;groupId&#x27;: &#x27;grp_186987767&#x27;, &#x27;contractIds&#x27;: [&#x27;ctr_G-3JDoujhh&#x27;]&#125;]&#125;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>如果 <code>Property</code> 中存在分组，每个分组都有一个独立的 <code>groupId</code></p>
+</blockquote>
+<span id="more"></span>
+<h2 id="获取-CPCode"><a href="#获取-CPCode" class="headerlink" title="获取 CPCode"></a>获取 CPCode</h2><p>通过以下接口及参数获取 CPCode <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[List CP codes](https://techdocs.akamai.com/property-mgr/reference/get-cpcodes)">[3]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import requests</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from akamai.edgegrid import EdgeGridAuth, EdgeRc</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from urllib.parse import urljoin</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; edgerc = EdgeRc(<span class="string">&#x27;~/.edgerc&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; section = <span class="string">&#x27;default&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; baseurl = <span class="string">&#x27;https://%s&#x27;</span> % edgerc.get(section, <span class="string">&#x27;host&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/papi/v1/cpcodes&#x27;</span>), params=&#123;<span class="string">&#x27;contractId&#x27;</span>: <span class="string">&#x27;ctr_G-ctr_G-3JDoujhh&#x27;</span>, <span class="string">&#x27;groupId&#x27;</span>: <span class="string">&#x27;grp_186987767&#x27;</span>&#125;, headers=&#123;<span class="string">&#x27;PAPI-Use-Prefixes&#x27;</span>: <span class="string">&#x27;True&#x27;</span>&#125;)</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="获取指定-CPCode-的流量信息"><a href="#获取指定-CPCode-的流量信息" class="headerlink" title="获取指定 CPCode 的流量信息"></a>获取指定 CPCode 的流量信息</h2><p>此处主要演示获取指标 <code>edgeBytes</code> 的流量，具体 API 使用方式可参考官方文档 <sup id="fnref:4"><a href="#fn:4" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[bytes-by-cpcode](https://techdocs.akamai.com/reporting/reference/bytes-by-cpcode)">[4]</span></a></sup></p>
+<h3 id="查询所有-CPCode-的流量"><a href="#查询所有-CPCode-的流量" class="headerlink" title="查询所有 CPCode 的流量"></a>查询所有 CPCode 的流量</h3><figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import requests</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from akamai.edgegrid import EdgeGridAuth, EdgeRc</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from urllib.parse import urljoin</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; edgerc = EdgeRc(<span class="string">&#x27;~/.edgerc&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; section = <span class="string">&#x27;default&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; baseurl = <span class="string">&#x27;https://%s&#x27;</span> % edgerc.get(section, <span class="string">&#x27;host&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; params = &#123;<span class="string">&#x27;start&#x27;</span>: <span class="string">&#x27;2022-12-31T00:00:00Z&#x27;</span>, <span class="string">&#x27;end&#x27;</span>: <span class="string">&#x27;2023-01-01T00:00:00Z&#x27;</span>, <span class="string">&#x27;allObjectIds&#x27;</span>: True, <span class="string">&#x27;metrics&#x27;</span>: <span class="string">&#x27;edgeBytes&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/reporting-api/v1/reports/bytes-by-cpcode/versions/1/report-data&#x27;</span>), params=params)</span></span><br></pre></td></tr></table></figure>
+
+<h3 id="获取指定-CPCode-的流量信息-1"><a href="#获取指定-CPCode-的流量信息-1" class="headerlink" title="获取指定 CPCode 的流量信息"></a>获取指定 CPCode 的流量信息</h3><figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; params = &#123;<span class="string">&#x27;start&#x27;</span>: <span class="string">&#x27;2022-12-01T00:00:00Z&#x27;</span>, <span class="string">&#x27;end&#x27;</span>: <span class="string">&#x27;2023-01-01T00:00:00Z&#x27;</span>, <span class="string">&#x27;objectIds&#x27;</span>: <span class="string">&#x27;1335489&#x27;</span>, <span class="string">&#x27;metrics&#x27;</span>: <span class="string">&#x27;edgeBytes&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/reporting-api/v1/reports/bytes-by-cpcode/versions/1/report-data&#x27;</span>), params=params)</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="获取-property"><a href="#获取-property" class="headerlink" title="获取 property"></a>获取 property</h3><p>要获取 Property 信息，参考代码 <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[List properties](https://techdocs.akamai.com/property-mgr/reference/get-properties)">[5]</span></a></sup></p>
+<p>要获取指定 Property 信息，参考代码 <sup id="fnref:7"><a href="#fn:7" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Get a property](https://techdocs.akamai.com/property-mgr/reference/get-property)">[7]</span></a></sup></p>
+<h3 id="获取-Property-的-rule-信息"><a href="#获取-Property-的-rule-信息" class="headerlink" title="获取 Property 的 rule 信息"></a>获取 Property 的 rule 信息</h3><p>参考文档 <sup id="fnref:6"><a href="#fn:6" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Get a property's rule tree](https://techdocs.akamai.com/property-mgr/reference/get-property-version-rules)">[6]</span></a></sup></p>
+<h3 id="获取证书信息"><a href="#获取证书信息" class="headerlink" title="获取证书信息"></a>获取证书信息</h3><p><a href="https://techdocs.akamai.com/cps/reference/get-enrollments">API 参考文档</a></p>
+<ul>
+<li>需要传入 <code>contractId</code> 参数（<em><strong>注意事项: <a href="#%E8%8E%B7%E5%8F%96%E8%B4%A6%E5%8F%B7%E4%BF%A1%E6%81%AF">获取 contractId</a> 返回的 <code>contractId</code> 类似 <code>ctr_G-2PLTYIP</code>，在这里要改成 <code>G-2PLTYIP</code>，即去除前面的 <code>ctr_</code> 部分，否则会报 <code>type=Forbidden, title=Invalid Contract, detail=The current contract does not belong to ACG list., source=Contract ID: CTR_G-2PLTYIP</code> 错误</strong></em>）</li>
+<li>以及指定 <code>header</code>。否则会报错： <code>&#123;&#39;type&#39;: &#39;https://akab-lnvqfow3zngi6lr7-3l3nwwj2hnx5xrk5.luna.akamaiapis.net/cps/v2/error-types/missing-accept-header&#39;, &#39;title&#39;: &#39;A valid HTTP Accept header is required.&#39;, &#39;instance&#39;: &#39;https://akab-lnvqfow3zngi6lr7-3l3nwwj2hnx5xrk5.luna.akamaiapis.net/cps/v2/error-types/missing-accept-header?id=039e80fc61084409b4ab2fcf572cc9ce&#39;&#125;</code><figure class="highlight python"><table><tr><td class="code"><pre><span class="line">result = s.get(urljoin(baseurl, <span class="string">&#x27;/cps/v2/enrollments&#x27;</span>), </span><br><span class="line">               params = &#123;<span class="string">&#x27;contractId&#x27;</span>: <span class="string">&#x27;G-2PLTYIP&#x27;</span>&#125;, </span><br><span class="line">               headers = &#123;<span class="string">&quot;accept&quot;</span>: <span class="string">&quot;application/vnd.akamai.cps.enrollments.v11+json&quot;</span>&#125;)</span><br></pre></td></tr></table></figure></li>
+</ul>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/developer/docs/make-your-first-api-call">Create a basic API client</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-groups">List groups</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-cpcodes">List CP codes</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/reporting/reference/bytes-by-cpcode">bytes-by-cpcode</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-properties">List properties</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-property-version-rules">Get a property's rule tree</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-property">Get a property</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Akamai</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
       </tags>
   </entry>
   <entry>
@@ -1017,46 +1057,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>akamai cdn api 使用</title>
-    <url>/202302011153/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://techdocs.akamai.com/developer/docs/make-your-first-api-call">Akamai CDN API 说明文档</a>，调用 API 之前需要先根据官方文档说明 <code>Create API Client</code></p>
-<h1 id="Python-SDK-使用"><a href="#Python-SDK-使用" class="headerlink" title="Python SDK 使用"></a>Python SDK 使用</h1><p>根据官方文档说明安装 <code>edgegrid-python</code>，并配置 <code>Create API Client Key</code> 信息 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Create a basic API client](https://techdocs.akamai.com/developer/docs/make-your-first-api-call)">[1]</span></a></sup>。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install edgegrid-python</span><br></pre></td></tr></table></figure>
-
-<p><a href="https://techdocs.akamai.com/developer/docs/python">Python SDK 使用官方示例</a></p>
-<p><a href="https://techdocs.akamai.com/home/page/apis">Akamai API 列表</a></p>
-<h2 id="获取账号信息"><a href="#获取账号信息" class="headerlink" title="获取账号信息"></a>获取账号信息</h2><p>大多数 API 使用都需要提供 <code>groupId</code>，<code>accountId</code>，<code>contractIds</code>，通过以下接口获取这些信息 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[List groups](https://techdocs.akamai.com/property-mgr/reference/get-groups)">[2]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import requests</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from akamai.edgegrid import EdgeGridAuth, EdgeRc</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from urllib.parse import urljoin</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; edgerc = EdgeRc(<span class="string">&#x27;~/.edgerc&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; section = <span class="string">&#x27;default&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; baseurl = <span class="string">&#x27;https://%s&#x27;</span> % edgerc.get(section, <span class="string">&#x27;host&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/papi/v1/groups&#x27;</span>))</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result.json()</span></span><br><span class="line">&#123;&#x27;accountId&#x27;: &#x27;act_F-AC-488298736&#x27;, &#x27;accountName&#x27;: &#x27;Guangzhou kl Network Technology Co., Ltd&#x27;, &#x27;groups&#x27;: &#123;&#x27;items&#x27;: [&#123;&#x27;groupName&#x27;: &#x27;Guangzhou extreme-G-8HGkt-DSA&#x27;, &#x27;groupId&#x27;: &#x27;grp_186987767&#x27;, &#x27;contractIds&#x27;: [&#x27;ctr_G-3JDoujhh&#x27;]&#125;]&#125;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>如果 <code>Property</code> 中存在分组，每个分组都有一个独立的 <code>groupId</code></p>
-</blockquote>
-<span id="more"></span>
-<h2 id="获取-CPCode"><a href="#获取-CPCode" class="headerlink" title="获取 CPCode"></a>获取 CPCode</h2><p>通过以下接口及参数获取 CPCode <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[List CP codes](https://techdocs.akamai.com/property-mgr/reference/get-cpcodes)">[3]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import requests</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from akamai.edgegrid import EdgeGridAuth, EdgeRc</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from urllib.parse import urljoin</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; edgerc = EdgeRc(<span class="string">&#x27;~/.edgerc&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; section = <span class="string">&#x27;default&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; baseurl = <span class="string">&#x27;https://%s&#x27;</span> % edgerc.get(section, <span class="string">&#x27;host&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/papi/v1/cpcodes&#x27;</span>), params=&#123;<span class="string">&#x27;contractId&#x27;</span>: <span class="string">&#x27;ctr_G-ctr_G-3JDoujhh&#x27;</span>, <span class="string">&#x27;groupId&#x27;</span>: <span class="string">&#x27;grp_186987767&#x27;</span>&#125;, headers=&#123;<span class="string">&#x27;PAPI-Use-Prefixes&#x27;</span>: <span class="string">&#x27;True&#x27;</span>&#125;)</span></span><br></pre></td></tr></table></figure>
-
-<h2 id="获取指定-CPCode-的流量信息"><a href="#获取指定-CPCode-的流量信息" class="headerlink" title="获取指定 CPCode 的流量信息"></a>获取指定 CPCode 的流量信息</h2><p>此处主要演示获取指标 <code>edgeBytes</code> 的流量，具体 API 使用方式可参考官方文档 <sup id="fnref:4"><a href="#fn:4" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[bytes-by-cpcode](https://techdocs.akamai.com/reporting/reference/bytes-by-cpcode)">[4]</span></a></sup></p>
-<h3 id="查询所有-CPCode-的流量"><a href="#查询所有-CPCode-的流量" class="headerlink" title="查询所有 CPCode 的流量"></a>查询所有 CPCode 的流量</h3><figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import requests</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from akamai.edgegrid import EdgeGridAuth, EdgeRc</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; from urllib.parse import urljoin</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; edgerc = EdgeRc(<span class="string">&#x27;~/.edgerc&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; section = <span class="string">&#x27;default&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; baseurl = <span class="string">&#x27;https://%s&#x27;</span> % edgerc.get(section, <span class="string">&#x27;host&#x27;</span>)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; params = &#123;<span class="string">&#x27;start&#x27;</span>: <span class="string">&#x27;2022-12-31T00:00:00Z&#x27;</span>, <span class="string">&#x27;end&#x27;</span>: <span class="string">&#x27;2023-01-01T00:00:00Z&#x27;</span>, <span class="string">&#x27;allObjectIds&#x27;</span>: True, <span class="string">&#x27;metrics&#x27;</span>: <span class="string">&#x27;edgeBytes&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/reporting-api/v1/reports/bytes-by-cpcode/versions/1/report-data&#x27;</span>), params=params)</span></span><br></pre></td></tr></table></figure>
-
-<h3 id="获取指定-CPCode-的流量信息-1"><a href="#获取指定-CPCode-的流量信息-1" class="headerlink" title="获取指定 CPCode 的流量信息"></a>获取指定 CPCode 的流量信息</h3><figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s = requests.Session()</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; s.auth = EdgeGridAuth.from_edgerc(edgerc, section)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; params = &#123;<span class="string">&#x27;start&#x27;</span>: <span class="string">&#x27;2022-12-01T00:00:00Z&#x27;</span>, <span class="string">&#x27;end&#x27;</span>: <span class="string">&#x27;2023-01-01T00:00:00Z&#x27;</span>, <span class="string">&#x27;objectIds&#x27;</span>: <span class="string">&#x27;1335489&#x27;</span>, <span class="string">&#x27;metrics&#x27;</span>: <span class="string">&#x27;edgeBytes&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; result = s.get(urljoin(baseurl, <span class="string">&#x27;/reporting-api/v1/reports/bytes-by-cpcode/versions/1/report-data&#x27;</span>), params=params)</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="获取-property"><a href="#获取-property" class="headerlink" title="获取 property"></a>获取 property</h3><p>要获取 Property 信息，参考代码 <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[List properties](https://techdocs.akamai.com/property-mgr/reference/get-properties)">[5]</span></a></sup></p>
-<p>要获取指定 Property 信息，参考代码 <sup id="fnref:7"><a href="#fn:7" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Get a property](https://techdocs.akamai.com/property-mgr/reference/get-property)">[7]</span></a></sup></p>
-<h3 id="获取-Property-的-rule-信息"><a href="#获取-Property-的-rule-信息" class="headerlink" title="获取 Property 的 rule 信息"></a>获取 Property 的 rule 信息</h3><p>参考文档 <sup id="fnref:6"><a href="#fn:6" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Get a property's rule tree](https://techdocs.akamai.com/property-mgr/reference/get-property-version-rules)">[6]</span></a></sup></p>
-<h3 id="获取证书信息"><a href="#获取证书信息" class="headerlink" title="获取证书信息"></a>获取证书信息</h3><p><a href="https://techdocs.akamai.com/cps/reference/get-enrollments">API 参考文档</a></p>
-<ul>
-<li>需要传入 <code>contractId</code> 参数（<em><strong>注意事项: <a href="#%E8%8E%B7%E5%8F%96%E8%B4%A6%E5%8F%B7%E4%BF%A1%E6%81%AF">获取 contractId</a> 返回的 <code>contractId</code> 类似 <code>ctr_G-2PLTYIP</code>，在这里要改成 <code>G-2PLTYIP</code>，即去除前面的 <code>ctr_</code> 部分，否则会报 <code>type=Forbidden, title=Invalid Contract, detail=The current contract does not belong to ACG list., source=Contract ID: CTR_G-2PLTYIP</code> 错误</strong></em>）</li>
-<li>以及指定 <code>header</code>。否则会报错： <code>&#123;&#39;type&#39;: &#39;https://akab-lnvqfow3zngi6lr7-3l3nwwj2hnx5xrk5.luna.akamaiapis.net/cps/v2/error-types/missing-accept-header&#39;, &#39;title&#39;: &#39;A valid HTTP Accept header is required.&#39;, &#39;instance&#39;: &#39;https://akab-lnvqfow3zngi6lr7-3l3nwwj2hnx5xrk5.luna.akamaiapis.net/cps/v2/error-types/missing-accept-header?id=039e80fc61084409b4ab2fcf572cc9ce&#39;&#125;</code><figure class="highlight python"><table><tr><td class="code"><pre><span class="line">result = s.get(urljoin(baseurl, <span class="string">&#x27;/cps/v2/enrollments&#x27;</span>), </span><br><span class="line">               params = &#123;<span class="string">&#x27;contractId&#x27;</span>: <span class="string">&#x27;G-2PLTYIP&#x27;</span>&#125;, </span><br><span class="line">               headers = &#123;<span class="string">&quot;accept&quot;</span>: <span class="string">&quot;application/vnd.akamai.cps.enrollments.v11+json&quot;</span>&#125;)</span><br></pre></td></tr></table></figure></li>
-</ul>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/developer/docs/make-your-first-api-call">Create a basic API client</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-groups">List groups</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-cpcodes">List CP codes</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/reporting/reference/bytes-by-cpcode">bytes-by-cpcode</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-properties">List properties</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-property-version-rules">Get a property's rule tree</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://techdocs.akamai.com/property-mgr/reference/get-property">Get a property</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Akamai</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
       </tags>
   </entry>
   <entry>
@@ -4542,65 +4542,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>ELK 常见错误</title>
-    <url>/202312151503/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
-<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
-<p>要解决这个问题，可以考虑以下几个选项：</p>
-<ol>
-<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
-<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
-<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
-   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>获取  Elasticsearch 集群的最大分片数限制</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
-</li>
-<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
-</li>
-</ol>
-<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>使用以下 filebeat 配置文件</p>
-<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
-<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
-
-<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
-<ul>
-<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
-</li>
-<li><p><em><strong>ILM 配置问题</strong></em> </p>
-<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
- <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
-</ul>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>elasticsearch 安装使用及常见错误集锦</title>
     <url>/202303301601/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -4723,6 +4664,65 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/targz.html#targz-running">安装运行 Elasticsearch</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>ELK 常见错误</title>
+    <url>/202312151503/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
+<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
+<p>要解决这个问题，可以考虑以下几个选项：</p>
+<ol>
+<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
+<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
+<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
+   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>获取  Elasticsearch 集群的最大分片数限制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
+</li>
+<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
+</li>
+</ol>
+<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>使用以下 filebeat 配置文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
+<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
+
+<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
+<ul>
+<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
+</li>
+<li><p><em><strong>ILM 配置问题</strong></em> </p>
+<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
+ <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -5578,64 +5578,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>firewalld 使用</title>
-    <url>/202302220932/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 3.10.0-1160</li>
-</ul>
-<p><code>firewalld</code> 是 <code>iptables</code> 的一个封装，可以让你更容易地管理 <code>iptables</code> 规则， 它并不是 <code>iptables</code> 的替代品。虽然 <code>iptables</code> 命令仍可用于 <code>firewalld</code> ，但建议使用 <code>firewalld</code> 时仅使用 <code>firewalld</code> 命令。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[FirewallD入门手册](https://www.linuxprobe.com/centos-firewalld.html)">[1]</span></a></sup></p>
-<p><code>firewalld</code> 是 <code>iptables</code> 的前端控制器，用于实现持久的网络流量规则。它提供命令行和图形界面，在大多数 Linux 发行版的仓库中都有。与直接控制 <code>iptables</code> 相比，使用 <code>firewalld</code> 有两个主要区别：</p>
-<ul>
-<li><code>firewalld</code> 使用区域和服务而不是链式规则。</li>
-<li>它动态管理规则集，允许更新规则而不破坏现有会话和连接。</li>
-</ul>
-<h1 id="firewalld-配置说明"><a href="#firewalld-配置说明" class="headerlink" title="firewalld 配置说明"></a>firewalld 配置说明</h1><h2 id="配置文件目录"><a href="#配置文件目录" class="headerlink" title="配置文件目录"></a>配置文件目录</h2><p>配置文件位于两个目录中：</p>
-<ul>
-<li><code>/usr/lib/firewalld/</code> 下保存默认配置，如默认区域和公用服务。避免修改它们，因为每次 <code>firewall</code> 软件包更新时都会覆盖这些文件。</li>
-<li><code>/etc/firewalld</code> 下保存系统配置文件。 这些文件将覆盖默认配置。</li>
-</ul>
-<h2 id="配置集说明"><a href="#配置集说明" class="headerlink" title="配置集说明"></a>配置集说明</h2><p><code>firewalld</code> 使用两个配置集： <code>运行时</code> 和 <code>持久</code></p>
-<p>在系统重新启动或重新启动 <code>firewalld</code> 服务时，不会保留 <code>运行时</code> 的配置更改，而对 <code>持久</code> 配置集的更改不会应用于正在运行的系统。</p>
-<p>默认情况下，<code>firewall-cmd</code> 命令适用于 <code>运行时</code> 配置，但使用 <code>--permanent</code> 选项将保存配置到  <code>持久</code> 配置中。</p>
-<p>要添加和激活持久性规则，你可以使用以下两种方法之一：</p>
-<ol>
-<li>将规则同时添加到持久规则集和运行时规则集中<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --zone=public --add-service=http</span><br></pre></td></tr></table></figure></li>
-<li>将规则添加到持久规则集中并重新加载 <code>firewalld</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --reload</span><br></pre></td></tr></table></figure>
-<code>--reload</code> 选项会删除所有 <code>运行时</code> 配置并应用 <code>持久</code> 配置。因为 <code>firewalld</code> 动态管理规则集，所以它不会破坏现有的连接和会话。<span id="more"></span></li>
-</ol>
-<h2 id="区域说明"><a href="#区域说明" class="headerlink" title="区域说明"></a>区域说明</h2><p><code>区域</code> 是针对给定位置或场景（例如家庭、公共、受信任等）可能具有的各种信任级别的预构建规则集。不同的区域允许不同的网络服务和入站流量类型，而拒绝其他任何流量。 首次启用 <code>firewalld</code> 后，<code>public</code> 将是默认区域。</p>
-<p>区域也可以用于不同的网络接口。例如，要分离内部网络和互联网的接口，你可以在 <code>internal</code> 区域上允许 DHCP，但在 <code>external</code> 区域仅允许 HTTP 和 SSH。未明确设置为特定区域的任何接口将添加到默认区域。</p>
-<h3 id="查看默认区域"><a href="#查看默认区域" class="headerlink" title="查看默认区域"></a>查看默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-default-zone</span></span><br><span class="line">public</span><br></pre></td></tr></table></figure>
-<h3 id="修改默认区域"><a href="#修改默认区域" class="headerlink" title="修改默认区域"></a>修改默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --set-default-zone=internal</span><br></pre></td></tr></table></figure>
-<h3 id="查看激活的区域及网络接口使用的区域"><a href="#查看激活的区域及网络接口使用的区域" class="headerlink" title="查看激活的区域及网络接口使用的区域"></a>查看激活的区域及网络接口使用的区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-active-zones</span></span><br><span class="line">public</span><br><span class="line">  interfaces: eth0</span><br></pre></td></tr></table></figure>
-<h3 id="查看指定区域的所有规则集-默认查看-运行时"><a href="#查看指定区域的所有规则集-默认查看-运行时" class="headerlink" title="查看指定区域的所有规则集(默认查看 运行时)"></a>查看指定区域的所有规则集(默认查看 <code>运行时</code>)</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all</span></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules:</span><br></pre></td></tr></table></figure>
-<h3 id="查看指定区域-持久-配置集的所有规则"><a href="#查看指定区域-持久-配置集的所有规则" class="headerlink" title="查看指定区域 持久 配置集的所有规则"></a>查看指定区域 <code>持久</code> 配置集的所有规则</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all --permanent</span></span><br><span class="line">public</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="查看所有区域的配置"><a href="#查看所有区域的配置" class="headerlink" title="查看所有区域的配置"></a>查看所有区域的配置</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --list-all-zones</span></span><br><span class="line">block</span><br><span class="line">  target: %%REJECT%%</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">dmz</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">drop</span><br><span class="line">  target: DROP</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">external</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: yes</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">home</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">internal</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">trusted</span><br><span class="line">  target: ACCEPT</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">work</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="服务"><a href="#服务" class="headerlink" title="服务"></a>服务</h2><p><code>firewalld</code> 可以根据特定网络服务的预定义规则来允许相关流量。你可以创建自己的自定义系统规则，并将它们添加到任何区域。 默认支持的服务的配置文件位于 <code>/usr/lib/firewalld/services/</code>，用户创建的服务文件在 <code>/etc/firewalld/services/</code> 中</p>
-<h3 id="查看默认的可用服务"><a href="#查看默认的可用服务" class="headerlink" title="查看默认的可用服务"></a>查看默认的可用服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-services</span></span><br><span class="line">RH-Satellite-6 RH-Satellite-6-capsule amanda-client amanda-k5-client amqp amqps apcupsd audit bacula bacula-client \</span><br><span class="line">bgp bitcoin bitcoin-rpc bitcoin-testnet bitcoin-testnet-rpc ceph ceph-mon cfengine condor-collector ctdb dhcp dhcpv6 \</span><br><span class="line">dhcpv6-client distcc dns docker-registry docker-swarm dropbox-lansync elasticsearch etcd-client etcd-server finger \</span><br><span class="line">freeipa-ldap freeipa-ldaps freeipa-replication freeipa-trust ftp ganglia-client ganglia-master git gre high-availability \</span><br><span class="line">http https imap imaps ipp ipp-client ipsec irc ircs iscsi-target isns jenkins kadmin kerberos kibana klogin kpasswd \</span><br><span class="line">kprop kshell ldap ldaps libvirt libvirt-tls lightning-network llmnr managesieve matrix mdns minidlna mongodb mosh mountd \</span><br><span class="line">mqtt mqtt-tls ms-wbt mssql murmur mysql nfs nfs3 nmea-0183 nrpe ntp nut openvpn ovirt-imageio ovirt-storageconsole \</span><br><span class="line">ovirt-vmconsole plex pmcd pmproxy pmwebapi pmwebapis pop3 pop3s postgresql privoxy proxy-dhcp ptp pulseaudio puppetmaster \</span><br><span class="line">quassel radius redis rpc-bind rsh rsyncd rtsp salt-master samba samba-client samba-dc sane sip sips slp smtp smtp-submission \</span><br><span class="line">smtps snmp snmptrap spideroak-lansync squid ssh steam-streaming svdrp svn syncthing syncthing-gui synergy syslog syslog-tls \</span><br><span class="line">telnet tftp tftp-client tinc tor-socks transmission-client upnp-client vdsm vnc-server wbem-http wbem-https wsman wsmans \</span><br><span class="line">xdmcp xmpp-bosh xmpp-client xmpp-local xmpp-server zabbix-agent zabbix-server</span><br></pre></td></tr></table></figure>
-
-<h3 id="启用或禁用-HTTP-服务"><a href="#启用或禁用-HTTP-服务" class="headerlink" title="启用或禁用 HTTP 服务"></a>启用或禁用 HTTP 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-service=http --permanent</span><br></pre></td></tr></table></figure>
-
-<h3 id="允许或者拒绝任意端口-x2F-协议"><a href="#允许或者拒绝任意端口-x2F-协议" class="headerlink" title="允许或者拒绝任意端口&#x2F;协议"></a>允许或者拒绝任意端口&#x2F;协议</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-port=12345/tcp --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-port=12345/tcp --permanent</span><br></pre></td></tr></table></figure>
-
-<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><h3 id="同一台服务器上将-80-端口的流量转发到-12345-端口"><a href="#同一台服务器上将-80-端口的流量转发到-12345-端口" class="headerlink" title="同一台服务器上将 80 端口的流量转发到 12345 端口"></a>同一台服务器上将 80 端口的流量转发到 12345 端口</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=12345</span><br></pre></td></tr></table></figure>
-
-<h3 id="将端口转发到另外一台服务器上"><a href="#将端口转发到另外一台服务器上" class="headerlink" title="将端口转发到另外一台服务器上"></a>将端口转发到另外一台服务器上</h3><ol>
-<li>在需要的区域中激活 <code>masquerade</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-masquerade</span><br></pre></td></tr></table></figure></li>
-<li>添加转发规则<br>例子中是将 IP 地址为 ：123.456.78.9 的远程服务器上 80 端口的流量转发到 8080 上<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=8080:toaddr=123.456.78.9</span><br></pre></td></tr></table></figure>
-要删除规则，用 <code>--remove</code> 替换 <code>--add</code>。比如：<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --remove-masquerade</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.linuxprobe.com/centos-firewalld.html">FirewallD入门手册</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>filebeat 使用详解</title>
     <url>/202307201352/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6115,6 +6057,64 @@ width: 20%;
       <categories>
         <category>Linux</category>
         <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>firewalld 使用</title>
+    <url>/202302220932/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 3.10.0-1160</li>
+</ul>
+<p><code>firewalld</code> 是 <code>iptables</code> 的一个封装，可以让你更容易地管理 <code>iptables</code> 规则， 它并不是 <code>iptables</code> 的替代品。虽然 <code>iptables</code> 命令仍可用于 <code>firewalld</code> ，但建议使用 <code>firewalld</code> 时仅使用 <code>firewalld</code> 命令。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[FirewallD入门手册](https://www.linuxprobe.com/centos-firewalld.html)">[1]</span></a></sup></p>
+<p><code>firewalld</code> 是 <code>iptables</code> 的前端控制器，用于实现持久的网络流量规则。它提供命令行和图形界面，在大多数 Linux 发行版的仓库中都有。与直接控制 <code>iptables</code> 相比，使用 <code>firewalld</code> 有两个主要区别：</p>
+<ul>
+<li><code>firewalld</code> 使用区域和服务而不是链式规则。</li>
+<li>它动态管理规则集，允许更新规则而不破坏现有会话和连接。</li>
+</ul>
+<h1 id="firewalld-配置说明"><a href="#firewalld-配置说明" class="headerlink" title="firewalld 配置说明"></a>firewalld 配置说明</h1><h2 id="配置文件目录"><a href="#配置文件目录" class="headerlink" title="配置文件目录"></a>配置文件目录</h2><p>配置文件位于两个目录中：</p>
+<ul>
+<li><code>/usr/lib/firewalld/</code> 下保存默认配置，如默认区域和公用服务。避免修改它们，因为每次 <code>firewall</code> 软件包更新时都会覆盖这些文件。</li>
+<li><code>/etc/firewalld</code> 下保存系统配置文件。 这些文件将覆盖默认配置。</li>
+</ul>
+<h2 id="配置集说明"><a href="#配置集说明" class="headerlink" title="配置集说明"></a>配置集说明</h2><p><code>firewalld</code> 使用两个配置集： <code>运行时</code> 和 <code>持久</code></p>
+<p>在系统重新启动或重新启动 <code>firewalld</code> 服务时，不会保留 <code>运行时</code> 的配置更改，而对 <code>持久</code> 配置集的更改不会应用于正在运行的系统。</p>
+<p>默认情况下，<code>firewall-cmd</code> 命令适用于 <code>运行时</code> 配置，但使用 <code>--permanent</code> 选项将保存配置到  <code>持久</code> 配置中。</p>
+<p>要添加和激活持久性规则，你可以使用以下两种方法之一：</p>
+<ol>
+<li>将规则同时添加到持久规则集和运行时规则集中<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --zone=public --add-service=http</span><br></pre></td></tr></table></figure></li>
+<li>将规则添加到持久规则集中并重新加载 <code>firewalld</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">sudo firewall-cmd --reload</span><br></pre></td></tr></table></figure>
+<code>--reload</code> 选项会删除所有 <code>运行时</code> 配置并应用 <code>持久</code> 配置。因为 <code>firewalld</code> 动态管理规则集，所以它不会破坏现有的连接和会话。<span id="more"></span></li>
+</ol>
+<h2 id="区域说明"><a href="#区域说明" class="headerlink" title="区域说明"></a>区域说明</h2><p><code>区域</code> 是针对给定位置或场景（例如家庭、公共、受信任等）可能具有的各种信任级别的预构建规则集。不同的区域允许不同的网络服务和入站流量类型，而拒绝其他任何流量。 首次启用 <code>firewalld</code> 后，<code>public</code> 将是默认区域。</p>
+<p>区域也可以用于不同的网络接口。例如，要分离内部网络和互联网的接口，你可以在 <code>internal</code> 区域上允许 DHCP，但在 <code>external</code> 区域仅允许 HTTP 和 SSH。未明确设置为特定区域的任何接口将添加到默认区域。</p>
+<h3 id="查看默认区域"><a href="#查看默认区域" class="headerlink" title="查看默认区域"></a>查看默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-default-zone</span></span><br><span class="line">public</span><br></pre></td></tr></table></figure>
+<h3 id="修改默认区域"><a href="#修改默认区域" class="headerlink" title="修改默认区域"></a>修改默认区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --set-default-zone=internal</span><br></pre></td></tr></table></figure>
+<h3 id="查看激活的区域及网络接口使用的区域"><a href="#查看激活的区域及网络接口使用的区域" class="headerlink" title="查看激活的区域及网络接口使用的区域"></a>查看激活的区域及网络接口使用的区域</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-active-zones</span></span><br><span class="line">public</span><br><span class="line">  interfaces: eth0</span><br></pre></td></tr></table></figure>
+<h3 id="查看指定区域的所有规则集-默认查看-运行时"><a href="#查看指定区域的所有规则集-默认查看-运行时" class="headerlink" title="查看指定区域的所有规则集(默认查看 运行时)"></a>查看指定区域的所有规则集(默认查看 <code>运行时</code>)</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all</span></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules:</span><br></pre></td></tr></table></figure>
+<h3 id="查看指定区域-持久-配置集的所有规则"><a href="#查看指定区域-持久-配置集的所有规则" class="headerlink" title="查看指定区域 持久 配置集的所有规则"></a>查看指定区域 <code>持久</code> 配置集的所有规则</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --zone=public --list-all --permanent</span></span><br><span class="line">public</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="查看所有区域的配置"><a href="#查看所有区域的配置" class="headerlink" title="查看所有区域的配置"></a>查看所有区域的配置</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --list-all-zones</span></span><br><span class="line">block</span><br><span class="line">  target: %%REJECT%%</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">dmz</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">drop</span><br><span class="line">  target: DROP</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">external</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: yes</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">home</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">internal</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client mdns samba-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">public (active)</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: eth0</span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: 20/tcp 21/tcp 22/tcp 80/tcp 443/tcp 32210/tcp 39000-40000/tcp</span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">trusted</span><br><span class="line">  target: ACCEPT</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: </span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line">	</span><br><span class="line"></span><br><span class="line">work</span><br><span class="line">  target: default</span><br><span class="line">  icmp-block-inversion: no</span><br><span class="line">  interfaces: </span><br><span class="line">  sources: </span><br><span class="line">  services: dhcpv6-client ssh</span><br><span class="line">  ports: </span><br><span class="line">  protocols: </span><br><span class="line">  masquerade: no</span><br><span class="line">  forward-ports: </span><br><span class="line">  source-ports: </span><br><span class="line">  icmp-blocks: </span><br><span class="line">  rich rules: </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="服务"><a href="#服务" class="headerlink" title="服务"></a>服务</h2><p><code>firewalld</code> 可以根据特定网络服务的预定义规则来允许相关流量。你可以创建自己的自定义系统规则，并将它们添加到任何区域。 默认支持的服务的配置文件位于 <code>/usr/lib/firewalld/services/</code>，用户创建的服务文件在 <code>/etc/firewalld/services/</code> 中</p>
+<h3 id="查看默认的可用服务"><a href="#查看默认的可用服务" class="headerlink" title="查看默认的可用服务"></a>查看默认的可用服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">firewall-cmd --get-services</span></span><br><span class="line">RH-Satellite-6 RH-Satellite-6-capsule amanda-client amanda-k5-client amqp amqps apcupsd audit bacula bacula-client \</span><br><span class="line">bgp bitcoin bitcoin-rpc bitcoin-testnet bitcoin-testnet-rpc ceph ceph-mon cfengine condor-collector ctdb dhcp dhcpv6 \</span><br><span class="line">dhcpv6-client distcc dns docker-registry docker-swarm dropbox-lansync elasticsearch etcd-client etcd-server finger \</span><br><span class="line">freeipa-ldap freeipa-ldaps freeipa-replication freeipa-trust ftp ganglia-client ganglia-master git gre high-availability \</span><br><span class="line">http https imap imaps ipp ipp-client ipsec irc ircs iscsi-target isns jenkins kadmin kerberos kibana klogin kpasswd \</span><br><span class="line">kprop kshell ldap ldaps libvirt libvirt-tls lightning-network llmnr managesieve matrix mdns minidlna mongodb mosh mountd \</span><br><span class="line">mqtt mqtt-tls ms-wbt mssql murmur mysql nfs nfs3 nmea-0183 nrpe ntp nut openvpn ovirt-imageio ovirt-storageconsole \</span><br><span class="line">ovirt-vmconsole plex pmcd pmproxy pmwebapi pmwebapis pop3 pop3s postgresql privoxy proxy-dhcp ptp pulseaudio puppetmaster \</span><br><span class="line">quassel radius redis rpc-bind rsh rsyncd rtsp salt-master samba samba-client samba-dc sane sip sips slp smtp smtp-submission \</span><br><span class="line">smtps snmp snmptrap spideroak-lansync squid ssh steam-streaming svdrp svn syncthing syncthing-gui synergy syslog syslog-tls \</span><br><span class="line">telnet tftp tftp-client tinc tor-socks transmission-client upnp-client vdsm vnc-server wbem-http wbem-https wsman wsmans \</span><br><span class="line">xdmcp xmpp-bosh xmpp-client xmpp-local xmpp-server zabbix-agent zabbix-server</span><br></pre></td></tr></table></figure>
+
+<h3 id="启用或禁用-HTTP-服务"><a href="#启用或禁用-HTTP-服务" class="headerlink" title="启用或禁用 HTTP 服务"></a>启用或禁用 HTTP 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-service=http --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-service=http --permanent</span><br></pre></td></tr></table></figure>
+
+<h3 id="允许或者拒绝任意端口-x2F-协议"><a href="#允许或者拒绝任意端口-x2F-协议" class="headerlink" title="允许或者拒绝任意端口&#x2F;协议"></a>允许或者拒绝任意端口&#x2F;协议</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-port=12345/tcp --permanent</span><br><span class="line">firewall-cmd --zone=public --remove-port=12345/tcp --permanent</span><br></pre></td></tr></table></figure>
+
+<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><h3 id="同一台服务器上将-80-端口的流量转发到-12345-端口"><a href="#同一台服务器上将-80-端口的流量转发到-12345-端口" class="headerlink" title="同一台服务器上将 80 端口的流量转发到 12345 端口"></a>同一台服务器上将 80 端口的流量转发到 12345 端口</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=12345</span><br></pre></td></tr></table></figure>
+
+<h3 id="将端口转发到另外一台服务器上"><a href="#将端口转发到另外一台服务器上" class="headerlink" title="将端口转发到另外一台服务器上"></a>将端口转发到另外一台服务器上</h3><ol>
+<li>在需要的区域中激活 <code>masquerade</code><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --add-masquerade</span><br></pre></td></tr></table></figure></li>
+<li>添加转发规则<br>例子中是将 IP 地址为 ：123.456.78.9 的远程服务器上 80 端口的流量转发到 8080 上<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=&quot;public&quot; --add-forward-port=port=80:proto=tcp:toport=8080:toaddr=123.456.78.9</span><br></pre></td></tr></table></figure>
+要删除规则，用 <code>--remove</code> 替换 <code>--add</code>。比如：<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">firewall-cmd --zone=public --remove-masquerade</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.linuxprobe.com/centos-firewalld.html">FirewallD入门手册</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -6621,45 +6621,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>和田玉知识归纳</title>
-    <url>/202401171333/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="和田玉的分类"><a href="#和田玉的分类" class="headerlink" title="和田玉的分类"></a>和田玉的分类</h1><h2 id="山料和籽料"><a href="#山料和籽料" class="headerlink" title="山料和籽料"></a>山料和籽料</h2><p>按照矿产分类，主要分为籽料与山料两种。</p>
-<p><em><strong>山料，是籽料的前身</strong></em>。</p>
-<h3 id="山料"><a href="#山料" class="headerlink" title="山料"></a>山料</h3><p><strong>和田玉山料</strong> 产自昆仑山脉之中，属于原生矿，被称为 <code>璞玉</code></p>
-<p>从质地上说，有的山料的结构较为粗糙，颗粒比较明显或带石性，不带皮色，油性差，有的山料靠近外部有红糖的颜色。也有结构细密，油润度极好的优质山料。</p>
-<p>山料因为没有受到河流的冲刷，自始至终都深藏在岩体中，缺乏外力的打磨，看起来比较干涩，所以外形大多平淡无奇，有棱有角，表面也比较干涩，绺裂现象明显。</p>
-<h3 id="籽料"><a href="#籽料" class="headerlink" title="籽料"></a>籽料</h3><p><strong>和田玉籽料</strong> 是采自河床或者河床泥土中，经过几十万年的侵蚀打磨而得到的玉石。有时又被称为 <code>水籽</code></p>
-<p>籽料是由山料在地质活动时冲刷或滚落到河里，由河水冲刷（还有风化、风干等物理反应一起作用）形成的。籽料产自 <em><strong>河流中下游</strong></em>，是次生矿。产自河流上游的被称为 <em><strong>山流水料</strong></em>。籽料因为长久受到河流的冲刷，一般为卵石形状，表面很光滑圆润，带皮色。</p>
-<p><img src="https://i.csms.tech/img_224.png"></p>
-<p>和山料的存在环境不同，导致籽料有了以下特性：</p>
-<ul>
-<li>籽料常年在河水中浸泡，水流的压力使它的肉质变得更加紧密，水流的冲刷使它变的更加温润油腻，形成了它独特的质地和油润感；</li>
-<li>河水中存在很多的矿物质和微量元素，长时间的水流冲刷和加压过程中，部分矿物质会沉淀到籽料中，形成各种颜色的籽料皮子。带有皮子的籽料，价格有大大提升</li>
-</ul>
-<p>籽料开采出来，外观上看就与鹅卵石一般无二，各个颜色都有，只不过他是和田玉再形成的鹅卵石。仔细观察籽料表面会发现上面密密麻麻都是一些小孔，因为这些小孔跟我们皮肤上的毛孔相似被称之为毛孔或者皮孔。和田玉籽料一般有皮色和皮孔，就算没有皮色，籽料上还是能够找到均匀的毛细孔，这是籽料独有的标志。而山料则没有皮色皮孔。</p>
-<p>一般情况下，籽料都会拥有或深或浅的皮色，表面还会有明显的小凹坑（也就是俗称的皮孔），这是玉石长时间在水中冲刷、浸泡和磕碰造成的。而山料由于生长环境固定，不存在皮色和皮孔。</p>
-<p>同时，由于籽料长年累月泡在水中，水里的微生物和微量元素会渗入到玉石中，所以会造成局部呈现或黄或红或黑的颜色，也就是 <code>沁色</code>。而这一点在山料身上，就非常不明显。</p>
-<p><strong>籽料的水润度是明显高于山料的</strong>，如果比较籽料和山料制作的成品，会很容易发现籽料表面质地非常润泽、光滑、细腻。而山料作品，即使经过抛光处理，表面仍会干涩，缺乏光滑的油润感，这一点用手触摸时尤为明显。</p>
-<p>由于 <strong>和田玉籽料的密度比山料大</strong>，所以同等体积的情况下，籽料相对山料比较重</p>
-<p>山料也有很多可以跟顶级籽料相媲美的。比如 1995 年于田县开采的 8 吨和田玉山料，白度细度等各个方面都是顶级。因品质极佳，入市后引起了轰动，后被称之位“95于田料”。时至今日，“95于田料” 在业内也是传说中的料子，被很多业内人士公认为 <strong>羊脂级</strong>。著名的和氏璧就是一块山料。</p>
-<p>和田玉器的市场价格中羊脂玉最高、籽料高、山流水次之、山料更次之。</p>
-<h1 id="和田玉结构"><a href="#和田玉结构" class="headerlink" title="和田玉结构"></a>和田玉结构</h1><p>和田玉籽料内部结构致密，用肉眼几乎看不到内部结构；而再好的山料，还是能看到其松软质地的结构。</p>
-<p>籽料由于有外力的挤压、打磨，所以密度要明显高过山料。籽料的话，无论是青籽还是白籽，内部结构都是致密的，用肉眼几乎看不到内部结构。而山料，无论结构多致密，在强光手电筒下，总是能看到松软的质地结构。</p>
-<h1 id="广义的籽料"><a href="#广义的籽料" class="headerlink" title="广义的籽料"></a>广义的籽料</h1><p>今天的籽料已不是传统意义上的和田籽料了。在广义和田玉的范围内，籽料也有了更多种类。</p>
-<h2 id="新疆产的岫玉籽料"><a href="#新疆产的岫玉籽料" class="headerlink" title="新疆产的岫玉籽料"></a>新疆产的岫玉籽料</h2><p>新疆除了有和田玉籽料，还出产一种颜色或绿或黑绿色等，里面也有黑点存在的岫玉。岫玉中品质好的，外观与和田玉籽料很相似，并且在市场上的和田籽料中也能看到相当数量的岫玉籽料，大家要留意。</p>
-<h2 id="来自俄罗斯的“籽料”"><a href="#来自俄罗斯的“籽料”" class="headerlink" title="来自俄罗斯的“籽料”"></a>来自俄罗斯的“籽料”</h2><p>俄罗斯玉，近年来随着和田料的减少而逐渐成为软玉舞台的有力竞争者。</p>
-<p>从玉材来看，俄料95%都是山料，但也有籽料，只是俄料中的“籽料”并未达到籽料定义的产状玉料：籽料由于长期的冲刷搬运碰撞，玉质形态韧性都达到了特别的质感，而俄料中的“籽料”其实没有这个长期的过程，严格意义上只能算和田玉的山流水料。</p>
-<h2 id="辽宁产的河磨料"><a href="#辽宁产的河磨料" class="headerlink" title="辽宁产的河磨料"></a>辽宁产的河磨料</h2><p>河磨料是国内确切命名的两种籽料之一，另一种是和田籽料。“河磨”，从河里磨出来的玉，名字起得很传神，可能因为河水的冲击力较小，河磨料多见厚皮料。</p>
-<p>另外，近几年贵州罗甸也出产白度尚可的软玉，透闪石含量达95%，也是广义和田玉中的一种。罗甸玉石性很重，料子干涩，缺乏油性，其实所谓的“籽料”也只能用来骗骗小白玩友；广西大化玉则是这几年才出现的玉种，也是广义和田玉中的一种，大化玉里有籽料，质地也很细腻，有兴趣的宝友可以玩一玩。</p>
-]]></content>
-      <categories>
-        <category>生活日常</category>
-      </categories>
-      <tags>
-        <tag>生活日常</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>helm 安装及使用</title>
     <url>/202210071543/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6697,6 +6658,45 @@ width: 20%;
       <tags>
         <tag>Kubernetes</tag>
         <tag>helm</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>和田玉知识归纳</title>
+    <url>/202401171333/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="和田玉的分类"><a href="#和田玉的分类" class="headerlink" title="和田玉的分类"></a>和田玉的分类</h1><h2 id="山料和籽料"><a href="#山料和籽料" class="headerlink" title="山料和籽料"></a>山料和籽料</h2><p>按照矿产分类，主要分为籽料与山料两种。</p>
+<p><em><strong>山料，是籽料的前身</strong></em>。</p>
+<h3 id="山料"><a href="#山料" class="headerlink" title="山料"></a>山料</h3><p><strong>和田玉山料</strong> 产自昆仑山脉之中，属于原生矿，被称为 <code>璞玉</code></p>
+<p>从质地上说，有的山料的结构较为粗糙，颗粒比较明显或带石性，不带皮色，油性差，有的山料靠近外部有红糖的颜色。也有结构细密，油润度极好的优质山料。</p>
+<p>山料因为没有受到河流的冲刷，自始至终都深藏在岩体中，缺乏外力的打磨，看起来比较干涩，所以外形大多平淡无奇，有棱有角，表面也比较干涩，绺裂现象明显。</p>
+<h3 id="籽料"><a href="#籽料" class="headerlink" title="籽料"></a>籽料</h3><p><strong>和田玉籽料</strong> 是采自河床或者河床泥土中，经过几十万年的侵蚀打磨而得到的玉石。有时又被称为 <code>水籽</code></p>
+<p>籽料是由山料在地质活动时冲刷或滚落到河里，由河水冲刷（还有风化、风干等物理反应一起作用）形成的。籽料产自 <em><strong>河流中下游</strong></em>，是次生矿。产自河流上游的被称为 <em><strong>山流水料</strong></em>。籽料因为长久受到河流的冲刷，一般为卵石形状，表面很光滑圆润，带皮色。</p>
+<p><img src="https://i.csms.tech/img_224.png"></p>
+<p>和山料的存在环境不同，导致籽料有了以下特性：</p>
+<ul>
+<li>籽料常年在河水中浸泡，水流的压力使它的肉质变得更加紧密，水流的冲刷使它变的更加温润油腻，形成了它独特的质地和油润感；</li>
+<li>河水中存在很多的矿物质和微量元素，长时间的水流冲刷和加压过程中，部分矿物质会沉淀到籽料中，形成各种颜色的籽料皮子。带有皮子的籽料，价格有大大提升</li>
+</ul>
+<p>籽料开采出来，外观上看就与鹅卵石一般无二，各个颜色都有，只不过他是和田玉再形成的鹅卵石。仔细观察籽料表面会发现上面密密麻麻都是一些小孔，因为这些小孔跟我们皮肤上的毛孔相似被称之为毛孔或者皮孔。和田玉籽料一般有皮色和皮孔，就算没有皮色，籽料上还是能够找到均匀的毛细孔，这是籽料独有的标志。而山料则没有皮色皮孔。</p>
+<p>一般情况下，籽料都会拥有或深或浅的皮色，表面还会有明显的小凹坑（也就是俗称的皮孔），这是玉石长时间在水中冲刷、浸泡和磕碰造成的。而山料由于生长环境固定，不存在皮色和皮孔。</p>
+<p>同时，由于籽料长年累月泡在水中，水里的微生物和微量元素会渗入到玉石中，所以会造成局部呈现或黄或红或黑的颜色，也就是 <code>沁色</code>。而这一点在山料身上，就非常不明显。</p>
+<p><strong>籽料的水润度是明显高于山料的</strong>，如果比较籽料和山料制作的成品，会很容易发现籽料表面质地非常润泽、光滑、细腻。而山料作品，即使经过抛光处理，表面仍会干涩，缺乏光滑的油润感，这一点用手触摸时尤为明显。</p>
+<p>由于 <strong>和田玉籽料的密度比山料大</strong>，所以同等体积的情况下，籽料相对山料比较重</p>
+<p>山料也有很多可以跟顶级籽料相媲美的。比如 1995 年于田县开采的 8 吨和田玉山料，白度细度等各个方面都是顶级。因品质极佳，入市后引起了轰动，后被称之位“95于田料”。时至今日，“95于田料” 在业内也是传说中的料子，被很多业内人士公认为 <strong>羊脂级</strong>。著名的和氏璧就是一块山料。</p>
+<p>和田玉器的市场价格中羊脂玉最高、籽料高、山流水次之、山料更次之。</p>
+<h1 id="和田玉结构"><a href="#和田玉结构" class="headerlink" title="和田玉结构"></a>和田玉结构</h1><p>和田玉籽料内部结构致密，用肉眼几乎看不到内部结构；而再好的山料，还是能看到其松软质地的结构。</p>
+<p>籽料由于有外力的挤压、打磨，所以密度要明显高过山料。籽料的话，无论是青籽还是白籽，内部结构都是致密的，用肉眼几乎看不到内部结构。而山料，无论结构多致密，在强光手电筒下，总是能看到松软的质地结构。</p>
+<h1 id="广义的籽料"><a href="#广义的籽料" class="headerlink" title="广义的籽料"></a>广义的籽料</h1><p>今天的籽料已不是传统意义上的和田籽料了。在广义和田玉的范围内，籽料也有了更多种类。</p>
+<h2 id="新疆产的岫玉籽料"><a href="#新疆产的岫玉籽料" class="headerlink" title="新疆产的岫玉籽料"></a>新疆产的岫玉籽料</h2><p>新疆除了有和田玉籽料，还出产一种颜色或绿或黑绿色等，里面也有黑点存在的岫玉。岫玉中品质好的，外观与和田玉籽料很相似，并且在市场上的和田籽料中也能看到相当数量的岫玉籽料，大家要留意。</p>
+<h2 id="来自俄罗斯的“籽料”"><a href="#来自俄罗斯的“籽料”" class="headerlink" title="来自俄罗斯的“籽料”"></a>来自俄罗斯的“籽料”</h2><p>俄罗斯玉，近年来随着和田料的减少而逐渐成为软玉舞台的有力竞争者。</p>
+<p>从玉材来看，俄料95%都是山料，但也有籽料，只是俄料中的“籽料”并未达到籽料定义的产状玉料：籽料由于长期的冲刷搬运碰撞，玉质形态韧性都达到了特别的质感，而俄料中的“籽料”其实没有这个长期的过程，严格意义上只能算和田玉的山流水料。</p>
+<h2 id="辽宁产的河磨料"><a href="#辽宁产的河磨料" class="headerlink" title="辽宁产的河磨料"></a>辽宁产的河磨料</h2><p>河磨料是国内确切命名的两种籽料之一，另一种是和田籽料。“河磨”，从河里磨出来的玉，名字起得很传神，可能因为河水的冲击力较小，河磨料多见厚皮料。</p>
+<p>另外，近几年贵州罗甸也出产白度尚可的软玉，透闪石含量达95%，也是广义和田玉中的一种。罗甸玉石性很重，料子干涩，缺乏油性，其实所谓的“籽料”也只能用来骗骗小白玩友；广西大化玉则是这几年才出现的玉种，也是广义和田玉中的一种，大化玉里有籽料，质地也很细腻，有兴趣的宝友可以玩一玩。</p>
+]]></content>
+      <categories>
+        <category>生活日常</category>
+      </categories>
+      <tags>
+        <tag>生活日常</tag>
       </tags>
   </entry>
   <entry>
@@ -8643,29 +8643,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes Pod 调度</title>
-    <url>/202305221527/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Kubernetes 1.24</li>
-</ul>
-<h1 id="污点和容忍度"><a href="#污点和容忍度" class="headerlink" title="污点和容忍度"></a>污点和容忍度</h1><p>默认情况下，集群中的 master 节点被设置成了污点，以确保只有控制平面的 Pod 才能调度部署到主节点上。</p>
-<h2 id="显示节点的污点信息"><a href="#显示节点的污点信息" class="headerlink" title="显示节点的污点信息"></a>显示节点的污点信息</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe node k8s-master1</span></span><br><span class="line">Name:               k8s-master1</span><br><span class="line">Roles:              control-plane</span><br><span class="line">Labels:             beta.kubernetes.io/arch=amd64</span><br><span class="line">                    beta.kubernetes.io/os=linux</span><br><span class="line">                    kubernetes.io/arch=amd64</span><br><span class="line">                    kubernetes.io/hostname=k8s-master1</span><br><span class="line">                    kubernetes.io/os=linux</span><br><span class="line">                    node-role.kubernetes.io/control-plane=</span><br><span class="line">                    node.kubernetes.io/exclude-from-external-load-balancers=</span><br><span class="line">Annotations:        flannel.alpha.coreos.com/backend-data: &#123;&quot;VNI&quot;:1,&quot;VtepMAC&quot;:&quot;de:75:a4:67:58:1f&quot;&#125;</span><br><span class="line">                    flannel.alpha.coreos.com/backend-type: vxlan</span><br><span class="line">                    flannel.alpha.coreos.com/kube-subnet-manager: true</span><br><span class="line">                    flannel.alpha.coreos.com/public-ip: 172.31.26.116</span><br><span class="line">                    kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/cri-dockerd.sock</span><br><span class="line">                    management.cattle.io/pod-limits: &#123;&quot;cpu&quot;:&quot;100m&quot;,&quot;memory&quot;:&quot;390Mi&quot;&#125;</span><br><span class="line">                    management.cattle.io/pod-requests: &#123;&quot;cpu&quot;:&quot;950m&quot;,&quot;memory&quot;:&quot;290Mi&quot;,&quot;pods&quot;:&quot;8&quot;&#125;</span><br><span class="line">                    node.alpha.kubernetes.io/ttl: 0</span><br><span class="line">                    volumes.kubernetes.io/controller-managed-attach-detach: true</span><br><span class="line">CreationTimestamp:  Tue, 06 Dec 2022 17:50:49 +0800</span><br><span class="line">Taints:             node-role.kubernetes.io/control-plane:NoSchedule</span><br><span class="line">                    node-role.kubernetes.io/master:NoSchedule</span><br></pre></td></tr></table></figure>
-<p>Master 节点包含 2 个污点 </p>
-<ul>
-<li><code>node-role.kubernetes.io/control-plane:NoSchedule</code></li>
-<li><code>node-role.kubernetes.io/master:NoSchedule</code></li>
-</ul>
-<p>这 2 个污点将阻止 Pod 调度到这个节点上面，除非有 Pod 能够容忍这个污点(Taints)，通常能容忍这个污点的都是控制平面的 Pod。</p>
-<h2 id="查看-Pod-的容忍度"><a href="#查看-Pod-的容忍度" class="headerlink" title="查看 Pod 的容忍度"></a>查看 Pod 的容忍度</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe pod -n kube-system kube-proxy-2cslw</span></span><br><span class="line">...</span><br><span class="line">Tolerations:                 op=Exists</span><br><span class="line">                             node.kubernetes.io/disk-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/memory-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/network-unavailable:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/not-ready:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/pid-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/unreachable:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/unschedulable:NoSchedule op=Exists</span><br><span class="line">Events:                      &lt;none&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>K8S 上安装 Prometheus 并监控 K8S 集群</title>
     <url>/202212141608/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="版本信息"><a href="#版本信息" class="headerlink" title="版本信息"></a>版本信息</h1><ul>
@@ -8870,6 +8847,29 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes Pod 调度</title>
+    <url>/202305221527/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="污点和容忍度"><a href="#污点和容忍度" class="headerlink" title="污点和容忍度"></a>污点和容忍度</h1><p>默认情况下，集群中的 master 节点被设置成了污点，以确保只有控制平面的 Pod 才能调度部署到主节点上。</p>
+<h2 id="显示节点的污点信息"><a href="#显示节点的污点信息" class="headerlink" title="显示节点的污点信息"></a>显示节点的污点信息</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe node k8s-master1</span></span><br><span class="line">Name:               k8s-master1</span><br><span class="line">Roles:              control-plane</span><br><span class="line">Labels:             beta.kubernetes.io/arch=amd64</span><br><span class="line">                    beta.kubernetes.io/os=linux</span><br><span class="line">                    kubernetes.io/arch=amd64</span><br><span class="line">                    kubernetes.io/hostname=k8s-master1</span><br><span class="line">                    kubernetes.io/os=linux</span><br><span class="line">                    node-role.kubernetes.io/control-plane=</span><br><span class="line">                    node.kubernetes.io/exclude-from-external-load-balancers=</span><br><span class="line">Annotations:        flannel.alpha.coreos.com/backend-data: &#123;&quot;VNI&quot;:1,&quot;VtepMAC&quot;:&quot;de:75:a4:67:58:1f&quot;&#125;</span><br><span class="line">                    flannel.alpha.coreos.com/backend-type: vxlan</span><br><span class="line">                    flannel.alpha.coreos.com/kube-subnet-manager: true</span><br><span class="line">                    flannel.alpha.coreos.com/public-ip: 172.31.26.116</span><br><span class="line">                    kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/cri-dockerd.sock</span><br><span class="line">                    management.cattle.io/pod-limits: &#123;&quot;cpu&quot;:&quot;100m&quot;,&quot;memory&quot;:&quot;390Mi&quot;&#125;</span><br><span class="line">                    management.cattle.io/pod-requests: &#123;&quot;cpu&quot;:&quot;950m&quot;,&quot;memory&quot;:&quot;290Mi&quot;,&quot;pods&quot;:&quot;8&quot;&#125;</span><br><span class="line">                    node.alpha.kubernetes.io/ttl: 0</span><br><span class="line">                    volumes.kubernetes.io/controller-managed-attach-detach: true</span><br><span class="line">CreationTimestamp:  Tue, 06 Dec 2022 17:50:49 +0800</span><br><span class="line">Taints:             node-role.kubernetes.io/control-plane:NoSchedule</span><br><span class="line">                    node-role.kubernetes.io/master:NoSchedule</span><br></pre></td></tr></table></figure>
+<p>Master 节点包含 2 个污点 </p>
+<ul>
+<li><code>node-role.kubernetes.io/control-plane:NoSchedule</code></li>
+<li><code>node-role.kubernetes.io/master:NoSchedule</code></li>
+</ul>
+<p>这 2 个污点将阻止 Pod 调度到这个节点上面，除非有 Pod 能够容忍这个污点(Taints)，通常能容忍这个污点的都是控制平面的 Pod。</p>
+<h2 id="查看-Pod-的容忍度"><a href="#查看-Pod-的容忍度" class="headerlink" title="查看 Pod 的容忍度"></a>查看 Pod 的容忍度</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe pod -n kube-system kube-proxy-2cslw</span></span><br><span class="line">...</span><br><span class="line">Tolerations:                 op=Exists</span><br><span class="line">                             node.kubernetes.io/disk-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/memory-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/network-unavailable:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/not-ready:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/pid-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/unreachable:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/unschedulable:NoSchedule op=Exists</span><br><span class="line">Events:                      &lt;none&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>kubernetes Service 详解</title>
     <url>/202305030923/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Kubernetes 的 Service 代表的是 Kubernetes 后端服务的入口，它主要包含服务的访问 IP（虚拟 IP）和端口，工作在 L4.</p>
@@ -9053,6 +9053,48 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>kibana 管理操作</title>
+    <url>/202307281401/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kibana 8.8</li>
+</ul>
+<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
+<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
+<p>space 隔离以下资源：</p>
+<ul>
+<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
+<li>Dashboard</li>
+</ul>
+<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<p>内置 role：</p>
+<ul>
+<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
+</ul>
+<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
+<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
+<ol>
+<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
+<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
+</ol>
+<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
+<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
+<ol>
+<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
+<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
+</ol>
+<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>kibana 配置说明</title>
     <url>/202307251443/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -9119,48 +9161,6 @@ width: 20%;
 <p><em><strong>错误原因</strong></em> <a href="https://csms.tech/202307171638/#安全相关配置">Elasticsearch 启用了安全特性</a>，Kibana 中未配置登陆 Elasticsearch 时的认证信息。<a href="#Elasticsearch-%E6%9C%AC%E5%9C%B0%E7%94%A8%E6%88%B7%E8%AE%A4%E8%AF%81">参考配置 Kibana 通过 Elasticsearch 认证登陆</a></p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/current/settings.html">kibana 官网</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/settings.html">kibana 配置选项列表</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/access.html#status">Access Kibana</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/tutorial-secure-access-to-kibana.html">Securing access to Kibana</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>kibana 管理操作</title>
-    <url>/202307281401/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kibana 8.8</li>
-</ul>
-<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
-<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
-<p>space 隔离以下资源：</p>
-<ul>
-<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
-<li>Dashboard</li>
-</ul>
-<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<p>内置 role：</p>
-<ul>
-<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
-</ul>
-<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
-<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
-<ol>
-<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
-<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
-</ol>
-<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
-<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
-<ol>
-<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
-<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
-</ol>
-<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -10106,6 +10106,23 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux 压缩解压缩</title>
+    <url>/202209301257/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
+
+<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
+
+<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>cp 命令用法</title>
     <url>/202210281406/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>常用选项</p>
@@ -10135,23 +10152,6 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">tree -a</span></span><br><span class="line">.</span><br><span class="line">├── dir1</span><br><span class="line">│    ├── test1</span><br><span class="line">│    └── .test2</span><br><span class="line">└── dir2</span><br><span class="line">    └── test1</span><br><span class="line"></span><br><span class="line">2 directories, 3 files</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p>看见，<code>dir/.test</code> 未被拷贝，如果拷贝时希望同时保护隐藏文件，可以使用 <code>.</code> 代替 <code>*</code></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">tree -a</span></span><br><span class="line">.</span><br><span class="line">├── dir1</span><br><span class="line">│    ├── test1</span><br><span class="line">│    └── .test2</span><br><span class="line">└── dir2</span><br><span class="line"></span><br><span class="line">2 directories, 2 files</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cp</span> -rf dir1/. dir2/</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">tree -a</span></span><br><span class="line">.</span><br><span class="line">├── dir1</span><br><span class="line">│    ├── test1</span><br><span class="line">│    └── .test2</span><br><span class="line">└── dir2</span><br><span class="line">    ├── test1</span><br><span class="line">    └── .test2</span><br><span class="line"></span><br><span class="line">2 directories, 4 files</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 压缩解压缩</title>
-    <url>/202209301257/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
-
-<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
-
-<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>常用命令</category>
@@ -16956,37 +16956,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>网宿云存储 python sdk 常用操作</title>
-    <url>/f63bf868/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li><p>Centos7</p>
-</li>
-<li><p>Python3</p>
-</li>
-<li><p>wcs-python3-sdk (5.0.35)</p>
-</li>
-</ul>
-<p>网宿云 python sdk 安装命令 <code>pip3 install wcs-python3-sdk</code>， 安装后包含 cli 工具 <code>wcscmd</code></p>
-<h1 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd --configure [--config=FILE] </span><br></pre></td></tr></table></figure>
-
-<p><code>--config=FILE  </code>配置文件存储路径，默认<code>~/.wcscfg</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[参考链接](https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk)">[1]</span></a></sup></p>
-<h1 id="wcscmd-常用操作"><a href="#wcscmd-常用操作" class="headerlink" title="wcscmd 常用操作"></a>wcscmd 常用操作</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listbucket </span><br><span class="line">wcscmd stat wcs://BUCKET/OBJECT  \# 查询文件信息</span><br><span class="line">wcscmd deletePrefix wcs://BUCKET PREFIX  \# 根据前缀（文件路径，必须从头开始匹配，不需要最前面的/）删除目录或文件</span><br><span class="line">wcscmd put wcs://BUCKET/file file</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h2 id="列出所有的文件"><a href="#列出所有的文件" class="headerlink" title="列出所有的文件"></a>列出所有的文件</h2><p>以下命令列出所有文件列表，并写入文件中</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listall wcs://BUCKET ./temp/f</span><br></pre></td></tr></table></figure>
-
-<h1 id="python3-sdk-操作"><a href="#python3-sdk-操作" class="headerlink" title="python3 sdk 操作"></a>python3 sdk 操作</h1><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> wcs.commons.config <span class="keyword">import</span> Config</span><br><span class="line"><span class="keyword">from</span> wcs.services.client <span class="keyword">import</span> Client</span><br><span class="line"></span><br><span class="line">config_file = <span class="string">&quot;/root/.wcscfg&quot;</span></span><br><span class="line">cfg = Config(config_file)</span><br><span class="line">cli = Client(cfg)</span><br><span class="line">bucketName = <span class="string">&quot;TestBucket&quot;</span></span><br><span class="line">buckList = cli.bucket_list(bucketName, marker=<span class="string">&#x27;&#x27;</span>)    <span class="comment"># 列出bucket中的文件列表，每次最多获取1000个，第一页 `marker=&#x27;&#x27;`, 请求第一页的响应中marker的值为新的页的marker，可通过新的marker继续发起请求</span></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk">参考链接</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>网宿</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
-        <tag>网宿</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>网宿云 cdn 预热脚本</title>
     <url>/202207251026/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>将源站的内容主动预取到 CDN 节点，用户首次访问可直接命中缓存，即提升首次访问速度，又能有效缓解源站压力。</p>
@@ -17073,6 +17042,37 @@ width: 20%;
 
 <h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://wcs.chinanetcenter.com/document/Tools/GenerateUploadToken">官网说明</a><br><a href="https://s.csms.tech/file/01%E6%8E%A8%E8%8D%90-%E9%A2%84%E5%8F%96%E6%96%87%E4%BB%B6.pdf">网宿cdn预热完整文档</a></p>
 ]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>网宿</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
+        <tag>网宿</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>网宿云存储 python sdk 常用操作</title>
+    <url>/f63bf868/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li><p>Centos7</p>
+</li>
+<li><p>Python3</p>
+</li>
+<li><p>wcs-python3-sdk (5.0.35)</p>
+</li>
+</ul>
+<p>网宿云 python sdk 安装命令 <code>pip3 install wcs-python3-sdk</code>， 安装后包含 cli 工具 <code>wcscmd</code></p>
+<h1 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd --configure [--config=FILE] </span><br></pre></td></tr></table></figure>
+
+<p><code>--config=FILE  </code>配置文件存储路径，默认<code>~/.wcscfg</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[参考链接](https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk)">[1]</span></a></sup></p>
+<h1 id="wcscmd-常用操作"><a href="#wcscmd-常用操作" class="headerlink" title="wcscmd 常用操作"></a>wcscmd 常用操作</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listbucket </span><br><span class="line">wcscmd stat wcs://BUCKET/OBJECT  \# 查询文件信息</span><br><span class="line">wcscmd deletePrefix wcs://BUCKET PREFIX  \# 根据前缀（文件路径，必须从头开始匹配，不需要最前面的/）删除目录或文件</span><br><span class="line">wcscmd put wcs://BUCKET/file file</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h2 id="列出所有的文件"><a href="#列出所有的文件" class="headerlink" title="列出所有的文件"></a>列出所有的文件</h2><p>以下命令列出所有文件列表，并写入文件中</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listall wcs://BUCKET ./temp/f</span><br></pre></td></tr></table></figure>
+
+<h1 id="python3-sdk-操作"><a href="#python3-sdk-操作" class="headerlink" title="python3 sdk 操作"></a>python3 sdk 操作</h1><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> wcs.commons.config <span class="keyword">import</span> Config</span><br><span class="line"><span class="keyword">from</span> wcs.services.client <span class="keyword">import</span> Client</span><br><span class="line"></span><br><span class="line">config_file = <span class="string">&quot;/root/.wcscfg&quot;</span></span><br><span class="line">cfg = Config(config_file)</span><br><span class="line">cli = Client(cfg)</span><br><span class="line">bucketName = <span class="string">&quot;TestBucket&quot;</span></span><br><span class="line">buckList = cli.bucket_list(bucketName, marker=<span class="string">&#x27;&#x27;</span>)    <span class="comment"># 列出bucket中的文件列表，每次最多获取1000个，第一页 `marker=&#x27;&#x27;`, 请求第一页的响应中marker的值为新的页的marker，可通过新的marker继续发起请求</span></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk">参考链接</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>云平台</category>
         <category>网宿</category>
