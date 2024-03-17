@@ -690,6 +690,58 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -784,58 +836,6 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -1978,34 +1978,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>cAdvisor 部署使用</title>
-    <url>/202306231404/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>cAdvisor 是 Goolgle 开发的用来监控容器运行指标的工具，使用 Go 语言开发。Kubelet 集成了 cAdvisor 来监控采集 Pod 中的容器的运行指标。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cadvisor 官方 Github](https://github.com/google/cadvisor)">[1]</span></a></sup></p>
-<p>可以直接使用 vAdvisor 配合 Prometheus 来监控 Docker&#x2F;Containerd 容器运行指标，并配合 Prometheus 及 Grafana 进行图形展示或告警</p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>cAdvisor version v0.47.0 (c7714a77)</li>
-<li>Docker Engine - Community 20.10.9</li>
-</ul>
-<h1 id="在-host-上二进制安装部署-cAdvisor"><a href="#在-host-上二进制安装部署-cAdvisor" class="headerlink" title="在 host 上二进制安装部署 cAdvisor"></a>在 host 上二进制安装部署 cAdvisor</h1><p>下载二进制包，即可直接运行程序</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/google/cadvisor/releases/download/v0.47.0/cadvisor-v0.47.0-linux-amd64</span><br><span class="line"></span><br><span class="line">chmod +x cadvisor-v0.47.0-linux-amd64</span><br><span class="line"></span><br><span class="line">./cadvisor-v0.47.0-linux-amd64</span><br></pre></td></tr></table></figure>
-<p>运行之后，默认监听 <code>8080</code> 端口，启动后访问 UI : <code>http://localhost:8080</code>。Prometheus 会读取 <code>http://localhost:8080/metrics</code> 暴露的指标。</p>
-<h1 id="cAdvisor-metrics"><a href="#cAdvisor-metrics" class="headerlink" title="cAdvisor metrics"></a>cAdvisor metrics</h1><p><a href="https://github.com/google/cadvisor/blob/master/docs/storage/prometheus.md">cAdvisor metrics 官方说明</a></p>
-<p>在 <code>cAdvisor</code> 主机节点中可以使用以下命令列出收集到的指标</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl localhost:8080/metrics</span><br></pre></td></tr></table></figure>
-
-<h2 id="监控容器是否在运行中"><a href="#监控容器是否在运行中" class="headerlink" title="监控容器是否在运行中"></a>监控容器是否在运行中</h2><p><code>cAdvisor</code> 的指标 <code>container_last_seen</code> 记录了最后一次检测到容器运行时的时间 (<code>Gauge</code>)，如果容器停止运行，这个值会停留在最后一次观察到容器运行的时间，可以通过此指标，使用以下表达式来监控容器是否在运行</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">container_last_seen - container_last_seen offset 1m == 0</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/google/cadvisor">cadvisor 官方 Github</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Awvs 破解版14.6.211213163 安装破解</title>
     <url>/2207221019/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Acunetix Web Vulnerability Scanner（简称AWVS）是一款知名的网络漏洞扫描工具，它通过网络爬虫测试你的网站安全，检测流行安全漏洞。  </p>
@@ -2038,6 +2010,34 @@ width: 20%;
         <tag>安全</tag>
         <tag>Awvs</tag>
         <tag>Acunetix</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>cAdvisor 部署使用</title>
+    <url>/202306231404/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>cAdvisor 是 Goolgle 开发的用来监控容器运行指标的工具，使用 Go 语言开发。Kubelet 集成了 cAdvisor 来监控采集 Pod 中的容器的运行指标。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cadvisor 官方 Github](https://github.com/google/cadvisor)">[1]</span></a></sup></p>
+<p>可以直接使用 vAdvisor 配合 Prometheus 来监控 Docker&#x2F;Containerd 容器运行指标，并配合 Prometheus 及 Grafana 进行图形展示或告警</p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>cAdvisor version v0.47.0 (c7714a77)</li>
+<li>Docker Engine - Community 20.10.9</li>
+</ul>
+<h1 id="在-host-上二进制安装部署-cAdvisor"><a href="#在-host-上二进制安装部署-cAdvisor" class="headerlink" title="在 host 上二进制安装部署 cAdvisor"></a>在 host 上二进制安装部署 cAdvisor</h1><p>下载二进制包，即可直接运行程序</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/google/cadvisor/releases/download/v0.47.0/cadvisor-v0.47.0-linux-amd64</span><br><span class="line"></span><br><span class="line">chmod +x cadvisor-v0.47.0-linux-amd64</span><br><span class="line"></span><br><span class="line">./cadvisor-v0.47.0-linux-amd64</span><br></pre></td></tr></table></figure>
+<p>运行之后，默认监听 <code>8080</code> 端口，启动后访问 UI : <code>http://localhost:8080</code>。Prometheus 会读取 <code>http://localhost:8080/metrics</code> 暴露的指标。</p>
+<h1 id="cAdvisor-metrics"><a href="#cAdvisor-metrics" class="headerlink" title="cAdvisor metrics"></a>cAdvisor metrics</h1><p><a href="https://github.com/google/cadvisor/blob/master/docs/storage/prometheus.md">cAdvisor metrics 官方说明</a></p>
+<p>在 <code>cAdvisor</code> 主机节点中可以使用以下命令列出收集到的指标</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl localhost:8080/metrics</span><br></pre></td></tr></table></figure>
+
+<h2 id="监控容器是否在运行中"><a href="#监控容器是否在运行中" class="headerlink" title="监控容器是否在运行中"></a>监控容器是否在运行中</h2><p><code>cAdvisor</code> 的指标 <code>container_last_seen</code> 记录了最后一次检测到容器运行时的时间 (<code>Gauge</code>)，如果容器停止运行，这个值会停留在最后一次观察到容器运行的时间，可以通过此指标，使用以下表达式来监控容器是否在运行</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">container_last_seen - container_last_seen offset 1m == 0</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/google/cadvisor">cadvisor 官方 Github</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
       </tags>
   </entry>
   <entry>
@@ -2790,6 +2790,61 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>django 定时任务</title>
+    <url>/202208170917/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>centos 7</li>
+<li>python 3.10</li>
+<li>django 4.0</li>
+<li>django-crontab</li>
+</ul>
+<p><code>django-crontab</code> 依赖 <code>Linux</code> 系统中的 <code>crontab</code>，因此只能在 <code>Linux</code> 系统中使用</p>
+<span id="more"></span>
+
+<h3 id="安装-django-crontab"><a href="#安装-django-crontab" class="headerlink" title="安装 django-crontab"></a>安装 django-crontab</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install django-crontab</span><br></pre></td></tr></table></figure>
+
+<p><code>django-crontab</code> 插件是以 <code>app</code> 的方式存在， 将 <code>django-crontab</code> 添加到 <code>django</code> 工程配置文件 <code>settings.py</code> 中的 <code>INSTALLED_APPS</code></p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALLED_APPS = [</span><br><span class="line">    &#x27;django.contrib.admin&#x27;,</span><br><span class="line">    &#x27;django.contrib.auth&#x27;,</span><br><span class="line">    &#x27;django.contrib.contenttypes&#x27;,</span><br><span class="line">    &#x27;django.contrib.sessions&#x27;,</span><br><span class="line">    &#x27;django.contrib.messages&#x27;,</span><br><span class="line">    &#x27;django.contrib.staticfiles&#x27;,</span><br><span class="line">    ...</span><br><span class="line">    &#x27;django_crontab&#x27;,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<h3 id="配置定时任务"><a href="#配置定时任务" class="headerlink" title="配置定时任务"></a>配置定时任务</h3><p>假设定时任务路径为 <code>myapp.cron.scheduled_job</code><br>编写好定时任务后，要启用定时任务，需要在 <code>django</code> 工程配置文件 <code>settings.py</code> 中配置以下内容</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;)</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+<p>如果定时任务需要参数，可以使用如下格式</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, &#x27;&gt;&gt; run.log 2&gt;&amp;1&#x27;)</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+<p>以上定时任务，会将任务执行过程中的标准输出和标准错误输出写入到文件 <code>run.log</code></p>
+<p>也可以使用列表参数</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, [&#x27;list_args1&#x27;, &#x27;list_args2&#x27;], &#123;&#x27;dict_args1&#x27;: v1, &#x27;dict_args2&#x27;: v2&#125;),</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, [&#x27;list_args1&#x27;])</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<p>其中，定时任务的第一部分（<code>* * * * *</code>），语法和 <code>Linux</code> 系统 <code>crontab</code> 一致，具体语法可参考： <a href="https://www.runoob.com/linux/linux-comm-crontab.html">linux crontab 语法</a></p>
+<p>配置好定时任务之后，执行以下命令添加定时任务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab add</span><br></pre></td></tr></table></figure>
+
+
+<p>运行定时任务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab run </span><br></pre></td></tr></table></figure>
+<p>运行定时任务后，会在系统 <code>crontab</code> 中追加一个定时任务，可使用 <code>crontab -l</code> 命令查看定时任务  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">crontab -l</span></span><br><span class="line">* * * * * python3 /django/project/manage.py crontab run b4564bdabd9dcb16a9b69d79a612430f &gt;&gt; run.log 2&gt;&amp;1   # django-cronjobs for project</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>显示定时任务列表</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab show</span><br></pre></td></tr></table></figure>
+<p>删除定时任务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab remove b4564bdabd9dc</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p><strong>注意事项</strong>： <code>CRONJOBS</code> 中配置的定时任务及所有参数不能有变量值，比如以下配置，在第二天时，不会再执行。</p>
+<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">(&#x27;0 7 * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, &#x27;&gt;&gt; %s&#x27; time.time())</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+<p>因为，<code>CRONJOBS</code> 生成任务时，会生成对应的哈希值（hashes），标识每个任务。所以，当文件名变更时，<code>CRONJOBS</code> 中的值每天都在变化，导致不同的定时任务哈希值（hashes）。而系统 <code>crontab</code> 定时任务中的任务哈希值还是第一次执行 <code>python3 manage.py crontab add</code> 时的值</p>
+</blockquote>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://cloud.tencent.com/developer/article/1599968">django 定时任务 django-crontab 的使用</a><br><a href="https://www.runoob.com/linux/linux-comm-crontab.html">Linux crontab 命令</a></p>
+]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Django HTTP 请求及响应常见用法总结</title>
     <url>/202308081340/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -2847,61 +2902,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Django</tag>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>django 定时任务</title>
-    <url>/202208170917/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>centos 7</li>
-<li>python 3.10</li>
-<li>django 4.0</li>
-<li>django-crontab</li>
-</ul>
-<p><code>django-crontab</code> 依赖 <code>Linux</code> 系统中的 <code>crontab</code>，因此只能在 <code>Linux</code> 系统中使用</p>
-<span id="more"></span>
-
-<h3 id="安装-django-crontab"><a href="#安装-django-crontab" class="headerlink" title="安装 django-crontab"></a>安装 django-crontab</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install django-crontab</span><br></pre></td></tr></table></figure>
-
-<p><code>django-crontab</code> 插件是以 <code>app</code> 的方式存在， 将 <code>django-crontab</code> 添加到 <code>django</code> 工程配置文件 <code>settings.py</code> 中的 <code>INSTALLED_APPS</code></p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALLED_APPS = [</span><br><span class="line">    &#x27;django.contrib.admin&#x27;,</span><br><span class="line">    &#x27;django.contrib.auth&#x27;,</span><br><span class="line">    &#x27;django.contrib.contenttypes&#x27;,</span><br><span class="line">    &#x27;django.contrib.sessions&#x27;,</span><br><span class="line">    &#x27;django.contrib.messages&#x27;,</span><br><span class="line">    &#x27;django.contrib.staticfiles&#x27;,</span><br><span class="line">    ...</span><br><span class="line">    &#x27;django_crontab&#x27;,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-
-<h3 id="配置定时任务"><a href="#配置定时任务" class="headerlink" title="配置定时任务"></a>配置定时任务</h3><p>假设定时任务路径为 <code>myapp.cron.scheduled_job</code><br>编写好定时任务后，要启用定时任务，需要在 <code>django</code> 工程配置文件 <code>settings.py</code> 中配置以下内容</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;)</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-<p>如果定时任务需要参数，可以使用如下格式</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, &#x27;&gt;&gt; run.log 2&gt;&amp;1&#x27;)</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-<p>以上定时任务，会将任务执行过程中的标准输出和标准错误输出写入到文件 <code>run.log</code></p>
-<p>也可以使用列表参数</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, [&#x27;list_args1&#x27;, &#x27;list_args2&#x27;], &#123;&#x27;dict_args1&#x27;: v1, &#x27;dict_args2&#x27;: v2&#125;),</span><br><span class="line">    (&#x27;* * * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, [&#x27;list_args1&#x27;])</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-
-<p>其中，定时任务的第一部分（<code>* * * * *</code>），语法和 <code>Linux</code> 系统 <code>crontab</code> 一致，具体语法可参考： <a href="https://www.runoob.com/linux/linux-comm-crontab.html">linux crontab 语法</a></p>
-<p>配置好定时任务之后，执行以下命令添加定时任务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab add</span><br></pre></td></tr></table></figure>
-
-
-<p>运行定时任务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab run </span><br></pre></td></tr></table></figure>
-<p>运行定时任务后，会在系统 <code>crontab</code> 中追加一个定时任务，可使用 <code>crontab -l</code> 命令查看定时任务  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">crontab -l</span></span><br><span class="line">* * * * * python3 /django/project/manage.py crontab run b4564bdabd9dcb16a9b69d79a612430f &gt;&gt; run.log 2&gt;&amp;1   # django-cronjobs for project</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>显示定时任务列表</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab show</span><br></pre></td></tr></table></figure>
-<p>删除定时任务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python3 manage.py crontab remove b4564bdabd9dc</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p><strong>注意事项</strong>： <code>CRONJOBS</code> 中配置的定时任务及所有参数不能有变量值，比如以下配置，在第二天时，不会再执行。</p>
-<figure class="highlight shell"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">CRONJOBS = [</span><br><span class="line">(&#x27;0 7 * * *&#x27;, &#x27;myapp.cron.scheduled_job&#x27;, &#x27;&gt;&gt; %s&#x27; time.time())</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-<p>因为，<code>CRONJOBS</code> 生成任务时，会生成对应的哈希值（hashes），标识每个任务。所以，当文件名变更时，<code>CRONJOBS</code> 中的值每天都在变化，导致不同的定时任务哈希值（hashes）。而系统 <code>crontab</code> 定时任务中的任务哈希值还是第一次执行 <code>python3 manage.py crontab add</code> 时的值</p>
-</blockquote>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://cloud.tencent.com/developer/article/1599968">django 定时任务 django-crontab 的使用</a><br><a href="https://www.runoob.com/linux/linux-comm-crontab.html">Linux crontab 命令</a></p>
-]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
         <tag>Python</tag>
       </tags>
   </entry>
@@ -3398,6 +3398,36 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>django 接收 post 请求中的 json 数据</title>
+    <url>/202209161740/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Python3.10</li>
+<li>Django 4.0</li>
+</ul>
+<h3 id="接收-post-中的-json-数据"><a href="#接收-post-中的-json-数据" class="headerlink" title="接收 post 中的 json 数据"></a>接收 post 中的 json 数据</h3><p>示例通过 <code>curl</code> 命令模拟 post 请求，命令如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -v -H &quot;Accept: application/json&quot; -H &quot;Content-type: application/json&quot; -X POST \</span><br><span class="line">      -d &#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27; 127.0.0.1:8000/csapi</span><br></pre></td></tr></table></figure>
+
+<p>Django 处理程序示例：</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.http import HttpResponse</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">def csapi(request):</span><br><span class="line">    post_body = request.body</span><br><span class="line">    print(f&#x27;****** POST body: &#123;post_body&#125;, type : &#123;type(post_body)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    # </span><br><span class="line">    data = eval(post_body)</span><br><span class="line"></span><br><span class="line">    print(f&#x27;****** data : &#123;data&#125; , type : &#123;type(data)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    return HttpResponse(&#x27;ok&#x27;)</span><br></pre></td></tr></table></figure>
+
+<p>Console 输出结果：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">****** POST body: b&#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27;, type : &lt;class &#x27;bytes&#x27;&gt;</span><br><span class="line">****** data : &#123;&#x27;id&#x27;: &#x27;yTP7PSsRxz53tJ56VVG&#x27;, &#x27;type&#x27;: 5&#125; , type : &lt;class &#x27;dict&#x27;&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>以上输出可以看到，<code>request.body</code> 中的类型为 <code>bytes</code></p>
+<p>使用 <code>eval</code> 转换后类型变为 <code>dict</code></p>
+<p>使用 <code>json.loads</code> 将 <code>request.body</code> 转换为 <code>dict</code> 时，可能会报以下错误：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>可能原因 <a href="https://www.jianshu.com/p/3a7dbd17e7b9">参考</a></p>
+]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Django 模板语言</title>
     <url>/202303241517/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -3475,36 +3505,6 @@ width: 20%;
       <tags>
         <tag>Django</tag>
         <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>django 接收 post 请求中的 json 数据</title>
-    <url>/202209161740/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Python3.10</li>
-<li>Django 4.0</li>
-</ul>
-<h3 id="接收-post-中的-json-数据"><a href="#接收-post-中的-json-数据" class="headerlink" title="接收 post 中的 json 数据"></a>接收 post 中的 json 数据</h3><p>示例通过 <code>curl</code> 命令模拟 post 请求，命令如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -v -H &quot;Accept: application/json&quot; -H &quot;Content-type: application/json&quot; -X POST \</span><br><span class="line">      -d &#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27; 127.0.0.1:8000/csapi</span><br></pre></td></tr></table></figure>
-
-<p>Django 处理程序示例：</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.http import HttpResponse</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">def csapi(request):</span><br><span class="line">    post_body = request.body</span><br><span class="line">    print(f&#x27;****** POST body: &#123;post_body&#125;, type : &#123;type(post_body)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    # </span><br><span class="line">    data = eval(post_body)</span><br><span class="line"></span><br><span class="line">    print(f&#x27;****** data : &#123;data&#125; , type : &#123;type(data)&#125;&#x27;)</span><br><span class="line"></span><br><span class="line">    return HttpResponse(&#x27;ok&#x27;)</span><br></pre></td></tr></table></figure>
-
-<p>Console 输出结果：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">****** POST body: b&#x27;&#123;&quot;id&quot; : &quot;yTP7PSsRxz53tJ56VVG&quot;, &quot;type&quot; : 5&#125;&#x27;, type : &lt;class &#x27;bytes&#x27;&gt;</span><br><span class="line">****** data : &#123;&#x27;id&#x27;: &#x27;yTP7PSsRxz53tJ56VVG&#x27;, &#x27;type&#x27;: 5&#125; , type : &lt;class &#x27;dict&#x27;&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>以上输出可以看到，<code>request.body</code> 中的类型为 <code>bytes</code></p>
-<p>使用 <code>eval</code> 转换后类型变为 <code>dict</code></p>
-<p>使用 <code>json.loads</code> 将 <code>request.body</code> 转换为 <code>dict</code> 时，可能会报以下错误：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>可能原因 <a href="https://www.jianshu.com/p/3a7dbd17e7b9">参考</a></p>
-]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Django</tag>
       </tags>
   </entry>
   <entry>
@@ -5000,38 +5000,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>elasticsearch 管理操作</title>
-    <url>/202307271329/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>elasticsearch 8.8.2</li>
-</ul>
-<h1 id="安全相关配置管理"><a href="#安全相关配置管理" class="headerlink" title="安全相关配置管理"></a>安全相关配置管理</h1><h2 id="更新-transport-ssl-证书"><a href="#更新-transport-ssl-证书" class="headerlink" title="更新 transport ssl 证书"></a>更新 transport ssl 证书</h2><p>在启用安全配置（<code>xpack.security.enabled: true</code>）的情况下，Elasticsearch 集群节点间通信(<code>transport</code> 默认端口 9300)必须使用 TLS (<code>xpack.security.transport.ssl.enabled: true</code>)。默认使用的证书文件位于 <code>/etc/elasticsearch/certs/</code>。若需要更新或者重新生成此证书，可以参考以下步骤</p>
-<ol>
-<li>生成 CA，如果已有 CA 可跳过此步骤。此命令会生成一个 CA 证书文件，默认名称为 <code>/usr/share/elasticsearch/elastic-stack-ca.p12</code>。根据提示使用 <em>证书密码</em>，如果不配置密码，使直接<code>Enter</code> 键 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil ca</span><br></pre></td></tr></table></figure></li>
-<li>为 Elasticsearch  生成 TLS 证书，证书使用 CA 进行签名，根据提示输入 CA 证书密码等信息，如果无密码，使直接<code>Enter</code> 键。默认生成文件 <code>/usr/share/elasticsearch/elastic-certificates.p12</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil cert --ca elastic-stack-ca.p12</span><br></pre></td></tr></table></figure></li>
-<li>执行以下命令，将 CA 证书密码和服务器证书密码写入 <code>/etc/elasticsearch/elasticsearch.keystore</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.keystore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.keystore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.keystore.secure_password:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.truststore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.truststore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.truststore.secure_password:</span><br></pre></td></tr></table></figure></li>
-<li>将上面生成的 <strong>CA 证书</strong>、<strong>服务器证书</strong> 以及 <strong>证书密码文件</strong> 拷贝到 Elasticsearch 集群的所有节点的 <code>/etc/elasticsearch/certs/</code> 下，并修改权限 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod 660 /etc/elasticsearch/certs/*</span><br><span class="line">chown root:elasticsearch /etc/elasticsearch/certs/*</span><br></pre></td></tr></table></figure></li>
-<li>重启 Elasticsearch 集群的所有节点 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart elasticsearch</span><br></pre></td></tr></table></figure></li>
-<li>检查集群状态 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user newadmin:password localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 18,</span><br><span class="line">  &quot;active_shards&quot; : 37,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="重置用户密码"><a href="#重置用户密码" class="headerlink" title="重置用户密码"></a>重置用户密码</h2><p>可以使用以下命令，创建新的超级管理员账号。首先要 <em>确保集群状态正常</em></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-users useradd newadmin -p password -r superuser</span><br></pre></td></tr></table></figure>
-<p>接下来使用刚刚创建的账号密码对原有的账号（如 <code>elastic</code>） 进行密码重置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl -s --user newadmin:password -XPUT <span class="string">&quot;http://localhost:9200/_security/user/elastic/_password?pretty&quot;</span> -H <span class="string">&#x27;Content-Type: application/json&#x27;</span> -d <span class="string">&#x27;&#123;</span></span></span><br><span class="line">   &quot;password&quot;: &quot;password1&quot;</span><br><span class="line"> &#125;&#x27;</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>密码重置成功后，尝试使用新账号密码访问集群</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user elastic:password1 localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 19,</span><br><span class="line">  &quot;active_shards&quot; : 39,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>elasticsearch 常用 endpoint</title>
     <url>/202307281032/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -5191,126 +5159,35 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>linux fail2ban 详解</title>
-    <url>/202208171501/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos 7</li>
-<li>iptables</li>
+    <title>elasticsearch 管理操作</title>
+    <url>/202307271329/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>elasticsearch 8.8.2</li>
 </ul>
-<p><a href="https://www.fail2ban.org/wiki/index.php/Main_Page">Fail2ban</a> 是 Linux 上的一个著名的入侵保护的开源框架。它通过监视相应服务的日志记录文件，匹配日志记录中的错误信息（正则式匹配），然后与系统的 <code>iptables</code> 联动执行相应的屏蔽动作（一般情况下是调用防火墙屏蔽），比如：当有人在试探你的 <code>HTTP</code>、<code>SSH</code>、<code>SMTP</code>、<code>FTP</code> 密码，只要达到你预设的次数，<code>Fail2ban</code> 就会调用防火墙屏蔽这个 IP，并且可以发送 e-mail 通知系统管理员。</p>
-<p>由于 <code>Fail2ban</code> 需要与系统的 <code>iptables</code>、<code>firewalld</code> 等联动来达到封禁 IP 的目的， <code>iptables</code> 使用与 <code>firewalld</code> 有少许不同。  </p>
-<p>本文以 <code>iptables</code> 为例</p>
-<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install epel-release</span><br><span class="line">yum install -y fail2ban</span><br><span class="line">systemctl enable fail2ban</span><br></pre></td></tr></table></figure>
+<h1 id="安全相关配置管理"><a href="#安全相关配置管理" class="headerlink" title="安全相关配置管理"></a>安全相关配置管理</h1><h2 id="更新-transport-ssl-证书"><a href="#更新-transport-ssl-证书" class="headerlink" title="更新 transport ssl 证书"></a>更新 transport ssl 证书</h2><p>在启用安全配置（<code>xpack.security.enabled: true</code>）的情况下，Elasticsearch 集群节点间通信(<code>transport</code> 默认端口 9300)必须使用 TLS (<code>xpack.security.transport.ssl.enabled: true</code>)。默认使用的证书文件位于 <code>/etc/elasticsearch/certs/</code>。若需要更新或者重新生成此证书，可以参考以下步骤</p>
+<ol>
+<li>生成 CA，如果已有 CA 可跳过此步骤。此命令会生成一个 CA 证书文件，默认名称为 <code>/usr/share/elasticsearch/elastic-stack-ca.p12</code>。根据提示使用 <em>证书密码</em>，如果不配置密码，使直接<code>Enter</code> 键 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil ca</span><br></pre></td></tr></table></figure></li>
+<li>为 Elasticsearch  生成 TLS 证书，证书使用 CA 进行签名，根据提示输入 CA 证书密码等信息，如果无密码，使直接<code>Enter</code> 键。默认生成文件 <code>/usr/share/elasticsearch/elastic-certificates.p12</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-certutil cert --ca elastic-stack-ca.p12</span><br></pre></td></tr></table></figure></li>
+<li>执行以下命令，将 CA 证书密码和服务器证书密码写入 <code>/etc/elasticsearch/elasticsearch.keystore</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.keystore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.keystore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.keystore.secure_password:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">elasticsearch-keystore add xpack.security.transport.ssl.truststore.secure_password</span></span><br><span class="line">Setting xpack.security.transport.ssl.truststore.secure_password already exists. Overwrite? [y/N]y</span><br><span class="line">Enter value for xpack.security.transport.ssl.truststore.secure_password:</span><br></pre></td></tr></table></figure></li>
+<li>将上面生成的 <strong>CA 证书</strong>、<strong>服务器证书</strong> 以及 <strong>证书密码文件</strong> 拷贝到 Elasticsearch 集群的所有节点的 <code>/etc/elasticsearch/certs/</code> 下，并修改权限 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod 660 /etc/elasticsearch/certs/*</span><br><span class="line">chown root:elasticsearch /etc/elasticsearch/certs/*</span><br></pre></td></tr></table></figure></li>
+<li>重启 Elasticsearch 集群的所有节点 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart elasticsearch</span><br></pre></td></tr></table></figure></li>
+<li>检查集群状态 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user newadmin:password localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 18,</span><br><span class="line">  &quot;active_shards&quot; : 37,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="重置用户密码"><a href="#重置用户密码" class="headerlink" title="重置用户密码"></a>重置用户密码</h2><p>可以使用以下命令，创建新的超级管理员账号。首先要 <em>确保集群状态正常</em></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">elasticsearch-users useradd newadmin -p password -r superuser</span><br></pre></td></tr></table></figure>
+<p>接下来使用刚刚创建的账号密码对原有的账号（如 <code>elastic</code>） 进行密码重置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl -s --user newadmin:password -XPUT <span class="string">&quot;http://localhost:9200/_security/user/elastic/_password?pretty&quot;</span> -H <span class="string">&#x27;Content-Type: application/json&#x27;</span> -d <span class="string">&#x27;&#123;</span></span></span><br><span class="line">   &quot;password&quot;: &quot;password1&quot;</span><br><span class="line"> &#125;&#x27;</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<span id="more"></span>
+<p>密码重置成功后，尝试使用新账号密码访问集群</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl --user elastic:password1 localhost:9200/_cluster/health?pretty</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;cluster_name&quot; : &quot;es-cluster1&quot;,</span><br><span class="line">  &quot;status&quot; : &quot;green&quot;,</span><br><span class="line">  &quot;timed_out&quot; : false,</span><br><span class="line">  &quot;number_of_nodes&quot; : 3,</span><br><span class="line">  &quot;number_of_data_nodes&quot; : 3,</span><br><span class="line">  &quot;active_primary_shards&quot; : 19,</span><br><span class="line">  &quot;active_shards&quot; : 39,</span><br><span class="line">  &quot;relocating_shards&quot; : 0,</span><br><span class="line">  &quot;initializing_shards&quot; : 0,</span><br><span class="line">  &quot;unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;delayed_unassigned_shards&quot; : 0,</span><br><span class="line">  &quot;number_of_pending_tasks&quot; : 0,</span><br><span class="line">  &quot;number_of_in_flight_fetch&quot; : 0,</span><br><span class="line">  &quot;task_max_waiting_in_queue_millis&quot; : 0,</span><br><span class="line">  &quot;active_shards_percent_as_number&quot; : 100.0</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 
-<h3 id="相关命令"><a href="#相关命令" class="headerlink" title="相关命令"></a>相关命令</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">查看 Fail2ban 的状态</span></span><br><span class="line">fail2ban-client status   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">查看 Fai2ban 的版本</span></span><br><span class="line">fail2ban-client version   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">检查 Fail2ban 是否正常运行（正常将显示 pong）</span></span><br><span class="line">fail2ban-client ping     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">启动 Fail2ban</span></span><br><span class="line">systemctl start fail2ban   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">停止 Fail2ban</span>  </span><br><span class="line">systemctl stop fail2ban  </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">重启 Fail2ban</span>  </span><br><span class="line">systemctl restart fail2ban</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">打开 Fail2ban 的日志监控</span>     </span><br><span class="line">tail -f /var/log/fail2ban.log  </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="主要文件说明"><a href="#主要文件说明" class="headerlink" title="主要文件说明"></a>主要文件说明</h3><table>
-<thead>
-<tr>
-<th>文件</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>&#x2F;etc&#x2F;fail2ban&#x2F;jail.d&#x2F;</td>
-<td>配置文件夹。用于定义错误次数、封禁时长、封禁动作等</td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;fail2ban&#x2F;filter.d&#x2F;</td>
-<td>条件文件夹。内含默认文件，用于定义日志文件内容的过滤规则</td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;fail2ban&#x2F;action.d</td>
-<td>动作文件夹。内含默认文件，用于 iptables 以及 mail 等动作配置</td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;fail2ban&#x2F;fail2ban.conf<br/>&#x2F;etc&#x2F;fail2ban&#x2F;jail.conf</td>
-<td><code>*.conf</code> 是主要（默认）配置文件，<strong>不要直接更改 <code>.conf</code> 文件</strong> ，升级后会被覆盖<br/>应该手动创建 <code>fail2ban.local</code> ,<code>jail.local</code>(或者分离 <code>.conf</code> 文件到 <code>jail.d/</code> 目录)</td>
-</tr>
-</tbody></table>
-<h3 id="fail2ban-配置文件说明"><a href="#fail2ban-配置文件说明" class="headerlink" title="fail2ban 配置文件说明"></a>fail2ban 配置文件说明</h3><p><code>/etc/fail2ban/fail2ban.conf</code> 是主配置文件，定义了 <code>fai2ban</code> 默认的日志级别、日志位置及 sock 文件位置。<strong>不要更改此文件</strong>，要更改默认配置，可以复制 <code>fail2ban.conf</code> 成 <code>/etc/fail2ban/fail2ban.local</code> ，更改此 <code>local</code> 文件</p>
-<figure class="highlight shell"><figcaption><span>/etc/fail2ban/fail2ban.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[DEFAULT]</span><br><span class="line"></span><br><span class="line">loglevel = INFO</span><br><span class="line"></span><br><span class="line">logtarget = /var/log/fail2ban.log</span><br><span class="line"></span><br><span class="line">syslogsocket = auto</span><br><span class="line"></span><br><span class="line">socket = /var/run/fail2ban/fail2ban.sock</span><br><span class="line"></span><br><span class="line">pidfile = /var/run/fail2ban/fail2ban.pid</span><br><span class="line"></span><br><span class="line">dbfile = /var/lib/fail2ban/fail2ban.sqlite3</span><br><span class="line"></span><br><span class="line">dbpurgeage = 1d</span><br><span class="line"></span><br><span class="line">dbmaxmatches = 10</span><br><span class="line"></span><br><span class="line">[Definition]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">[Thread]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="jail-配置文件说明"><a href="#jail-配置文件说明" class="headerlink" title="jail 配置文件说明"></a>jail 配置文件说明</h3><p><code>/etc/fail2ban/jail.conf</code> 主要设置启用 <code>ban</code> 动作的服务及动作阀值。<strong>不要更改此文件</strong>，要更改此处的默认配置，可以复制 <code>jail.conf</code> 到 <code>/etc/fail2ban/jail.local</code>，更改此文件中的默认配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/fail2ban/jail.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[DEFAULT]</span><br><span class="line">ignorecommand =</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">屏蔽时间，默认单位：秒</span></span><br><span class="line">bantime  = 10m</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个时间段内超过 maxretry 定义的次数会被 ban 掉</span></span><br><span class="line">findtime  = 10m</span><br><span class="line">maxretry = 5</span><br><span class="line"></span><br><span class="line">maxmatches = %(maxretry)s</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">日志修改检测机制(gamin、polling和auto这三种)</span></span><br><span class="line">backend = auto</span><br><span class="line"></span><br><span class="line">usedns = warn</span><br><span class="line">logencoding = auto</span><br><span class="line">enabled = false</span><br><span class="line">mode = normal</span><br><span class="line">filter = %(__name__)s[mode=%(mode)s]</span><br><span class="line">destemail = root@localhost</span><br><span class="line">sender = root@&lt;fq-hostname&gt;</span><br><span class="line">mta = sendmail</span><br><span class="line">protocol = tcp</span><br><span class="line">chain = &lt;known/chain&gt;</span><br><span class="line">port = 0:65535</span><br><span class="line">fail2ban_agent = Fail2Ban/%(fail2ban_version)s</span><br><span class="line">banaction = iptables-multiport</span><br><span class="line">banaction_allports = iptables-allports</span><br><span class="line">action_ = %(banaction)s[port=&quot;%(port)s&quot;, protocol=&quot;%(protocol)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_mw = %(action_)s</span><br><span class="line">            %(mta)s-whois[sender=&quot;%(sender)s&quot;, dest=&quot;%(destemail)s&quot;, protocol=&quot;%(protocol)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_mwl = %(action_)s</span><br><span class="line">             %(mta)s-whois-lines[sender=&quot;%(sender)s&quot;, dest=&quot;%(destemail)s&quot;, logpath=&quot;%(logpath)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_xarf = %(action_)s</span><br><span class="line">             xarf-login-attack[service=%(__name__)s, sender=&quot;%(sender)s&quot;, logpath=&quot;%(logpath)s&quot;, port=&quot;%(port)s&quot;]</span><br><span class="line">action_cf_mwl = cloudflare[cfuser=&quot;%(cfemail)s&quot;, cftoken=&quot;%(cfapikey)s&quot;]</span><br><span class="line">                %(mta)s-whois-lines[sender=&quot;%(sender)s&quot;, dest=&quot;%(destemail)s&quot;, logpath=&quot;%(logpath)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_blocklist_de  = blocklist_de[email=&quot;%(sender)s&quot;, service=&quot;%(__name__)s&quot;, apikey=&quot;%(blocklist_de_apikey)s&quot;, agent=&quot;%(fail2ban_agent)s&quot;]</span><br><span class="line">action_badips = badips.py[category=&quot;%(__name__)s&quot;, banaction=&quot;%(banaction)s&quot;, agent=&quot;%(fail2ban_agent)s&quot;]</span><br><span class="line">action_badips_report = badips[category=&quot;%(__name__)s&quot;, agent=&quot;%(fail2ban_agent)s&quot;]</span><br><span class="line">action_abuseipdb = abuseipdb</span><br><span class="line">action = %(action_)s</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>其中 <code>[DEFAULT]</code> 块定义了默认的配置，具体的服务配置中 (如 <code>/etc/fail2ban/jail.d/ssh.local</code>)，可以覆盖默认值。 </p>
-<p>针对具体服务配置防护，以 <code>sshd</code> 为例，手动创建配置 <code>/etc/fail2ban/jail.d/sshd.local</code></p>
-<figure class="highlight shell"><figcaption><span>/etc/fail2ban/jail.d/sshd.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[sshd]</span><br><span class="line">enabled = true</span><br><span class="line">port = 22</span><br><span class="line">filter = sshd</span><br><span class="line">action = iptables[name=SSH, port=ssh, protocol=tcp]</span><br><span class="line">logpath = /var/log/secure</span><br><span class="line">maxretry = 3</span><br><span class="line">bantime = 43200</span><br><span class="line">findtime = 3600</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>[sshd]</code> : 名称，可以随便填写</li>
-<li><code>enabled =true</code> ： 启用此配置</li>
-<li><code>port = 22</code> : 服务端口</li>
-<li><code>filter = sshd</code> : 应用的 <code>filter</code> 名称，对应的 <a href="#filter-%E9%85%8D%E7%BD%AE%E8%AF%B4%E6%98%8E"><code>filter</code> 配置</a> 位于 <code>/etc/fail2ban/filter.d/sshd.conf</code></li>
-<li><code>action = iptables[name=SSH, port=ssh, protocol=tcp]</code> : 执行的动作，对应 <code>/etc/fail2ban/action.d/iptables.conf</code> ，并传入 <code>name=SSH, port=ssh, protocol=tcp</code>，此处传入的端口 <code>ssh</code> 默认为 22 ，如果端口不为 22 ，需要更改为对应端口，传入的 <code>name</code> 会在定义防火墙链时被当做链名的一部分</li>
-<li><code>logpath = /var/log/secure</code> : 要过滤的日志记录文件路径</li>
-<li><code>maxretry = 3</code> ： 执行封禁动作前允许的错误记录数</li>
-<li><code>bantime = 43200</code> ： 执行封禁的时长（秒）</li>
-<li><code>findtime = 3600</code> ：此时长（秒）内达到 <code>maxretry</code> 次就执行封禁动作</li>
-</ul>
-<p>配置好之后，重启 <code>fail2ban</code> 使配置生效</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart fail2ban</span><br></pre></td></tr></table></figure>
-<p>或者执行以下命令，在不重启 <code>fail2ban</code> 的情况下重新分析并加载配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">fail2ban-client reload</span><br></pre></td></tr></table></figure>
-
-<p>执行以下命令查看 <code>fail2ban</code> 的状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status</span></span><br><span class="line">Status</span><br><span class="line">|- Number of jail:	1</span><br><span class="line">`- Jail list:	sshd</span><br></pre></td></tr></table></figure>
-<p>可以看到当前只启动了 <code>sshd</code> 这一个 <code>jail</code></p>
-<p>执行以下命令查看 <code>sshd</code> 的防护情况，可以看到目前有哪些 ip 被封锁，以及过去总共多少 ip 被封锁</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status sshd</span></span><br><span class="line">Status for the jail: sshd</span><br><span class="line">|- Filter</span><br><span class="line">|  |- Currently failed:	0</span><br><span class="line">|  |- Total failed:	0</span><br><span class="line">|  `- Journal matches:	_SYSTEMD_UNIT=sshd.service + _COMM=sshd</span><br><span class="line">`- Actions</span><br><span class="line">   |- Currently banned:	1</span><br><span class="line">   |- Total banned:	1</span><br><span class="line">   `- Banned IP list:	54.193.188.141</span><br></pre></td></tr></table></figure>
-
-<h3 id="filter-配置说明"><a href="#filter-配置说明" class="headerlink" title="filter 配置说明"></a>filter 配置说明</h3><p><code>fail2ban</code> 使用的各个 <code>filter</code> 位于 <code>/etc/fail2ban/filter.d/</code> 下。其中主要配置了日志的过滤规则  </p>
-<p>以创建防护 <code>VNC</code> 的 <code>filter</code> 来说明。<code>VNC</code> 的日志中，如果有恶意登录，经常会出现以下日志记录：</p>
-<figure class="highlight shell"><figcaption><span>/home/USER1/.vnc/USER1\:1.log</span></figcaption><table><tr><td class="code"><pre><span class="line">Sat Aug 20 10:35:27 2022</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"></span><br><span class="line">Sat Aug 20 10:35:28 2022</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"></span><br><span class="line">Sat Aug 20 10:35:29 2022</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><code>filter</code> 的匹配规则里面，<strong>行的开头一定要先匹配到时间</strong>，时间格式可以试试系统可以识别的格式，如果开头不能匹配到时间，规则会匹配失败，因此，如果日志开头不是时间格式，需要修改日志格式，本例中，处理 <code>vnc</code> 日志时，会先在行首添加时间    </p>
-</blockquote>
-<p>可以根据此日志记录，创建针对 <code>VNC</code> 服务的日志过滤规则，手动创建文件 <code>/etc/fail2ban/filter.d/vnc.local</code></p>
-<figure class="highlight shell"><figcaption><span>/etc/fail2ban/filter.d/vnc.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[Definition]</span><br><span class="line">failregex = .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">ignoreregex =</span><br></pre></td></tr></table></figure>
-
-<p>创建好配置文件，使配置生效前，一定要对 <code>filter</code> 配置文件的有效性进行测试，<code>fail2ban</code> 提供了命令 <code>fail2ban-regex</code> 用来测试 <code>filter</code> 的正则表达式，使用方法如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-regex /home/USER1/.vnc/USER1\:1.<span class="built_in">log</span> vnc</span></span><br><span class="line"></span><br><span class="line">Running tests</span><br><span class="line">=============</span><br><span class="line"></span><br><span class="line">Use   failregex filter file : vnc, basedir: /etc/fail2ban</span><br><span class="line">Use         log file : /home/USER1/.vnc/USER1\:1.log</span><br><span class="line">Use         encoding : UTF-8</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Results</span><br><span class="line">=======</span><br><span class="line"></span><br><span class="line">Failregex: 171210 total</span><br><span class="line">|-  #) [# of hits] regular expression</span><br><span class="line">|   1) [171210] .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">`-</span><br><span class="line"></span><br><span class="line">Ignoreregex: 0 total</span><br><span class="line"></span><br><span class="line">Date template hits:</span><br><span class="line">|- [# of hits] date format</span><br><span class="line">|  [377319] &#123;^LN-BEG&#125;(?:DAY )?MON Day %k:Minute:Second(?:\.Microseconds)?(?: ExYear)?</span><br><span class="line">`-</span><br><span class="line"></span><br><span class="line">Lines: 377319 lines, 0 ignored, 171210 matched, 206109 missed</span><br><span class="line">[processed in 23.67 sec]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>以上命令使用规则 <code>vnc</code>，匹配日志文件 <code>/home/USER1/.vnc/USER1\:1.log</code>，结果中显示：<code>Lines: 377319 lines, 0 ignored, 171210 matched, 206109 missed</code>，可以说明匹配到了需要的内容  </p>
-<p>也可以通过以下命令，验证具体的正则表达式是否能匹配到指定的日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-regex <span class="string">&#x27; Connections: blacklisted: 185.170.144.226&#x27;</span> <span class="string">&#x27;.*Connections: blacklisted: &lt;HOST&gt;&#x27;</span></span></span><br><span class="line"></span><br><span class="line">Running tests</span><br><span class="line">=============</span><br><span class="line"></span><br><span class="line">Use   failregex line : .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">Use      single line :  Connections: blacklisted: 185.170.144.226</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Results</span><br><span class="line">=======</span><br><span class="line"></span><br><span class="line">Failregex: 1 total</span><br><span class="line">|-  #) [# of hits] regular expression</span><br><span class="line">|   1) [1] .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">`-</span><br><span class="line"></span><br><span class="line">Ignoreregex: 0 total</span><br><span class="line"></span><br><span class="line">Date template hits:</span><br><span class="line"></span><br><span class="line">Lines: 1 lines, 0 ignored, 1 matched, 0 missed</span><br><span class="line">[processed in 0.03 sec]</span><br></pre></td></tr></table></figure>
-<p>以上结果显示 <code>Lines: 1 lines, 0 ignored, 1 matched, 0 missed</code> , 说明日志被正则表达式匹配到了  </p>
-<blockquote>
-<p>以上命令中，隐含了日志开始匹配到了时间格式</p>
-</blockquote>
-<p>创建 <code>ban</code> 配置，手动创建配置文件 <code>/etc/fail2ban/jail.d/vnc.local</code>  </p>
-<figure class="highlight shell"><figcaption><span>/etc/fail2ban/jail.d/vnc.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[vnc]</span><br><span class="line">enabled = true</span><br><span class="line">port = 5901</span><br><span class="line">filter = vnc</span><br><span class="line">action = iptables[name=VNC, port=5901, protocol=tcp]</span><br><span class="line">logpath = /home/cosmos/.vnc/cosmos:1.log</span><br><span class="line">maxretry = 3</span><br><span class="line">bantime = 43200</span><br><span class="line">findtime = 3600</span><br></pre></td></tr></table></figure>
-
-<p>配置更改完后，重启 <code>fail2ban</code> 使配置生效  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart fail2ban</span><br></pre></td></tr></table></figure>
-<p>重启后，使用以下命令查看 <code>fail2ban</code> 状态：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status</span></span><br><span class="line">Status</span><br><span class="line">|- Number of jail:	2</span><br><span class="line">`- Jail list:	sshd, vnc</span><br></pre></td></tr></table></figure>
-<p>如果输出显示 : <code>ERROR   Failed to access socket path: /var/run/fail2ban/fail2ban.sock. Is fail2ban running? </code>，说明 <code>fail2ban</code> 启动失败，可能是配置文件存在问题，比如 <code>fail2ban</code> 服务状态如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl status fail2ban -l</span></span><br><span class="line"> fail2ban.service - Fail2Ban Service</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/fail2ban.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: failed (Result: exit-code) since Sat 2022-08-20 13:33:48 CST; 24s ago</span><br><span class="line">     Docs: man:fail2ban(1)</span><br><span class="line">  Process: 2520 ExecStop=/usr/bin/fail2ban-client stop (code=exited, status=0/SUCCESS)</span><br><span class="line">  Process: 2536 ExecStart=/usr/bin/fail2ban-server -xf start (code=exited, status=255)</span><br><span class="line">  Process: 2533 ExecStartPre=/bin/mkdir -p /run/fail2ban (code=exited, status=0/SUCCESS)</span><br><span class="line"> Main PID: 2536 (code=exited, status=255)</span><br><span class="line"></span><br><span class="line">Aug 20 13:33:47 myserver-cn systemd[1]: Starting Fail2Ban Service...</span><br><span class="line">Aug 20 13:33:47 myserver-cn systemd[1]: Started Fail2Ban Service.</span><br><span class="line">Aug 20 13:33:48 myserver-cn fail2ban-server[2536]: 2022-08-20 13:33:48,058 fail2ban                </span><br><span class="line">    [2536]: ERROR   Failed during configuration: Have not found any log file for vnc jail</span><br><span class="line">Aug 20 13:33:48 myserver-cn fail2ban-server[2536]: 2022-08-20 13:33:48,060 fail2ban               </span><br><span class="line">    [2536]: ERROR   Async configuration of server failed</span><br><span class="line">Aug 20 13:33:48 myserver-cn systemd[1]: fail2ban.service: main process exited, code=exited, status=255/n/a</span><br><span class="line">Aug 20 13:33:48 myserver-cn systemd[1]: Unit fail2ban.service entered failed state.</span><br><span class="line">Aug 20 13:33:48 myserver-cn systemd[1]: fail2ban.service failed.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>输出中显示 <code>Failed during configuration: Have not found any log file for vnc jail</code>，说明 <code>jail.d/vnc.local</code> 中配置的日志路径或者是权限有问题，需要检查此处配置。  </p>
-<blockquote>
-<p>此处报错是因为 <code>jail.d/vnc.local</code> 中配置的日志路径如下： </p>
-<figure class="highlight shell"><figcaption><span>jail.d/vnc.local</span></figcaption><table><tr><td class="code"><pre><span class="line">logpath = /home/cosmos/.vnc/cosmos\:1.log</span><br></pre></td></tr></table></figure>
-<p>配置文件中不需要对 <code>:</code> 进行转义。</p>
-</blockquote>
-<p>配置无误，重启服务生效后，可以检查 <code>vnc</code> 对应的 <code>ban</code> 的状态：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status vnc</span></span><br><span class="line">Status for the jail: vnc</span><br><span class="line">|- Filter</span><br><span class="line">|  |- Currently failed:	22</span><br><span class="line">|  |- Total failed:	52632</span><br><span class="line">|  `- File list:	/home/cosmos/.vnc/cosmos:1.log.bak</span><br><span class="line">`- Actions</span><br><span class="line">   |- Currently banned:	18</span><br><span class="line">   |- Total banned:	18</span><br><span class="line">   `- Banned IP list:	212.80.219.226 212.80.219.175 175.211.155.52 ...</span><br></pre></td></tr></table></figure>
-<p>查看防火墙状态，可以看到被封的 ip ：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -L -v -n</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_42.png"></p>
-<p>如果被封禁的 ip 中有被误伤的，需要解禁，使用以下命令：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">fail2ban-client set vnc  unbanip 45.33.65.249</span><br></pre></td></tr></table></figure>
-<p>命令中的 <code>vnc</code> 指 <code>ban</code> 配置文件 <code>/etc/fail2ban/jail.d/vnc.local</code> 中的 <code>[vnc]</code> <a href="#jail-%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6%E8%AF%B4%E6%98%8E">名称</a></p>
-<h3 id="相关链接"><a href="#相关链接" class="headerlink" title="相关链接"></a>相关链接</h3><p><a href="https://www.fail2ban.org/wiki/index.php/Main_Page">fail2ban 官网</a><br><a href="https://www.fail2ban.org/wiki/index.php/MANUAL_0_8#Filters">fail2ban 配置官网说明</a></p>
-]]></content>
+<span id="more"></span>]]></content>
       <categories>
         <category>Linux</category>
+        <category>ELK</category>
       </categories>
       <tags>
         <tag>Linux</tag>
-        <tag>fail2ban</tag>
       </tags>
   </entry>
   <entry>
@@ -5575,6 +5452,129 @@ width: 20%;
       </categories>
       <tags>
         <tag>etcd</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux fail2ban 详解</title>
+    <url>/202208171501/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos 7</li>
+<li>iptables</li>
+</ul>
+<p><a href="https://www.fail2ban.org/wiki/index.php/Main_Page">Fail2ban</a> 是 Linux 上的一个著名的入侵保护的开源框架。它通过监视相应服务的日志记录文件，匹配日志记录中的错误信息（正则式匹配），然后与系统的 <code>iptables</code> 联动执行相应的屏蔽动作（一般情况下是调用防火墙屏蔽），比如：当有人在试探你的 <code>HTTP</code>、<code>SSH</code>、<code>SMTP</code>、<code>FTP</code> 密码，只要达到你预设的次数，<code>Fail2ban</code> 就会调用防火墙屏蔽这个 IP，并且可以发送 e-mail 通知系统管理员。</p>
+<p>由于 <code>Fail2ban</code> 需要与系统的 <code>iptables</code>、<code>firewalld</code> 等联动来达到封禁 IP 的目的， <code>iptables</code> 使用与 <code>firewalld</code> 有少许不同。  </p>
+<p>本文以 <code>iptables</code> 为例</p>
+<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install epel-release</span><br><span class="line">yum install -y fail2ban</span><br><span class="line">systemctl enable fail2ban</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h3 id="相关命令"><a href="#相关命令" class="headerlink" title="相关命令"></a>相关命令</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">查看 Fail2ban 的状态</span></span><br><span class="line">fail2ban-client status   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">查看 Fai2ban 的版本</span></span><br><span class="line">fail2ban-client version   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">检查 Fail2ban 是否正常运行（正常将显示 pong）</span></span><br><span class="line">fail2ban-client ping     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">启动 Fail2ban</span></span><br><span class="line">systemctl start fail2ban   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">停止 Fail2ban</span>  </span><br><span class="line">systemctl stop fail2ban  </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">重启 Fail2ban</span>  </span><br><span class="line">systemctl restart fail2ban</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">打开 Fail2ban 的日志监控</span>     </span><br><span class="line">tail -f /var/log/fail2ban.log  </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="主要文件说明"><a href="#主要文件说明" class="headerlink" title="主要文件说明"></a>主要文件说明</h3><table>
+<thead>
+<tr>
+<th>文件</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&#x2F;etc&#x2F;fail2ban&#x2F;jail.d&#x2F;</td>
+<td>配置文件夹。用于定义错误次数、封禁时长、封禁动作等</td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;fail2ban&#x2F;filter.d&#x2F;</td>
+<td>条件文件夹。内含默认文件，用于定义日志文件内容的过滤规则</td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;fail2ban&#x2F;action.d</td>
+<td>动作文件夹。内含默认文件，用于 iptables 以及 mail 等动作配置</td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;fail2ban&#x2F;fail2ban.conf<br/>&#x2F;etc&#x2F;fail2ban&#x2F;jail.conf</td>
+<td><code>*.conf</code> 是主要（默认）配置文件，<strong>不要直接更改 <code>.conf</code> 文件</strong> ，升级后会被覆盖<br/>应该手动创建 <code>fail2ban.local</code> ,<code>jail.local</code>(或者分离 <code>.conf</code> 文件到 <code>jail.d/</code> 目录)</td>
+</tr>
+</tbody></table>
+<h3 id="fail2ban-配置文件说明"><a href="#fail2ban-配置文件说明" class="headerlink" title="fail2ban 配置文件说明"></a>fail2ban 配置文件说明</h3><p><code>/etc/fail2ban/fail2ban.conf</code> 是主配置文件，定义了 <code>fai2ban</code> 默认的日志级别、日志位置及 sock 文件位置。<strong>不要更改此文件</strong>，要更改默认配置，可以复制 <code>fail2ban.conf</code> 成 <code>/etc/fail2ban/fail2ban.local</code> ，更改此 <code>local</code> 文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/fail2ban/fail2ban.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[DEFAULT]</span><br><span class="line"></span><br><span class="line">loglevel = INFO</span><br><span class="line"></span><br><span class="line">logtarget = /var/log/fail2ban.log</span><br><span class="line"></span><br><span class="line">syslogsocket = auto</span><br><span class="line"></span><br><span class="line">socket = /var/run/fail2ban/fail2ban.sock</span><br><span class="line"></span><br><span class="line">pidfile = /var/run/fail2ban/fail2ban.pid</span><br><span class="line"></span><br><span class="line">dbfile = /var/lib/fail2ban/fail2ban.sqlite3</span><br><span class="line"></span><br><span class="line">dbpurgeage = 1d</span><br><span class="line"></span><br><span class="line">dbmaxmatches = 10</span><br><span class="line"></span><br><span class="line">[Definition]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">[Thread]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="jail-配置文件说明"><a href="#jail-配置文件说明" class="headerlink" title="jail 配置文件说明"></a>jail 配置文件说明</h3><p><code>/etc/fail2ban/jail.conf</code> 主要设置启用 <code>ban</code> 动作的服务及动作阀值。<strong>不要更改此文件</strong>，要更改此处的默认配置，可以复制 <code>jail.conf</code> 到 <code>/etc/fail2ban/jail.local</code>，更改此文件中的默认配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/fail2ban/jail.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[DEFAULT]</span><br><span class="line">ignorecommand =</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">屏蔽时间，默认单位：秒</span></span><br><span class="line">bantime  = 10m</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个时间段内超过 maxretry 定义的次数会被 ban 掉</span></span><br><span class="line">findtime  = 10m</span><br><span class="line">maxretry = 5</span><br><span class="line"></span><br><span class="line">maxmatches = %(maxretry)s</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">日志修改检测机制(gamin、polling和auto这三种)</span></span><br><span class="line">backend = auto</span><br><span class="line"></span><br><span class="line">usedns = warn</span><br><span class="line">logencoding = auto</span><br><span class="line">enabled = false</span><br><span class="line">mode = normal</span><br><span class="line">filter = %(__name__)s[mode=%(mode)s]</span><br><span class="line">destemail = root@localhost</span><br><span class="line">sender = root@&lt;fq-hostname&gt;</span><br><span class="line">mta = sendmail</span><br><span class="line">protocol = tcp</span><br><span class="line">chain = &lt;known/chain&gt;</span><br><span class="line">port = 0:65535</span><br><span class="line">fail2ban_agent = Fail2Ban/%(fail2ban_version)s</span><br><span class="line">banaction = iptables-multiport</span><br><span class="line">banaction_allports = iptables-allports</span><br><span class="line">action_ = %(banaction)s[port=&quot;%(port)s&quot;, protocol=&quot;%(protocol)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_mw = %(action_)s</span><br><span class="line">            %(mta)s-whois[sender=&quot;%(sender)s&quot;, dest=&quot;%(destemail)s&quot;, protocol=&quot;%(protocol)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_mwl = %(action_)s</span><br><span class="line">             %(mta)s-whois-lines[sender=&quot;%(sender)s&quot;, dest=&quot;%(destemail)s&quot;, logpath=&quot;%(logpath)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_xarf = %(action_)s</span><br><span class="line">             xarf-login-attack[service=%(__name__)s, sender=&quot;%(sender)s&quot;, logpath=&quot;%(logpath)s&quot;, port=&quot;%(port)s&quot;]</span><br><span class="line">action_cf_mwl = cloudflare[cfuser=&quot;%(cfemail)s&quot;, cftoken=&quot;%(cfapikey)s&quot;]</span><br><span class="line">                %(mta)s-whois-lines[sender=&quot;%(sender)s&quot;, dest=&quot;%(destemail)s&quot;, logpath=&quot;%(logpath)s&quot;, chain=&quot;%(chain)s&quot;]</span><br><span class="line">action_blocklist_de  = blocklist_de[email=&quot;%(sender)s&quot;, service=&quot;%(__name__)s&quot;, apikey=&quot;%(blocklist_de_apikey)s&quot;, agent=&quot;%(fail2ban_agent)s&quot;]</span><br><span class="line">action_badips = badips.py[category=&quot;%(__name__)s&quot;, banaction=&quot;%(banaction)s&quot;, agent=&quot;%(fail2ban_agent)s&quot;]</span><br><span class="line">action_badips_report = badips[category=&quot;%(__name__)s&quot;, agent=&quot;%(fail2ban_agent)s&quot;]</span><br><span class="line">action_abuseipdb = abuseipdb</span><br><span class="line">action = %(action_)s</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>其中 <code>[DEFAULT]</code> 块定义了默认的配置，具体的服务配置中 (如 <code>/etc/fail2ban/jail.d/ssh.local</code>)，可以覆盖默认值。 </p>
+<p>针对具体服务配置防护，以 <code>sshd</code> 为例，手动创建配置 <code>/etc/fail2ban/jail.d/sshd.local</code></p>
+<figure class="highlight shell"><figcaption><span>/etc/fail2ban/jail.d/sshd.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[sshd]</span><br><span class="line">enabled = true</span><br><span class="line">port = 22</span><br><span class="line">filter = sshd</span><br><span class="line">action = iptables[name=SSH, port=ssh, protocol=tcp]</span><br><span class="line">logpath = /var/log/secure</span><br><span class="line">maxretry = 3</span><br><span class="line">bantime = 43200</span><br><span class="line">findtime = 3600</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>[sshd]</code> : 名称，可以随便填写</li>
+<li><code>enabled =true</code> ： 启用此配置</li>
+<li><code>port = 22</code> : 服务端口</li>
+<li><code>filter = sshd</code> : 应用的 <code>filter</code> 名称，对应的 <a href="#filter-%E9%85%8D%E7%BD%AE%E8%AF%B4%E6%98%8E"><code>filter</code> 配置</a> 位于 <code>/etc/fail2ban/filter.d/sshd.conf</code></li>
+<li><code>action = iptables[name=SSH, port=ssh, protocol=tcp]</code> : 执行的动作，对应 <code>/etc/fail2ban/action.d/iptables.conf</code> ，并传入 <code>name=SSH, port=ssh, protocol=tcp</code>，此处传入的端口 <code>ssh</code> 默认为 22 ，如果端口不为 22 ，需要更改为对应端口，传入的 <code>name</code> 会在定义防火墙链时被当做链名的一部分</li>
+<li><code>logpath = /var/log/secure</code> : 要过滤的日志记录文件路径</li>
+<li><code>maxretry = 3</code> ： 执行封禁动作前允许的错误记录数</li>
+<li><code>bantime = 43200</code> ： 执行封禁的时长（秒）</li>
+<li><code>findtime = 3600</code> ：此时长（秒）内达到 <code>maxretry</code> 次就执行封禁动作</li>
+</ul>
+<p>配置好之后，重启 <code>fail2ban</code> 使配置生效</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart fail2ban</span><br></pre></td></tr></table></figure>
+<p>或者执行以下命令，在不重启 <code>fail2ban</code> 的情况下重新分析并加载配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">fail2ban-client reload</span><br></pre></td></tr></table></figure>
+
+<p>执行以下命令查看 <code>fail2ban</code> 的状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status</span></span><br><span class="line">Status</span><br><span class="line">|- Number of jail:	1</span><br><span class="line">`- Jail list:	sshd</span><br></pre></td></tr></table></figure>
+<p>可以看到当前只启动了 <code>sshd</code> 这一个 <code>jail</code></p>
+<p>执行以下命令查看 <code>sshd</code> 的防护情况，可以看到目前有哪些 ip 被封锁，以及过去总共多少 ip 被封锁</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status sshd</span></span><br><span class="line">Status for the jail: sshd</span><br><span class="line">|- Filter</span><br><span class="line">|  |- Currently failed:	0</span><br><span class="line">|  |- Total failed:	0</span><br><span class="line">|  `- Journal matches:	_SYSTEMD_UNIT=sshd.service + _COMM=sshd</span><br><span class="line">`- Actions</span><br><span class="line">   |- Currently banned:	1</span><br><span class="line">   |- Total banned:	1</span><br><span class="line">   `- Banned IP list:	54.193.188.141</span><br></pre></td></tr></table></figure>
+
+<h3 id="filter-配置说明"><a href="#filter-配置说明" class="headerlink" title="filter 配置说明"></a>filter 配置说明</h3><p><code>fail2ban</code> 使用的各个 <code>filter</code> 位于 <code>/etc/fail2ban/filter.d/</code> 下。其中主要配置了日志的过滤规则  </p>
+<p>以创建防护 <code>VNC</code> 的 <code>filter</code> 来说明。<code>VNC</code> 的日志中，如果有恶意登录，经常会出现以下日志记录：</p>
+<figure class="highlight shell"><figcaption><span>/home/USER1/.vnc/USER1\:1.log</span></figcaption><table><tr><td class="code"><pre><span class="line">Sat Aug 20 10:35:27 2022</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"></span><br><span class="line">Sat Aug 20 10:35:28 2022</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br><span class="line"></span><br><span class="line">Sat Aug 20 10:35:29 2022</span><br><span class="line"> Connections: blacklisted: 185.170.144.226</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><code>filter</code> 的匹配规则里面，<strong>行的开头一定要先匹配到时间</strong>，时间格式可以试试系统可以识别的格式，如果开头不能匹配到时间，规则会匹配失败，因此，如果日志开头不是时间格式，需要修改日志格式，本例中，处理 <code>vnc</code> 日志时，会先在行首添加时间    </p>
+</blockquote>
+<p>可以根据此日志记录，创建针对 <code>VNC</code> 服务的日志过滤规则，手动创建文件 <code>/etc/fail2ban/filter.d/vnc.local</code></p>
+<figure class="highlight shell"><figcaption><span>/etc/fail2ban/filter.d/vnc.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[Definition]</span><br><span class="line">failregex = .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">ignoreregex =</span><br></pre></td></tr></table></figure>
+
+<p>创建好配置文件，使配置生效前，一定要对 <code>filter</code> 配置文件的有效性进行测试，<code>fail2ban</code> 提供了命令 <code>fail2ban-regex</code> 用来测试 <code>filter</code> 的正则表达式，使用方法如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-regex /home/USER1/.vnc/USER1\:1.<span class="built_in">log</span> vnc</span></span><br><span class="line"></span><br><span class="line">Running tests</span><br><span class="line">=============</span><br><span class="line"></span><br><span class="line">Use   failregex filter file : vnc, basedir: /etc/fail2ban</span><br><span class="line">Use         log file : /home/USER1/.vnc/USER1\:1.log</span><br><span class="line">Use         encoding : UTF-8</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Results</span><br><span class="line">=======</span><br><span class="line"></span><br><span class="line">Failregex: 171210 total</span><br><span class="line">|-  #) [# of hits] regular expression</span><br><span class="line">|   1) [171210] .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">`-</span><br><span class="line"></span><br><span class="line">Ignoreregex: 0 total</span><br><span class="line"></span><br><span class="line">Date template hits:</span><br><span class="line">|- [# of hits] date format</span><br><span class="line">|  [377319] &#123;^LN-BEG&#125;(?:DAY )?MON Day %k:Minute:Second(?:\.Microseconds)?(?: ExYear)?</span><br><span class="line">`-</span><br><span class="line"></span><br><span class="line">Lines: 377319 lines, 0 ignored, 171210 matched, 206109 missed</span><br><span class="line">[processed in 23.67 sec]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>以上命令使用规则 <code>vnc</code>，匹配日志文件 <code>/home/USER1/.vnc/USER1\:1.log</code>，结果中显示：<code>Lines: 377319 lines, 0 ignored, 171210 matched, 206109 missed</code>，可以说明匹配到了需要的内容  </p>
+<p>也可以通过以下命令，验证具体的正则表达式是否能匹配到指定的日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-regex <span class="string">&#x27; Connections: blacklisted: 185.170.144.226&#x27;</span> <span class="string">&#x27;.*Connections: blacklisted: &lt;HOST&gt;&#x27;</span></span></span><br><span class="line"></span><br><span class="line">Running tests</span><br><span class="line">=============</span><br><span class="line"></span><br><span class="line">Use   failregex line : .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">Use      single line :  Connections: blacklisted: 185.170.144.226</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Results</span><br><span class="line">=======</span><br><span class="line"></span><br><span class="line">Failregex: 1 total</span><br><span class="line">|-  #) [# of hits] regular expression</span><br><span class="line">|   1) [1] .*Connections: blacklisted: &lt;HOST&gt;</span><br><span class="line">`-</span><br><span class="line"></span><br><span class="line">Ignoreregex: 0 total</span><br><span class="line"></span><br><span class="line">Date template hits:</span><br><span class="line"></span><br><span class="line">Lines: 1 lines, 0 ignored, 1 matched, 0 missed</span><br><span class="line">[processed in 0.03 sec]</span><br></pre></td></tr></table></figure>
+<p>以上结果显示 <code>Lines: 1 lines, 0 ignored, 1 matched, 0 missed</code> , 说明日志被正则表达式匹配到了  </p>
+<blockquote>
+<p>以上命令中，隐含了日志开始匹配到了时间格式</p>
+</blockquote>
+<p>创建 <code>ban</code> 配置，手动创建配置文件 <code>/etc/fail2ban/jail.d/vnc.local</code>  </p>
+<figure class="highlight shell"><figcaption><span>/etc/fail2ban/jail.d/vnc.local</span></figcaption><table><tr><td class="code"><pre><span class="line">[vnc]</span><br><span class="line">enabled = true</span><br><span class="line">port = 5901</span><br><span class="line">filter = vnc</span><br><span class="line">action = iptables[name=VNC, port=5901, protocol=tcp]</span><br><span class="line">logpath = /home/cosmos/.vnc/cosmos:1.log</span><br><span class="line">maxretry = 3</span><br><span class="line">bantime = 43200</span><br><span class="line">findtime = 3600</span><br></pre></td></tr></table></figure>
+
+<p>配置更改完后，重启 <code>fail2ban</code> 使配置生效  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart fail2ban</span><br></pre></td></tr></table></figure>
+<p>重启后，使用以下命令查看 <code>fail2ban</code> 状态：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status</span></span><br><span class="line">Status</span><br><span class="line">|- Number of jail:	2</span><br><span class="line">`- Jail list:	sshd, vnc</span><br></pre></td></tr></table></figure>
+<p>如果输出显示 : <code>ERROR   Failed to access socket path: /var/run/fail2ban/fail2ban.sock. Is fail2ban running? </code>，说明 <code>fail2ban</code> 启动失败，可能是配置文件存在问题，比如 <code>fail2ban</code> 服务状态如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl status fail2ban -l</span></span><br><span class="line"> fail2ban.service - Fail2Ban Service</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/fail2ban.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: failed (Result: exit-code) since Sat 2022-08-20 13:33:48 CST; 24s ago</span><br><span class="line">     Docs: man:fail2ban(1)</span><br><span class="line">  Process: 2520 ExecStop=/usr/bin/fail2ban-client stop (code=exited, status=0/SUCCESS)</span><br><span class="line">  Process: 2536 ExecStart=/usr/bin/fail2ban-server -xf start (code=exited, status=255)</span><br><span class="line">  Process: 2533 ExecStartPre=/bin/mkdir -p /run/fail2ban (code=exited, status=0/SUCCESS)</span><br><span class="line"> Main PID: 2536 (code=exited, status=255)</span><br><span class="line"></span><br><span class="line">Aug 20 13:33:47 myserver-cn systemd[1]: Starting Fail2Ban Service...</span><br><span class="line">Aug 20 13:33:47 myserver-cn systemd[1]: Started Fail2Ban Service.</span><br><span class="line">Aug 20 13:33:48 myserver-cn fail2ban-server[2536]: 2022-08-20 13:33:48,058 fail2ban                </span><br><span class="line">    [2536]: ERROR   Failed during configuration: Have not found any log file for vnc jail</span><br><span class="line">Aug 20 13:33:48 myserver-cn fail2ban-server[2536]: 2022-08-20 13:33:48,060 fail2ban               </span><br><span class="line">    [2536]: ERROR   Async configuration of server failed</span><br><span class="line">Aug 20 13:33:48 myserver-cn systemd[1]: fail2ban.service: main process exited, code=exited, status=255/n/a</span><br><span class="line">Aug 20 13:33:48 myserver-cn systemd[1]: Unit fail2ban.service entered failed state.</span><br><span class="line">Aug 20 13:33:48 myserver-cn systemd[1]: fail2ban.service failed.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>输出中显示 <code>Failed during configuration: Have not found any log file for vnc jail</code>，说明 <code>jail.d/vnc.local</code> 中配置的日志路径或者是权限有问题，需要检查此处配置。  </p>
+<blockquote>
+<p>此处报错是因为 <code>jail.d/vnc.local</code> 中配置的日志路径如下： </p>
+<figure class="highlight shell"><figcaption><span>jail.d/vnc.local</span></figcaption><table><tr><td class="code"><pre><span class="line">logpath = /home/cosmos/.vnc/cosmos\:1.log</span><br></pre></td></tr></table></figure>
+<p>配置文件中不需要对 <code>:</code> 进行转义。</p>
+</blockquote>
+<p>配置无误，重启服务生效后，可以检查 <code>vnc</code> 对应的 <code>ban</code> 的状态：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">fail2ban-client status vnc</span></span><br><span class="line">Status for the jail: vnc</span><br><span class="line">|- Filter</span><br><span class="line">|  |- Currently failed:	22</span><br><span class="line">|  |- Total failed:	52632</span><br><span class="line">|  `- File list:	/home/cosmos/.vnc/cosmos:1.log.bak</span><br><span class="line">`- Actions</span><br><span class="line">   |- Currently banned:	18</span><br><span class="line">   |- Total banned:	18</span><br><span class="line">   `- Banned IP list:	212.80.219.226 212.80.219.175 175.211.155.52 ...</span><br></pre></td></tr></table></figure>
+<p>查看防火墙状态，可以看到被封的 ip ：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -L -v -n</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_42.png"></p>
+<p>如果被封禁的 ip 中有被误伤的，需要解禁，使用以下命令：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">fail2ban-client set vnc  unbanip 45.33.65.249</span><br></pre></td></tr></table></figure>
+<p>命令中的 <code>vnc</code> 指 <code>ban</code> 配置文件 <code>/etc/fail2ban/jail.d/vnc.local</code> 中的 <code>[vnc]</code> <a href="#jail-%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6%E8%AF%B4%E6%98%8E">名称</a></p>
+<h3 id="相关链接"><a href="#相关链接" class="headerlink" title="相关链接"></a>相关链接</h3><p><a href="https://www.fail2ban.org/wiki/index.php/Main_Page">fail2ban 官网</a><br><a href="https://www.fail2ban.org/wiki/index.php/MANUAL_0_8#Filters">fail2ban 配置官网说明</a></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>fail2ban</tag>
       </tags>
   </entry>
   <entry>
@@ -8004,6 +8004,95 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 网络</title>
     <url>/202212020941/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8149,95 +8238,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
@@ -9053,6 +9053,48 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>kibana 管理操作</title>
+    <url>/202307281401/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kibana 8.8</li>
+</ul>
+<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
+<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
+<p>space 隔离以下资源：</p>
+<ul>
+<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
+<li>Dashboard</li>
+</ul>
+<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<p>内置 role：</p>
+<ul>
+<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
+</ul>
+<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
+<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
+<ol>
+<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
+<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
+</ol>
+<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
+<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
+<ol>
+<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
+<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
+</ol>
+<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>kibana 配置说明</title>
     <url>/202307251443/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -9119,48 +9161,6 @@ width: 20%;
 <p><em><strong>错误原因</strong></em> <a href="https://csms.tech/202307171638/#安全相关配置">Elasticsearch 启用了安全特性</a>，Kibana 中未配置登陆 Elasticsearch 时的认证信息。<a href="#Elasticsearch-%E6%9C%AC%E5%9C%B0%E7%94%A8%E6%88%B7%E8%AE%A4%E8%AF%81">参考配置 Kibana 通过 Elasticsearch 认证登陆</a></p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/current/settings.html">kibana 官网</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/settings.html">kibana 配置选项列表</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/access.html#status">Access Kibana</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/tutorial-secure-access-to-kibana.html">Securing access to Kibana</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>kibana 管理操作</title>
-    <url>/202307281401/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kibana 8.8</li>
-</ul>
-<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
-<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
-<p>space 隔离以下资源：</p>
-<ul>
-<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
-<li>Dashboard</li>
-</ul>
-<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<p>内置 role：</p>
-<ul>
-<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
-</ul>
-<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
-<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
-<ol>
-<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
-<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
-</ol>
-<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
-<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
-<ol>
-<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
-<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
-</ol>
-<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -10106,6 +10106,23 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux 压缩解压缩</title>
+    <url>/202209301257/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
+
+<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
+
+<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>cp 命令用法</title>
     <url>/202210281406/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>常用选项</p>
@@ -10135,23 +10152,6 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">tree -a</span></span><br><span class="line">.</span><br><span class="line">├── dir1</span><br><span class="line">│    ├── test1</span><br><span class="line">│    └── .test2</span><br><span class="line">└── dir2</span><br><span class="line">    └── test1</span><br><span class="line"></span><br><span class="line">2 directories, 3 files</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <p>看见，<code>dir/.test</code> 未被拷贝，如果拷贝时希望同时保护隐藏文件，可以使用 <code>.</code> 代替 <code>*</code></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">tree -a</span></span><br><span class="line">.</span><br><span class="line">├── dir1</span><br><span class="line">│    ├── test1</span><br><span class="line">│    └── .test2</span><br><span class="line">└── dir2</span><br><span class="line"></span><br><span class="line">2 directories, 2 files</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cp</span> -rf dir1/. dir2/</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">tree -a</span></span><br><span class="line">.</span><br><span class="line">├── dir1</span><br><span class="line">│    ├── test1</span><br><span class="line">│    └── .test2</span><br><span class="line">└── dir2</span><br><span class="line">    ├── test1</span><br><span class="line">    └── .test2</span><br><span class="line"></span><br><span class="line">2 directories, 4 files</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 压缩解压缩</title>
-    <url>/202209301257/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
-
-<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
-
-<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>常用命令</category>
@@ -15227,29 +15227,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Python3 安装</title>
-    <url>/202306161337/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 6.3.8-1.el7.elrepo.x86_64</li>
-<li>Python 3.10.12</li>
-</ul>
-<h1 id="编译安装步骤"><a href="#编译安装步骤" class="headerlink" title="编译安装步骤"></a>编译安装步骤</h1><p>安装相关依赖</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y groupinstall &quot;Development tools&quot;</span><br><span class="line"></span><br><span class="line">yum -y install zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel</span><br><span class="line"></span><br><span class="line">yum install libffi-devel -y</span><br></pre></td></tr></table></figure>
-
-<p>Centos 7 默认安装的 <code>openssl</code> 版本太低（<code>1.0.2k-fips</code>），无法满足 <code>Python 3.10.12</code> 对 SSL 的支持，需要 <a href="https://csms.tech/202306081314/#openssl-版本升级">首先升级 OpenSSL 版本</a>。否则编译安装后使用 SSL 相关功能会报错： <code>ImportError: No module named _ssl</code></p>
-<p>下载安装包并编译安装。使用 <code>--with-openssl=/usr/local/openssl/</code> 指定新版本 <code>openssl</code> 位置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://www.python.org/ftp/python/3.10.12/Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">tar -xf Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">cd Python-3.10.12</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/python3 --with-openssl=/usr/local/openssl/</span><br><span class="line"></span><br><span class="line">make &amp;&amp; make install</span><br><span class="line"></span><br><span class="line">ln -s /usr/local/python3/bin/python3 /usr/bin/</span><br><span class="line">ln -s /usr/local/python3/bin/pip3 /usr/bin/</span><br></pre></td></tr></table></figure>
-
-<p>安装完成后，安装目录为 <code>/usr/local/python3</code>，要迁移到其他机器使用，可以安装相关依赖后，将安装目录拷贝到其他机器即可正常使用。<a href="/202302041721/" title="此版本编译后的文件下载链接">此版本编译后的文件下载链接</a></p>
-]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>python 虚拟环境</title>
     <url>/202208161730/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -15275,6 +15252,54 @@ width: 20%;
       </categories>
       <tags>
         <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Python3 安装</title>
+    <url>/202306161337/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 6.3.8-1.el7.elrepo.x86_64</li>
+<li>Python 3.10.12</li>
+</ul>
+<h1 id="编译安装步骤"><a href="#编译安装步骤" class="headerlink" title="编译安装步骤"></a>编译安装步骤</h1><p>安装相关依赖</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y groupinstall &quot;Development tools&quot;</span><br><span class="line"></span><br><span class="line">yum -y install zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel</span><br><span class="line"></span><br><span class="line">yum install libffi-devel -y</span><br></pre></td></tr></table></figure>
+
+<p>Centos 7 默认安装的 <code>openssl</code> 版本太低（<code>1.0.2k-fips</code>），无法满足 <code>Python 3.10.12</code> 对 SSL 的支持，需要 <a href="https://csms.tech/202306081314/#openssl-版本升级">首先升级 OpenSSL 版本</a>。否则编译安装后使用 SSL 相关功能会报错： <code>ImportError: No module named _ssl</code></p>
+<p>下载安装包并编译安装。使用 <code>--with-openssl=/usr/local/openssl/</code> 指定新版本 <code>openssl</code> 位置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://www.python.org/ftp/python/3.10.12/Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">tar -xf Python-3.10.12.tgz</span><br><span class="line"></span><br><span class="line">cd Python-3.10.12</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/python3 --with-openssl=/usr/local/openssl/</span><br><span class="line"></span><br><span class="line">make &amp;&amp; make install</span><br><span class="line"></span><br><span class="line">ln -s /usr/local/python3/bin/python3 /usr/bin/</span><br><span class="line">ln -s /usr/local/python3/bin/pip3 /usr/bin/</span><br></pre></td></tr></table></figure>
+
+<p>安装完成后，安装目录为 <code>/usr/local/python3</code>，要迁移到其他机器使用，可以安装相关依赖后，将安装目录拷贝到其他机器即可正常使用。<a href="/202302041721/" title="此版本编译后的文件下载链接">此版本编译后的文件下载链接</a></p>
+]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux rabbitmq</title>
+    <url>/202304261014/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 3.10.0-1160.45.1.el7</li>
+<li>RabbitMQ 3.9.10</li>
+</ul>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="RabbitMQ-启动失败"><a href="#RabbitMQ-启动失败" class="headerlink" title="RabbitMQ 启动失败"></a>RabbitMQ 启动失败</h2><p>使用命令启动，报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/sbin/rabbitmq-server -v</span></span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; Protocol &#x27;inet_tcp&#x27;: register/listen error: ehostunreach</span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; </span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     supervisor: &#123;local,net_sup&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     errorContext: start_error</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     reason: &#123;&#x27;EXIT&#x27;,nodistribution&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     offender: [&#123;pid,undefined&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;id,net_kernel&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;mfargs,&#123;net_kernel,start_link,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                    [[rabbit_prelaunch_21812@localhost,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                      shortnames],</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                     false,net_sup_dynamic]&#125;&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;restart_type,permanent&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;shutdown,2000&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;child_type,worker&#125;]</span><br></pre></td></tr></table></figure>
+
+<p>关键错误信息 <code>Protocol &#39;inet_tcp&#39;: register/listen error: ehostunreach</code>，根据提示，可能是某个地址不可达，rabbitmq 启动时需要连接 epmd ，默认端口为 4369，在本地测试连接此端口，发现不通 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Protocol 'inet_tcp': register/listen error: econnrefused](https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 127.0.0.1:4369; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 127.0.0.1:4369; No route to host</span><br></pre></td></tr></table></figure>
+<p>根据输出的错误可知，是因为 <code>127.0.0.1</code> 无法连接，检查 iptables 防火墙策略，发现未允许回环网卡访问，在 iptables 中添加以下规则允许回环网卡访问</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD DROP [0:0]</span><br><span class="line">:OUTPUT ACCEPT [9020367577:7010759848370]</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br></pre></td></tr></table></figure>
+<p>允许回环网卡访问后，重新测试连接 epmd ，可以正常连接，重新启动 rabbitmq-server 正常。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* Connected to 127.0.0.1 (127.0.0.1) port 4369 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 127.0.0.1:4369</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* Empty reply from server</span></span><br><span class="line">* Connection #0 to host 127.0.0.1 left intact</span><br><span class="line">curl: (52) Empty reply from server</span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused">Protocol 'inet_tcp': register/listen error: econnrefused</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -15398,31 +15423,6 @@ width: 20%;
       <tags>
         <tag>Kubernetes</tag>
         <tag>Rancher</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux rabbitmq</title>
-    <url>/202304261014/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 3.10.0-1160.45.1.el7</li>
-<li>RabbitMQ 3.9.10</li>
-</ul>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="RabbitMQ-启动失败"><a href="#RabbitMQ-启动失败" class="headerlink" title="RabbitMQ 启动失败"></a>RabbitMQ 启动失败</h2><p>使用命令启动，报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/sbin/rabbitmq-server -v</span></span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; Protocol &#x27;inet_tcp&#x27;: register/listen error: ehostunreach</span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; </span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     supervisor: &#123;local,net_sup&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     errorContext: start_error</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     reason: &#123;&#x27;EXIT&#x27;,nodistribution&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     offender: [&#123;pid,undefined&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;id,net_kernel&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;mfargs,&#123;net_kernel,start_link,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                    [[rabbit_prelaunch_21812@localhost,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                      shortnames],</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                     false,net_sup_dynamic]&#125;&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;restart_type,permanent&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;shutdown,2000&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;child_type,worker&#125;]</span><br></pre></td></tr></table></figure>
-
-<p>关键错误信息 <code>Protocol &#39;inet_tcp&#39;: register/listen error: ehostunreach</code>，根据提示，可能是某个地址不可达，rabbitmq 启动时需要连接 epmd ，默认端口为 4369，在本地测试连接此端口，发现不通 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Protocol 'inet_tcp': register/listen error: econnrefused](https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 127.0.0.1:4369; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 127.0.0.1:4369; No route to host</span><br></pre></td></tr></table></figure>
-<p>根据输出的错误可知，是因为 <code>127.0.0.1</code> 无法连接，检查 iptables 防火墙策略，发现未允许回环网卡访问，在 iptables 中添加以下规则允许回环网卡访问</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD DROP [0:0]</span><br><span class="line">:OUTPUT ACCEPT [9020367577:7010759848370]</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br></pre></td></tr></table></figure>
-<p>允许回环网卡访问后，重新测试连接 epmd ，可以正常连接，重新启动 rabbitmq-server 正常。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* Connected to 127.0.0.1 (127.0.0.1) port 4369 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 127.0.0.1:4369</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* Empty reply from server</span></span><br><span class="line">* Connection #0 to host 127.0.0.1 left intact</span><br><span class="line">curl: (52) Empty reply from server</span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused">Protocol 'inet_tcp': register/listen error: econnrefused</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
