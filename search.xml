@@ -1127,6 +1127,163 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Ansible playbook 使用介绍</title>
+    <url>/202309011341/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>ansible 2.9.27</li>
+</ul>
+<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
+<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
+<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
+<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
+<span id="more"></span>
+<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
+<ul>
+<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
+<li><code>remote_user</code> 用户名。</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
+
+<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
+
+<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
+<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
+
+<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
+
+<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
+
+<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
+<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
+<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
+<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
+<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
+
+<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
+<ul>
+<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
+">[1]</span></a></sup></li>
+<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
+</ul>
+<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
+">[1]</span></a></sup></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>action </code></td>
+<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain</code></td>
+<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>table </code></td>
+<td>This option specifies the packet matching table which the command should operate on</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain_management </code></td>
+<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>comment </code></td>
+<td>规则的注释说明</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ctstate </code><br/><code>list / elements=string</code></td>
+<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>source </code></td>
+<td>Source specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination</code> <br/><code>string</code></td>
+<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_port </code><br/><code>string</code></td>
+<td>Destination port or port range specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
+<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dst_range </code><br/><code>string</code></td>
+<td>Specifies the destination IP range to match in the iprange module.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>source_port </code></td>
+<td>Source port or port range specification.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>flush</code><br/><code>boolean</code></td>
+<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>jump </code></td>
+<td>This specifies the target of the rule</td>
+<td></td>
+</tr>
+<tr>
+<td><code>protocol </code></td>
+<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>rule_num </code></td>
+<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ansible</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Ansible 使用介绍</title>
     <url>/202308311109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1353,160 +1510,152 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Ansible playbook 使用介绍</title>
-    <url>/202309011341/</url>
+    <title>Apollo 配置中心服务使用说明</title>
+    <url>/202211021332/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>ansible 2.9.27</li>
+<li>Centos 7 kernel 5.4</li>
+<li>Apollo 2.0.1</li>
+<li>Mysql 5.7</li>
+<li>Java 1.8</li>
 </ul>
-<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
-<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
-<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
-<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
-<span id="more"></span>
-<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
-<ul>
-<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
-<li><code>remote_user</code> 用户名。</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
-
-<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
-
-<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
-<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
-
-<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
-
-<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
-
-<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
-<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
-<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
-<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
-<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
-
-
-
-
-
-<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
-
-<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
-<ul>
-<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
-">[1]</span></a></sup></li>
-<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
-</ul>
-<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
-">[1]</span></a></sup></p>
-<table>
+<h1 id="安装部署"><a href="#安装部署" class="headerlink" title="安装部署"></a>安装部署</h1><h2 id="分布式部署"><a href="#分布式部署" class="headerlink" title="分布式部署"></a>分布式部署</h2><h3 id="部署服务器信息说明"><a href="#部署服务器信息说明" class="headerlink" title="部署服务器信息说明"></a>部署服务器信息说明</h3><table>
 <thead>
 <tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
+<th>环境</th>
+<th>服务器</th>
+<th>服务</th>
+<th>端口</th>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>action </code></td>
-<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
-<td></td>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>apollo-portal</td>
+<td>8070</td>
 </tr>
 <tr>
-<td><code>chain</code></td>
-<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
-<td></td>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>数据库 ApolloPortalDB</td>
+<td>3306</td>
 </tr>
 <tr>
-<td><code>table </code></td>
-<td>This option specifies the packet matching table which the command should operate on</td>
-<td></td>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>apollo-configservice</td>
+<td>8080</td>
 </tr>
 <tr>
-<td><code>chain_management </code></td>
-<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
-<td></td>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>apollo-adminservice</td>
+<td>8090</td>
 </tr>
 <tr>
-<td><code>comment </code></td>
-<td>规则的注释说明</td>
-<td></td>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>数据库ApolloConfigDB</td>
+<td>3306</td>
 </tr>
 <tr>
-<td><code>ctstate </code><br/><code>list / elements=string</code></td>
-<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
-<td></td>
+<td><code>pro</code></td>
+<td>172.31.82.2</td>
+<td>apollo-configservice</td>
+<td>8080</td>
 </tr>
 <tr>
-<td><code>source </code></td>
-<td>Source specification</td>
-<td></td>
+<td><code>pro</code></td>
+<td>172.31.82.2</td>
+<td>apollo-adminservice</td>
+<td>8090</td>
 </tr>
 <tr>
-<td><code>destination</code> <br/><code>string</code></td>
-<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
-<td></td>
+<td><code>uat</code></td>
+<td>172.31.83.3</td>
+<td>apollo-configservice</td>
+<td>8080</td>
 </tr>
 <tr>
-<td><code>destination_port </code><br/><code>string</code></td>
-<td>Destination port or port range specification</td>
-<td></td>
+<td><code>uat</code></td>
+<td>172.31.83.3</td>
+<td>apollo-adminservice</td>
+<td>8090</td>
 </tr>
 <tr>
-<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
-<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
-<td></td>
-</tr>
-<tr>
-<td><code>dst_range </code><br/><code>string</code></td>
-<td>Specifies the destination IP range to match in the iprange module.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>source_port </code></td>
-<td>Source port or port range specification.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>flush</code><br/><code>boolean</code></td>
-<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>jump </code></td>
-<td>This specifies the target of the rule</td>
-<td></td>
-</tr>
-<tr>
-<td><code>protocol </code></td>
-<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>rule_num </code></td>
-<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
-<td></td>
+<td><code>uat</code></td>
+<td>172.31.83.3</td>
+<td>数据库ApolloConfigDB</td>
+<td>3306</td>
 </tr>
 </tbody></table>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<p>其中 <code>172.31.88.1</code>、<code>172.31.82.2</code> 为 <code>pro</code> 环境的高可用节点。<code>172.31.83.3</code> 为 <code>uat</code> 环境的单节点。</p>
+<p><code>apollo-portal</code> 和 <code>ApolloPortalDB</code> 部署在 <code>pro</code> 环境，<code>uat</code> 环境共用 <code>apollo-portal</code> 和 <code>ApolloPortalDB</code>。</p>
+<span id="more"></span>
+<h3 id="安装-Java"><a href="#安装-Java" class="headerlink" title="安装 Java"></a>安装 Java</h3><p>在所有节点上安装 java-1.8.0</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y java-1.8.0-openjdk</span><br></pre></td></tr></table></figure>
+<p>验证 java 安装成功</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">java -version</span></span><br><span class="line">openjdk version &quot;1.8.0_352&quot;</span><br><span class="line">OpenJDK Runtime Environment (build 1.8.0_352-b08)</span><br><span class="line">OpenJDK 64-Bit Server VM (build 25.352-b08, mixed mode)</span><br></pre></td></tr></table></figure>
+
+<h3 id="下载-Apollo-源码包"><a href="#下载-Apollo-源码包" class="headerlink" title="下载 Apollo 源码包"></a>下载 Apollo 源码包</h3><p><a href="https://github.com/apolloconfig/apollo/releases/tag/v2.0.1">下载地址</a>，<code>apollo-portal</code> 只需要在 portal 服务器下载，<code>apollo-adminservice</code> 和 <code>apollo-configservice</code> 需要在所有节点上下载<br><img src="https://i.csms.tech/img_79.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-adminservice-2.0.1-github.zip </span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-configservice-2.0.1-github.zip</span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-portal-2.0.1-github.zip</span><br></pre></td></tr></table></figure>
+
+<p>解压源码包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">unzip apollo-adminservice-2.0.1-github.zip -d apollo-adminservice-2.0.1</span><br><span class="line">unzip apollo-configservice-2.0.1-github.zip -d apollo-configservice-2.0.1</span><br><span class="line">unzip apollo-portal-2.0.1-github.zip -d apollo-portal-2.0.1</span><br></pre></td></tr></table></figure>
+
+
+<h3 id="准备数据库"><a href="#准备数据库" class="headerlink" title="准备数据库"></a>准备数据库</h3><p>Apollo 服务端共需要两个数据库：<code>ApolloPortalDB</code> 和 <code>ApolloConfigDB</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建数据库](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)">[1]</span></a></sup></p>
+<p>需要注意的是 <code>ApolloPortalDB</code> 只需要在 <code>pro</code> 环境部署一个即可，而 <code>ApolloConfigDB</code> 需要在每个环境部署一套，如 <code>fat</code>、<code>uat</code> 和 <code>pro</code> 分别部署 3 套 <code>ApolloConfigDB</code>。</p>
+<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloportaldb.sql</code> 并导入数据库 </p>
+<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[apolloportaldb.sql](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)
+">[2]</span></a></sup></p>
+<p>在 <code>uat</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库</p>
+<p>调整 <code>ApolloPortalDB.ServerConfig</code> 表的数据，<code>portal</code> 默认支持的环境是 <code>DEV</code>，若需要支持其它环境，需要修改 <code>apollo.portal.envs</code> 的值，默认值是 <code>DEV</code>，修改为以下值，表示支持 <code>UAT</code>、<code>PRO</code><br><img src="https://i.csms.tech/img_80.png"></p>
+<p>因为 <code>PRO</code> 环境有多个节点，需要调整 <code>PRO</code> 环境的数据库表 <code>ApolloConfigDB.ServerConfig</code>，修改 <code>eureka.service.url</code> 的值为当前 <code>PRO</code> 环境的 <code>apollo-configservice</code> 的地址和端口，注意多个地址之间用英文逗号隔开。<br><img src="https://i.csms.tech/img_81.png"><br><code>UAT</code> 环境只有一个节点，<code>eureka.service.url</code> 使用默认的 <code>localhost</code> 即可。 </p>
+<h3 id="部署-Apollo"><a href="#部署-Apollo" class="headerlink" title="部署 Apollo"></a>部署 Apollo</h3><h4 id="部署-apollo-configservice"><a href="#部署-apollo-configservice" class="headerlink" title="部署 apollo-configservice"></a>部署 apollo-configservice</h4><h5 id="配置数据库连接"><a href="#配置数据库连接" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-configservice-2.0.1/config/application-github.properties</code> 文件，修改其中的数据库连接为当前环境的数据库信息。</p>
+<figure class="highlight shell"><figcaption><span>apollo-configservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWb+5Pw==</span><br></pre></td></tr></table></figure>
+
+<h5 id="启动-apollo-configservice"><a href="#启动-apollo-configservice" class="headerlink" title="启动 apollo-configservice"></a>启动 apollo-configservice</h5><p>默认的启动端口是 <code>8080</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8080&#125;</code> 的 <code>8080</code> 改成指定的端口即可。</p>
+<p>执行 <code>scripts/startup.sh</code> 启动</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 09:56:08 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22197]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 09:56:23 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
+
+<p>启动之后检查端口 <code>8080</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp | grep LIST</span></span><br><span class="line">tcp        0      0 0.0.0.0:111             0.0.0.0:*               LISTEN      612/rpcbind         </span><br><span class="line">tcp        0      0 0.0.0.0:30000           0.0.0.0:*               LISTEN      2595/sshd           </span><br><span class="line">tcp6       0      0 :::3306                 :::*                    LISTEN      21960/mysqld        </span><br><span class="line">tcp6       0      0 :::111                  :::*                    LISTEN      612/rpcbind         </span><br><span class="line">tcp6       0      0 :::8080                 :::*                    LISTEN      22197/java          </span><br><span class="line">tcp6       0      0 :::30000                :::*                    LISTEN      2595/sshd</span><br></pre></td></tr></table></figure>
+
+<h4 id="部署-apollo-adminservice"><a href="#部署-apollo-adminservice" class="headerlink" title="部署 apollo-adminservice"></a>部署 apollo-adminservice</h4><h5 id="配置数据库连接-1"><a href="#配置数据库连接-1" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-adminservice-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为当前环境的数据库信息。</p>
+<figure class="highlight shell"><figcaption><span>apollo-adminservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = 1roAYNg==</span><br></pre></td></tr></table></figure>
+<h5 id="启动-apollo-adminservice"><a href="#启动-apollo-adminservice" class="headerlink" title="启动 apollo-adminservice"></a>启动 apollo-adminservice</h5><p>默认的启动端口是 <code>8090</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8090&#125;</code> 的 <code>8090</code> 改成指定的端口即可。</p>
+<p>执行 <code>scripts/startup.sh</code> 启动</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 10:06:05 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22818]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:06:21 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
+
+<h4 id="部署-apollo-portal"><a href="#部署-apollo-portal" class="headerlink" title="部署 apollo-portal"></a>部署 apollo-portal</h4><h5 id="配置数据库连接-2"><a href="#配置数据库连接-2" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改 <code>apollo-portal</code> 节点上的 <code>apollo-portal-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为 <code>ApolloPortalDB</code> 的数据库信息。</p>
+<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">DataSource</span></span><br><span class="line">spring.datasource.url = jdbc:mysql://pro.env.apollo.mysql:3306/ApolloPortalDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWwRDNEb+5Pw==</span><br></pre></td></tr></table></figure>
+
+<h5 id="配置-meta-service-信息"><a href="#配置-meta-service-信息" class="headerlink" title="配置 meta service 信息"></a>配置 meta service 信息</h5><p><code>meta service</code> 的地址和端口，默认就是 <code>apollo-configservice</code> 的地址和端口。</p>
+<p>修改 <code>apollo-portal-2.0.1/config/apollo-env.properties</code>，填写当前的 <code>apollo-portal</code> 要管理的环境的 <code>apollo-configservice</code> 的地址和端口，多个地址之间用英文逗号隔开</p>
+<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/apollo-env.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">pro.meta=http://172.31.81.1:8080,http://172.31.82.2:8080</span><br><span class="line">uat.meta=http://172.31.83.3:8080</span><br></pre></td></tr></table></figure>
+
+<h5 id="启动-apollo-portal"><a href="#启动-apollo-portal" class="headerlink" title="启动 apollo-portal"></a>启动 apollo-portal</h5><p>默认的启动端口是 <code>8070</code> ，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8070&#125;</code> 的 <code>8070</code> 改成指定的端口即可。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span> </span><br><span class="line">Thu Nov  3 10:23:32 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [23044]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:23:47 CST 2022 Server started in 15 seconds!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="部署后检查是否成功"><a href="#部署后检查是否成功" class="headerlink" title="部署后检查是否成功"></a>部署后检查是否成功</h3><h4 id="apollo-configservice-和-apollo-adminservice-检查"><a href="#apollo-configservice-和-apollo-adminservice-检查" class="headerlink" title="apollo-configservice 和 apollo-adminservice 检查"></a>apollo-configservice 和 apollo-adminservice 检查</h4><ol>
+<li><p>在浏览器上登录当前环境的其中一个 <code>apollo-configservice</code> 的 <code>http://ip:port</code></p>
+</li>
+<li><p>查看该环境的 <code>apollo-configservice</code> 和 <code>apollo-adminservice</code> 的节点数是否正常。<br> 比如 <code>PRO</code> 环境有 2 个节点，输出中正常情况下会显示 2 个正常的节点<br> <img src="https://i.csms.tech/img_82.png"></p>
+</li>
+</ol>
+<h4 id="apollo-portal-检查"><a href="#apollo-portal-检查" class="headerlink" title="apollo-portal 检查"></a>apollo-portal 检查</h4><ol>
+<li>浏览器登录 <code>apollo-portal</code> 的 <code>http://ip:port</code>，默认账号 <code>apollo</code>，密码 <code>admin</code>。</li>
+</ol>
+<h1 id="常用操作"><a href="#常用操作" class="headerlink" title="常用操作"></a>常用操作</h1><h2 id="修改默认管理员-apollo-的密码"><a href="#修改默认管理员-apollo-的密码" class="headerlink" title="修改默认管理员 apollo 的密码"></a>修改默认管理员 apollo 的密码</h2><p>默认管理员 <code>apollo</code> 的密码为 <code>admin</code>，要修改此密码，在 <code>管理员工具</code> -&gt; <code>用户管理</code> 中输入用户名和密码，如果用户已存在，更新用户信息，用户不存在，则创建新用户。</p>
+<h2 id="创建部门"><a href="#创建部门" class="headerlink" title="创建部门"></a>创建部门</h2><p>只有管理员才能创建部门，在 <code>管理员工具</code> -&gt; <code>系统参数</code> 中查询 <code>organizations</code>，会输出当前的部门信息<br><img src="https://i.csms.tech/img_83.png"><br>修改此参数并保存，即可更新部门信息。</p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.apolloconfig.com/#/zh/design/apollo-introduction">Apollo 配置中心介绍</a></p>
+<p><a href="https://blog.csdn.net/werewolf2017/article/details/109120336">Apollo分布式配置中心集群部署</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">创建数据库</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">apolloportaldb.sql</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
-        <category>Linux</category>
+        <category>Tools</category>
       </categories>
       <tags>
-        <tag>Linux</tag>
-        <tag>ansible</tag>
+        <tag>Apollo</tag>
       </tags>
   </entry>
   <entry>
@@ -1664,155 +1813,6 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>awk</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Apollo 配置中心服务使用说明</title>
-    <url>/202211021332/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 kernel 5.4</li>
-<li>Apollo 2.0.1</li>
-<li>Mysql 5.7</li>
-<li>Java 1.8</li>
-</ul>
-<h1 id="安装部署"><a href="#安装部署" class="headerlink" title="安装部署"></a>安装部署</h1><h2 id="分布式部署"><a href="#分布式部署" class="headerlink" title="分布式部署"></a>分布式部署</h2><h3 id="部署服务器信息说明"><a href="#部署服务器信息说明" class="headerlink" title="部署服务器信息说明"></a>部署服务器信息说明</h3><table>
-<thead>
-<tr>
-<th>环境</th>
-<th>服务器</th>
-<th>服务</th>
-<th>端口</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-portal</td>
-<td>8070</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>数据库 ApolloPortalDB</td>
-<td>3306</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>数据库ApolloConfigDB</td>
-<td>3306</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.82.2</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.82.2</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>数据库ApolloConfigDB</td>
-<td>3306</td>
-</tr>
-</tbody></table>
-<p>其中 <code>172.31.88.1</code>、<code>172.31.82.2</code> 为 <code>pro</code> 环境的高可用节点。<code>172.31.83.3</code> 为 <code>uat</code> 环境的单节点。</p>
-<p><code>apollo-portal</code> 和 <code>ApolloPortalDB</code> 部署在 <code>pro</code> 环境，<code>uat</code> 环境共用 <code>apollo-portal</code> 和 <code>ApolloPortalDB</code>。</p>
-<span id="more"></span>
-<h3 id="安装-Java"><a href="#安装-Java" class="headerlink" title="安装 Java"></a>安装 Java</h3><p>在所有节点上安装 java-1.8.0</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y java-1.8.0-openjdk</span><br></pre></td></tr></table></figure>
-<p>验证 java 安装成功</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">java -version</span></span><br><span class="line">openjdk version &quot;1.8.0_352&quot;</span><br><span class="line">OpenJDK Runtime Environment (build 1.8.0_352-b08)</span><br><span class="line">OpenJDK 64-Bit Server VM (build 25.352-b08, mixed mode)</span><br></pre></td></tr></table></figure>
-
-<h3 id="下载-Apollo-源码包"><a href="#下载-Apollo-源码包" class="headerlink" title="下载 Apollo 源码包"></a>下载 Apollo 源码包</h3><p><a href="https://github.com/apolloconfig/apollo/releases/tag/v2.0.1">下载地址</a>，<code>apollo-portal</code> 只需要在 portal 服务器下载，<code>apollo-adminservice</code> 和 <code>apollo-configservice</code> 需要在所有节点上下载<br><img src="https://i.csms.tech/img_79.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-adminservice-2.0.1-github.zip </span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-configservice-2.0.1-github.zip</span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-portal-2.0.1-github.zip</span><br></pre></td></tr></table></figure>
-
-<p>解压源码包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">unzip apollo-adminservice-2.0.1-github.zip -d apollo-adminservice-2.0.1</span><br><span class="line">unzip apollo-configservice-2.0.1-github.zip -d apollo-configservice-2.0.1</span><br><span class="line">unzip apollo-portal-2.0.1-github.zip -d apollo-portal-2.0.1</span><br></pre></td></tr></table></figure>
-
-
-<h3 id="准备数据库"><a href="#准备数据库" class="headerlink" title="准备数据库"></a>准备数据库</h3><p>Apollo 服务端共需要两个数据库：<code>ApolloPortalDB</code> 和 <code>ApolloConfigDB</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建数据库](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)">[1]</span></a></sup></p>
-<p>需要注意的是 <code>ApolloPortalDB</code> 只需要在 <code>pro</code> 环境部署一个即可，而 <code>ApolloConfigDB</code> 需要在每个环境部署一套，如 <code>fat</code>、<code>uat</code> 和 <code>pro</code> 分别部署 3 套 <code>ApolloConfigDB</code>。</p>
-<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloportaldb.sql</code> 并导入数据库 </p>
-<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[apolloportaldb.sql](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)
-">[2]</span></a></sup></p>
-<p>在 <code>uat</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库</p>
-<p>调整 <code>ApolloPortalDB.ServerConfig</code> 表的数据，<code>portal</code> 默认支持的环境是 <code>DEV</code>，若需要支持其它环境，需要修改 <code>apollo.portal.envs</code> 的值，默认值是 <code>DEV</code>，修改为以下值，表示支持 <code>UAT</code>、<code>PRO</code><br><img src="https://i.csms.tech/img_80.png"></p>
-<p>因为 <code>PRO</code> 环境有多个节点，需要调整 <code>PRO</code> 环境的数据库表 <code>ApolloConfigDB.ServerConfig</code>，修改 <code>eureka.service.url</code> 的值为当前 <code>PRO</code> 环境的 <code>apollo-configservice</code> 的地址和端口，注意多个地址之间用英文逗号隔开。<br><img src="https://i.csms.tech/img_81.png"><br><code>UAT</code> 环境只有一个节点，<code>eureka.service.url</code> 使用默认的 <code>localhost</code> 即可。 </p>
-<h3 id="部署-Apollo"><a href="#部署-Apollo" class="headerlink" title="部署 Apollo"></a>部署 Apollo</h3><h4 id="部署-apollo-configservice"><a href="#部署-apollo-configservice" class="headerlink" title="部署 apollo-configservice"></a>部署 apollo-configservice</h4><h5 id="配置数据库连接"><a href="#配置数据库连接" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-configservice-2.0.1/config/application-github.properties</code> 文件，修改其中的数据库连接为当前环境的数据库信息。</p>
-<figure class="highlight shell"><figcaption><span>apollo-configservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWb+5Pw==</span><br></pre></td></tr></table></figure>
-
-<h5 id="启动-apollo-configservice"><a href="#启动-apollo-configservice" class="headerlink" title="启动 apollo-configservice"></a>启动 apollo-configservice</h5><p>默认的启动端口是 <code>8080</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8080&#125;</code> 的 <code>8080</code> 改成指定的端口即可。</p>
-<p>执行 <code>scripts/startup.sh</code> 启动</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 09:56:08 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22197]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 09:56:23 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
-
-<p>启动之后检查端口 <code>8080</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp | grep LIST</span></span><br><span class="line">tcp        0      0 0.0.0.0:111             0.0.0.0:*               LISTEN      612/rpcbind         </span><br><span class="line">tcp        0      0 0.0.0.0:30000           0.0.0.0:*               LISTEN      2595/sshd           </span><br><span class="line">tcp6       0      0 :::3306                 :::*                    LISTEN      21960/mysqld        </span><br><span class="line">tcp6       0      0 :::111                  :::*                    LISTEN      612/rpcbind         </span><br><span class="line">tcp6       0      0 :::8080                 :::*                    LISTEN      22197/java          </span><br><span class="line">tcp6       0      0 :::30000                :::*                    LISTEN      2595/sshd</span><br></pre></td></tr></table></figure>
-
-<h4 id="部署-apollo-adminservice"><a href="#部署-apollo-adminservice" class="headerlink" title="部署 apollo-adminservice"></a>部署 apollo-adminservice</h4><h5 id="配置数据库连接-1"><a href="#配置数据库连接-1" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-adminservice-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为当前环境的数据库信息。</p>
-<figure class="highlight shell"><figcaption><span>apollo-adminservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = 1roAYNg==</span><br></pre></td></tr></table></figure>
-<h5 id="启动-apollo-adminservice"><a href="#启动-apollo-adminservice" class="headerlink" title="启动 apollo-adminservice"></a>启动 apollo-adminservice</h5><p>默认的启动端口是 <code>8090</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8090&#125;</code> 的 <code>8090</code> 改成指定的端口即可。</p>
-<p>执行 <code>scripts/startup.sh</code> 启动</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 10:06:05 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22818]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:06:21 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
-
-<h4 id="部署-apollo-portal"><a href="#部署-apollo-portal" class="headerlink" title="部署 apollo-portal"></a>部署 apollo-portal</h4><h5 id="配置数据库连接-2"><a href="#配置数据库连接-2" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改 <code>apollo-portal</code> 节点上的 <code>apollo-portal-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为 <code>ApolloPortalDB</code> 的数据库信息。</p>
-<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">DataSource</span></span><br><span class="line">spring.datasource.url = jdbc:mysql://pro.env.apollo.mysql:3306/ApolloPortalDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWwRDNEb+5Pw==</span><br></pre></td></tr></table></figure>
-
-<h5 id="配置-meta-service-信息"><a href="#配置-meta-service-信息" class="headerlink" title="配置 meta service 信息"></a>配置 meta service 信息</h5><p><code>meta service</code> 的地址和端口，默认就是 <code>apollo-configservice</code> 的地址和端口。</p>
-<p>修改 <code>apollo-portal-2.0.1/config/apollo-env.properties</code>，填写当前的 <code>apollo-portal</code> 要管理的环境的 <code>apollo-configservice</code> 的地址和端口，多个地址之间用英文逗号隔开</p>
-<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/apollo-env.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">pro.meta=http://172.31.81.1:8080,http://172.31.82.2:8080</span><br><span class="line">uat.meta=http://172.31.83.3:8080</span><br></pre></td></tr></table></figure>
-
-<h5 id="启动-apollo-portal"><a href="#启动-apollo-portal" class="headerlink" title="启动 apollo-portal"></a>启动 apollo-portal</h5><p>默认的启动端口是 <code>8070</code> ，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8070&#125;</code> 的 <code>8070</code> 改成指定的端口即可。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span> </span><br><span class="line">Thu Nov  3 10:23:32 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [23044]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:23:47 CST 2022 Server started in 15 seconds!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="部署后检查是否成功"><a href="#部署后检查是否成功" class="headerlink" title="部署后检查是否成功"></a>部署后检查是否成功</h3><h4 id="apollo-configservice-和-apollo-adminservice-检查"><a href="#apollo-configservice-和-apollo-adminservice-检查" class="headerlink" title="apollo-configservice 和 apollo-adminservice 检查"></a>apollo-configservice 和 apollo-adminservice 检查</h4><ol>
-<li><p>在浏览器上登录当前环境的其中一个 <code>apollo-configservice</code> 的 <code>http://ip:port</code></p>
-</li>
-<li><p>查看该环境的 <code>apollo-configservice</code> 和 <code>apollo-adminservice</code> 的节点数是否正常。<br> 比如 <code>PRO</code> 环境有 2 个节点，输出中正常情况下会显示 2 个正常的节点<br> <img src="https://i.csms.tech/img_82.png"></p>
-</li>
-</ol>
-<h4 id="apollo-portal-检查"><a href="#apollo-portal-检查" class="headerlink" title="apollo-portal 检查"></a>apollo-portal 检查</h4><ol>
-<li>浏览器登录 <code>apollo-portal</code> 的 <code>http://ip:port</code>，默认账号 <code>apollo</code>，密码 <code>admin</code>。</li>
-</ol>
-<h1 id="常用操作"><a href="#常用操作" class="headerlink" title="常用操作"></a>常用操作</h1><h2 id="修改默认管理员-apollo-的密码"><a href="#修改默认管理员-apollo-的密码" class="headerlink" title="修改默认管理员 apollo 的密码"></a>修改默认管理员 apollo 的密码</h2><p>默认管理员 <code>apollo</code> 的密码为 <code>admin</code>，要修改此密码，在 <code>管理员工具</code> -&gt; <code>用户管理</code> 中输入用户名和密码，如果用户已存在，更新用户信息，用户不存在，则创建新用户。</p>
-<h2 id="创建部门"><a href="#创建部门" class="headerlink" title="创建部门"></a>创建部门</h2><p>只有管理员才能创建部门，在 <code>管理员工具</code> -&gt; <code>系统参数</code> 中查询 <code>organizations</code>，会输出当前的部门信息<br><img src="https://i.csms.tech/img_83.png"><br>修改此参数并保存，即可更新部门信息。</p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.apolloconfig.com/#/zh/design/apollo-introduction">Apollo 配置中心介绍</a></p>
-<p><a href="https://blog.csdn.net/werewolf2017/article/details/109120336">Apollo分布式配置中心集群部署</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">创建数据库</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">apolloportaldb.sql</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Apollo</tag>
       </tags>
   </entry>
   <entry>
@@ -8004,6 +8004,95 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 网络</title>
     <url>/202212020941/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8149,95 +8238,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
@@ -9791,30 +9791,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>lftp 使用</title>
-    <url>/202306080936/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="lftp-安装"><a href="#lftp-安装" class="headerlink" title="lftp 安装"></a>lftp 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y lftp</span><br></pre></td></tr></table></figure>
-
-<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><p>查看帮助信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">lftp -h</span></span><br><span class="line">Usage: lftp [OPTS] &lt;site&gt;</span><br><span class="line">`lftp&#x27; is the first command executed by lftp after rc files</span><br><span class="line"> -f &lt;file&gt;           execute commands from the file and exit</span><br><span class="line"> -c &lt;cmd&gt;            execute the commands and exit</span><br><span class="line"> --help              print this help and exit</span><br><span class="line"> --version           print lftp version and exit</span><br><span class="line">Other options are the same as in `open&#x27; command</span><br><span class="line"> -e &lt;cmd&gt;            execute the command just after selecting</span><br><span class="line"> -u &lt;user&gt;[,&lt;pass&gt;]  use the user/password for authentication</span><br><span class="line"> -p &lt;port&gt;           use the port for connection</span><br><span class="line"> &lt;site&gt;              host name, URL or bookmark name</span><br></pre></td></tr></table></figure>
-
-<h2 id="登陆-FTP"><a href="#登陆-FTP" class="headerlink" title="登陆 FTP"></a>登陆 FTP</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp $&#123;USER&#125;:$&#123;PASSWORD&#125;@$&#123;FTPIP&#125;:$&#123;FTPPORT&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="上传文件"><a href="#上传文件" class="headerlink" title="上传文件"></a>上传文件</h2><p>在一条 shell 命令中执行登陆、上传、退出操作</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp -u $&#123;USER&#125;,$&#123;PASSWORD&#125; -p $&#123;FTPPORT&#125; $&#123;FTPIP&#125; -e &quot;put /1.mp4 &amp;&amp; exit&quot;</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Kubernetes 权限控制</title>
     <url>/202305161451/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -9890,6 +9866,30 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>lftp 使用</title>
+    <url>/202306080936/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="lftp-安装"><a href="#lftp-安装" class="headerlink" title="lftp 安装"></a>lftp 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y lftp</span><br></pre></td></tr></table></figure>
+
+<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><p>查看帮助信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">lftp -h</span></span><br><span class="line">Usage: lftp [OPTS] &lt;site&gt;</span><br><span class="line">`lftp&#x27; is the first command executed by lftp after rc files</span><br><span class="line"> -f &lt;file&gt;           execute commands from the file and exit</span><br><span class="line"> -c &lt;cmd&gt;            execute the commands and exit</span><br><span class="line"> --help              print this help and exit</span><br><span class="line"> --version           print lftp version and exit</span><br><span class="line">Other options are the same as in `open&#x27; command</span><br><span class="line"> -e &lt;cmd&gt;            execute the command just after selecting</span><br><span class="line"> -u &lt;user&gt;[,&lt;pass&gt;]  use the user/password for authentication</span><br><span class="line"> -p &lt;port&gt;           use the port for connection</span><br><span class="line"> &lt;site&gt;              host name, URL or bookmark name</span><br></pre></td></tr></table></figure>
+
+<h2 id="登陆-FTP"><a href="#登陆-FTP" class="headerlink" title="登陆 FTP"></a>登陆 FTP</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp $&#123;USER&#125;:$&#123;PASSWORD&#125;@$&#123;FTPIP&#125;:$&#123;FTPPORT&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="上传文件"><a href="#上传文件" class="headerlink" title="上传文件"></a>上传文件</h2><p>在一条 shell 命令中执行登陆、上传、退出操作</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp -u $&#123;USER&#125;,$&#123;PASSWORD&#125; -p $&#123;FTPPORT&#125; $&#123;FTPIP&#125; -e &quot;put /1.mp4 &amp;&amp; exit&quot;</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -12631,6 +12631,62 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 多主一从即多源复制</title>
+    <url>/2207210946/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7 之后版本支持多主一从</li>
+</ul>
+<h3 id="配置步骤"><a href="#配置步骤" class="headerlink" title="配置步骤"></a>配置步骤</h3><h4 id="分别在Master-1和Master-2上导出需要同步的数据库"><a href="#分别在Master-1和Master-2上导出需要同步的数据库" class="headerlink" title="分别在Master_1和Master_2上导出需要同步的数据库"></a>分别在Master_1和Master_2上导出需要同步的数据库</h4><p>分别在Master_1和Master_2上执行以下命令，导出需要同步的数据库备份</p>
+<figure class="highlight shell"><figcaption><span>Master_1</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db1  &gt; db1.sql</span><br></pre></td></tr></table></figure>
+<figure class="highlight shell"><figcaption><span>Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db2  &gt; db2.sql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>备份完成后，将备份数据拷贝到从库服务器上面</p>
+<span id="more"></span>
+
+<h4 id="在Master-1和Master-2上创建复制账号"><a href="#在Master-1和Master-2上创建复制账号" class="headerlink" title="在Master_1和Master_2上创建复制账号"></a>在Master_1和Master_2上创建复制账号</h4><blockquote>
+<p>如果已有复制账号，跳过此步骤</p>
+</blockquote>
+<p>分别在Master_1和Master_2上执行以下命令，创建复制账号</p>
+<figure class="highlight shell"><figcaption><span>Master_1 Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br></pre></td></tr></table></figure>
+<h4 id="更改slave配置以支持多主一从"><a href="#更改slave配置以支持多主一从" class="headerlink" title="更改slave配置以支持多主一从"></a>更改slave配置以支持多主一从</h4><p>mysql支持多主一从(多源复制)的关键配置。<br>要配置mysql支持多源复制，必须配置mysql存储同步信息的方式，主要有以下2种方式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[存储同步信息的方式说明](https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html)
+">[1]</span></a></sup></p>
+<ul>
+<li>FILE  默认配置，此时同步信息存储在文件master.info和relay-log.info</li>
+<li>TABLE  同步信息存储在mysql.slave_master_info和mysql.slave_relay_log_info</li>
+</ul>
+<p>更改mysql配置文件(默认&#x2F;etc&#x2F;my.cnf)，配置存储同步信息的方式</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">master_info_repository=TABLE</span><br><span class="line">relay_log_info_repository=TABLE</span><br></pre></td></tr></table></figure>
+<p>更改配置后，重启mysql生效</p>
+<h4 id="slave上恢复Master-1和Master-2的备份数据"><a href="#slave上恢复Master-1和Master-2的备份数据" class="headerlink" title="slave上恢复Master_1和Master_2的备份数据"></a>slave上恢复Master_1和Master_2的备份数据</h4><figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">mysql -uroot -p  &lt; db1.sql</span><br><span class="line">mysql -uroot -p  &lt; db2.sql</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>因为在 <code>mysqldump</code> 备份时，使用了选项 <code>--add-drop-database</code>，slave导入备份时，无需指定db</p>
+</blockquote>
+<h4 id="slave上配置多源复制"><a href="#slave上配置多源复制" class="headerlink" title="slave上配置多源复制"></a>slave上配置多源复制</h4><h5 id="找到配置主从需要的binlog位置和Pos位置"><a href="#找到配置主从需要的binlog位置和Pos位置" class="headerlink" title="找到配置主从需要的binlog位置和Pos位置"></a>找到配置主从需要的binlog位置和Pos位置</h5><p>分别在Master_1和Master_2的备份数据中，查找以下内容，找到需要的binlog位置和Pos位置</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">cat db1.sql |grep &quot; CHANGE MASTER&quot;</span><br><span class="line">cat db2.sql |grep &quot; CHANGE MASTER&quot;</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>这些信息是由  <code>mysqldump</code> 的选项 <code>--master-data=2</code>提供 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[--master-data=2说明](https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html)">[2]</span></a></sup><br>结果中包含以下类似内容：<br>CHANGE MASTER TO MASTER_LOG_FILE&#x3D;’log-bin.000001’, MASTER_LOG_POS&#x3D;1539;</p>
+</blockquote>
+<h5 id="登录salve数据库配置多源复制"><a href="#登录salve数据库配置多源复制" class="headerlink" title="登录salve数据库配置多源复制"></a>登录salve数据库配置多源复制</h5><p>登录slave数据库，分别执行以下命令，创建到Master_1和Master_2的复制</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_1&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_1&#x27;;</span><br><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_2&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_2&#x27;; </span><br><span class="line"> </span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>不同的主从复制以最后的 <code>FOR CHANNEL</code> 来区分</p>
+</blockquote>
+<h5 id="启动主从复制"><a href="#启动主从复制" class="headerlink" title="启动主从复制"></a>启动主从复制</h5><p>在slave数据库中执行以下命令分别启动复制</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">start slave for channel &quot;Master_1&quot;;</span><br><span class="line">start slave for channel &quot;Master_1&quot;;</span><br></pre></td></tr></table></figure>
+<p>也可以通过 <code>start slave;</code> 启动所有的复制</p>
+<p>可以通过以下命令查看启动复制后的状态</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_1&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_2&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS\G</span><br></pre></td></tr></table></figure>
+
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://dev.mysql.com/doc/">Mysql 官网</a></p>
+<h3 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h3><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html">存储同步信息的方式说明</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html">--master-data=2说明</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Mysql 主从复制相关原理简述</title>
     <url>/2207211114/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
@@ -12719,62 +12775,6 @@ width: 20%;
 
 <p>slave相关配置</p>
 <figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 2</span><br><span class="line">relay-log = mysql-relay-bin</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-db = rtzc_pnc_base     <span class="comment">##应该在从库上尽可能的使用replicate_wild_*，并不会减少主往从复制数据占用带宽</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-table = db.table      <span class="comment">##表级过滤</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#replicate-ignore-table = db.table</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_ignore_db=<span class="built_in">test</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_do_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_ignore_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">slave-skip-errors = 1032,1062     <span class="comment">###跳过某些同步错误号</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">log-slave-updates=1          <span class="comment">###从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span></span></span><br><span class="line">log-bin = mysql-bin</span><br><span class="line"></span><br><span class="line">expire_logs_days = 7</span><br><span class="line"></span><br><span class="line">read-only         ###从库Slave中使用read-only参数，确保从库数据不被非法更新。</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">innodb_read_only = 1         <span class="comment">###控制root用户，慎用</span></span></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 多主一从即多源复制</title>
-    <url>/2207210946/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7 之后版本支持多主一从</li>
-</ul>
-<h3 id="配置步骤"><a href="#配置步骤" class="headerlink" title="配置步骤"></a>配置步骤</h3><h4 id="分别在Master-1和Master-2上导出需要同步的数据库"><a href="#分别在Master-1和Master-2上导出需要同步的数据库" class="headerlink" title="分别在Master_1和Master_2上导出需要同步的数据库"></a>分别在Master_1和Master_2上导出需要同步的数据库</h4><p>分别在Master_1和Master_2上执行以下命令，导出需要同步的数据库备份</p>
-<figure class="highlight shell"><figcaption><span>Master_1</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db1  &gt; db1.sql</span><br></pre></td></tr></table></figure>
-<figure class="highlight shell"><figcaption><span>Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db2  &gt; db2.sql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>备份完成后，将备份数据拷贝到从库服务器上面</p>
-<span id="more"></span>
-
-<h4 id="在Master-1和Master-2上创建复制账号"><a href="#在Master-1和Master-2上创建复制账号" class="headerlink" title="在Master_1和Master_2上创建复制账号"></a>在Master_1和Master_2上创建复制账号</h4><blockquote>
-<p>如果已有复制账号，跳过此步骤</p>
-</blockquote>
-<p>分别在Master_1和Master_2上执行以下命令，创建复制账号</p>
-<figure class="highlight shell"><figcaption><span>Master_1 Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br></pre></td></tr></table></figure>
-<h4 id="更改slave配置以支持多主一从"><a href="#更改slave配置以支持多主一从" class="headerlink" title="更改slave配置以支持多主一从"></a>更改slave配置以支持多主一从</h4><p>mysql支持多主一从(多源复制)的关键配置。<br>要配置mysql支持多源复制，必须配置mysql存储同步信息的方式，主要有以下2种方式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[存储同步信息的方式说明](https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html)
-">[1]</span></a></sup></p>
-<ul>
-<li>FILE  默认配置，此时同步信息存储在文件master.info和relay-log.info</li>
-<li>TABLE  同步信息存储在mysql.slave_master_info和mysql.slave_relay_log_info</li>
-</ul>
-<p>更改mysql配置文件(默认&#x2F;etc&#x2F;my.cnf)，配置存储同步信息的方式</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">master_info_repository=TABLE</span><br><span class="line">relay_log_info_repository=TABLE</span><br></pre></td></tr></table></figure>
-<p>更改配置后，重启mysql生效</p>
-<h4 id="slave上恢复Master-1和Master-2的备份数据"><a href="#slave上恢复Master-1和Master-2的备份数据" class="headerlink" title="slave上恢复Master_1和Master_2的备份数据"></a>slave上恢复Master_1和Master_2的备份数据</h4><figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">mysql -uroot -p  &lt; db1.sql</span><br><span class="line">mysql -uroot -p  &lt; db2.sql</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>因为在 <code>mysqldump</code> 备份时，使用了选项 <code>--add-drop-database</code>，slave导入备份时，无需指定db</p>
-</blockquote>
-<h4 id="slave上配置多源复制"><a href="#slave上配置多源复制" class="headerlink" title="slave上配置多源复制"></a>slave上配置多源复制</h4><h5 id="找到配置主从需要的binlog位置和Pos位置"><a href="#找到配置主从需要的binlog位置和Pos位置" class="headerlink" title="找到配置主从需要的binlog位置和Pos位置"></a>找到配置主从需要的binlog位置和Pos位置</h5><p>分别在Master_1和Master_2的备份数据中，查找以下内容，找到需要的binlog位置和Pos位置</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">cat db1.sql |grep &quot; CHANGE MASTER&quot;</span><br><span class="line">cat db2.sql |grep &quot; CHANGE MASTER&quot;</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>这些信息是由  <code>mysqldump</code> 的选项 <code>--master-data=2</code>提供 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[--master-data=2说明](https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html)">[2]</span></a></sup><br>结果中包含以下类似内容：<br>CHANGE MASTER TO MASTER_LOG_FILE&#x3D;’log-bin.000001’, MASTER_LOG_POS&#x3D;1539;</p>
-</blockquote>
-<h5 id="登录salve数据库配置多源复制"><a href="#登录salve数据库配置多源复制" class="headerlink" title="登录salve数据库配置多源复制"></a>登录salve数据库配置多源复制</h5><p>登录slave数据库，分别执行以下命令，创建到Master_1和Master_2的复制</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_1&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_1&#x27;;</span><br><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_2&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_2&#x27;; </span><br><span class="line"> </span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>不同的主从复制以最后的 <code>FOR CHANNEL</code> 来区分</p>
-</blockquote>
-<h5 id="启动主从复制"><a href="#启动主从复制" class="headerlink" title="启动主从复制"></a>启动主从复制</h5><p>在slave数据库中执行以下命令分别启动复制</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">start slave for channel &quot;Master_1&quot;;</span><br><span class="line">start slave for channel &quot;Master_1&quot;;</span><br></pre></td></tr></table></figure>
-<p>也可以通过 <code>start slave;</code> 启动所有的复制</p>
-<p>可以通过以下命令查看启动复制后的状态</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_1&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_2&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS\G</span><br></pre></td></tr></table></figure>
-
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://dev.mysql.com/doc/">Mysql 官网</a></p>
-<h3 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h3><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html">存储同步信息的方式说明</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html">--master-data=2说明</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Mysql</category>
       </categories>
@@ -14830,6 +14830,26 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>python 中 json 格式</title>
+    <url>/202301201605/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python3.10</li>
+</ul>
+<p>Python 中操作 json 相关格式，主要使用模块 <code>json</code></p>
+<h1 id="Python-数据类型转换为-json-格式"><a href="#Python-数据类型转换为-json-格式" class="headerlink" title="Python 数据类型转换为 json 格式"></a>Python 数据类型转换为 json 格式</h1><p>python 数据类型转换为 json ，主要使用方法 <code>dumps()</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; adict = &#123;<span class="string">&#x27;a&#x27;</span>: 1, <span class="string">&#x27;b&#x27;</span>: <span class="string">&#x27;st&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(adict)</span></span><br><span class="line">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; alist = [1,2,3,4]</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(alist)</span></span><br><span class="line">&#x27;[1, 2, 3, 4]&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="json-格式转换为-Python-数据类型"><a href="#json-格式转换为-Python-数据类型" class="headerlink" title="json 格式转换为 Python 数据类型"></a>json 格式转换为 Python 数据类型</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; ajson = <span class="string">&#x27;[1, 2, 3, 4]&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(ajson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.load(ajson)</span></span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File &quot;&lt;console&gt;&quot;, line 1, in &lt;module&gt;</span><br><span class="line">  File &quot;/usr/local/lib/python3.10/json/__init__.py&quot;, line 293, in load</span><br><span class="line">    return loads(fp.read(),</span><br><span class="line">AttributeError: &#x27;str&#x27; object has no attribute &#x27;read&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(ajson)</span></span><br><span class="line">[1, 2, 3, 4]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; bjson = <span class="string">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(bjson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(bjson)</span></span><br><span class="line">&#123;&#x27;a&#x27;: 1, &#x27;b&#x27;: &#x27;st&#x27;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Python 错误集锦</title>
     <url>/202306161614/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -14863,18 +14883,18 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>python 中 json 格式</title>
-    <url>/202301201605/</url>
+    <title>python 代码性能分析工具</title>
+    <url>/202301261101/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python3.10</li>
+<li>python 3.10</li>
 </ul>
-<p>Python 中操作 json 相关格式，主要使用模块 <code>json</code></p>
-<h1 id="Python-数据类型转换为-json-格式"><a href="#Python-数据类型转换为-json-格式" class="headerlink" title="Python 数据类型转换为 json 格式"></a>Python 数据类型转换为 json 格式</h1><p>python 数据类型转换为 json ，主要使用方法 <code>dumps()</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; adict = &#123;<span class="string">&#x27;a&#x27;</span>: 1, <span class="string">&#x27;b&#x27;</span>: <span class="string">&#x27;st&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(adict)</span></span><br><span class="line">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; alist = [1,2,3,4]</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(alist)</span></span><br><span class="line">&#x27;[1, 2, 3, 4]&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h1 id="pyinstrument-使用"><a href="#pyinstrument-使用" class="headerlink" title="pyinstrument 使用"></a>pyinstrument 使用</h1><p><code>pyinstrument</code> 可以快速找到代码运行最慢的部分，帮助提高代码的性能。支持 Python 3.7+ 且能够分析异步代码，仅需一条命令即可显示具体代码的耗时 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[如何快速定位 Python 运行最慢的代码](https://jishuin.proginn.com/p/763bfbd66eae)">[1]</span></a></sup></p>
+<h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install pyinstrument</span><br></pre></td></tr></table></figure>
 
-<h1 id="json-格式转换为-Python-数据类型"><a href="#json-格式转换为-Python-数据类型" class="headerlink" title="json 格式转换为 Python 数据类型"></a>json 格式转换为 Python 数据类型</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; ajson = <span class="string">&#x27;[1, 2, 3, 4]&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(ajson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.load(ajson)</span></span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File &quot;&lt;console&gt;&quot;, line 1, in &lt;module&gt;</span><br><span class="line">  File &quot;/usr/local/lib/python3.10/json/__init__.py&quot;, line 293, in load</span><br><span class="line">    return loads(fp.read(),</span><br><span class="line">AttributeError: &#x27;str&#x27; object has no attribute &#x27;read&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(ajson)</span></span><br><span class="line">[1, 2, 3, 4]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; bjson = <span class="string">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(bjson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(bjson)</span></span><br><span class="line">&#123;&#x27;a&#x27;: 1, &#x27;b&#x27;: &#x27;st&#x27;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h2 id="命令行使用"><a href="#命令行使用" class="headerlink" title="命令行使用"></a>命令行使用</h2><p>在无需更改代码的情况下，直接通过命令行使用 <code>pyinstrument</code> 分析目标代码</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">pyinstrument main.py</span></span><br></pre></td></tr></table></figure>
 
-<span id="more"></span>]]></content>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://jishuin.proginn.com/p/763bfbd66eae">如何快速定位 Python 运行最慢的代码</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Python</category>
       </categories>
@@ -14898,26 +14918,6 @@ width: 20%;
 <p>如果你想要程序在系统托盘中静默运行，并通过系统托盘图标进行交互，那么你需要使用其他库，如 <code>pystray</code>，来创建系统托盘应用。</p>
 </blockquote>
 ]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>python 代码性能分析工具</title>
-    <url>/202301261101/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>python 3.10</li>
-</ul>
-<h1 id="pyinstrument-使用"><a href="#pyinstrument-使用" class="headerlink" title="pyinstrument 使用"></a>pyinstrument 使用</h1><p><code>pyinstrument</code> 可以快速找到代码运行最慢的部分，帮助提高代码的性能。支持 Python 3.7+ 且能够分析异步代码，仅需一条命令即可显示具体代码的耗时 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[如何快速定位 Python 运行最慢的代码](https://jishuin.proginn.com/p/763bfbd66eae)">[1]</span></a></sup></p>
-<h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install pyinstrument</span><br></pre></td></tr></table></figure>
-
-<h2 id="命令行使用"><a href="#命令行使用" class="headerlink" title="命令行使用"></a>命令行使用</h2><p>在无需更改代码的情况下，直接通过命令行使用 <code>pyinstrument</code> 分析目标代码</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">pyinstrument main.py</span></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://jishuin.proginn.com/p/763bfbd66eae">如何快速定位 Python 运行最慢的代码</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Python</category>
       </categories>
@@ -15303,6 +15303,129 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Rancher 安装及使用</title>
+    <url>/202210071716/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>centos7 3.10.0</li>
+<li>kubernetes Server Version: v1.21.2</li>
+<li>Helm 3.10.0</li>
+<li>Rancher 2.6</li>
+</ul>
+<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><p><a href="https://docs.ranchermanager.rancher.io/zh/pages-for-subheaders/install-upgrade-on-a-kubernetes-cluster">官方安装文档</a></p>
+<h2 id="安装-Helm"><a href="#安装-Helm" class="headerlink" title="安装 Helm"></a>安装 Helm</h2><p><a href="https://helm.sh/docs/intro/install/">安装文档官网参考</a></p>
+<a href="/202210071543/" title="helm 安装及使用">helm 安装及使用</a>
+
+<h2 id="安装-Ingress-nginx-controller"><a href="#安装-Ingress-nginx-controller" class="headerlink" title="安装 Ingress-nginx-controller"></a>安装 Ingress-nginx-controller</h2><p><a href="https://kubernetes.github.io/ingress-nginx/deploy/#quick-start">安装文档官网参考</a></p>
+<a href="/202209301604/" title="ingress-nginx 安装配置">ingress-nginx 安装配置</a>
+
+
+
+<h2 id="添加-Helm-Chart-仓库"><a href="#添加-Helm-Chart-仓库" class="headerlink" title="添加 Helm Chart 仓库"></a>添加 Helm Chart 仓库</h2><p>添加最新版本，生产环境建议使用稳定版本</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add rancher-latest https://releases.rancher.com/server-charts/latest</span><br></pre></td></tr></table></figure>
+
+<h2 id="为-Rancher-创建命名空间"><a href="#为-Rancher-创建命名空间" class="headerlink" title="为 Rancher 创建命名空间"></a>为 Rancher 创建命名空间</h2><p>你需要定义一个 Kubernetes 命名空间，用于安装由 Chart 创建的资源。这个命名空间的名称为 <code>cattle-system</code>：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create namespace cattle-system</span><br></pre></td></tr></table></figure>
+
+<h2 id="安装-cert-manager"><a href="#安装-cert-manager" class="headerlink" title="安装 cert-manager"></a>安装 cert-manager</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.7.1/cert-manager.crds.yaml</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">添加 Jetstack Helm 仓库</span></span><br><span class="line">helm repo add jetstack https://charts.jetstack.io</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">更新本地 Helm Chart 仓库缓存</span></span><br><span class="line">helm repo update</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 cert-manager Helm Chart</span></span><br><span class="line">helm install cert-manager jetstack/cert-manager \</span><br><span class="line">  --namespace cert-manager \</span><br><span class="line">  --create-namespace \</span><br><span class="line">  --version v1.7.1</span><br></pre></td></tr></table></figure>
+<p>安装完 <code>cert-manager</code> 后，你可以通过检查 <code>cert-manager</code> 命名空间中正在运行的 <code>Pod</code> 来验证它是否已正确部署：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -n cert-manager</span></span><br><span class="line">NAME                                      READY   STATUS    RESTARTS   AGE</span><br><span class="line">cert-manager-5b97785fbd-vvscn             1/1     Running   0          77s</span><br><span class="line">cert-manager-cainjector-c8657d84f-6b8qr   1/1     Running   0          77s</span><br><span class="line">cert-manager-webhook-8564679744-hjgkx     1/1     Running   0          77s</span><br></pre></td></tr></table></figure>
+<h2 id="通过-Helm-安装-Rancher"><a href="#通过-Helm-安装-Rancher" class="headerlink" title="通过 Helm 安装 Rancher"></a>通过 Helm 安装 Rancher</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install rancher rancher-stable/rancher --namespace cattle-system \</span><br><span class="line">     --set hostname=rancher.my.com --set bootstrapPassword=admin \</span><br><span class="line">     --set ingress.ingressClassName=nginx</span><br></pre></td></tr></table></figure>
+<p>安装成功后，输出结果如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">NAME: rancher</span><br><span class="line">LAST DEPLOYED: Wed Oct 12 10:22:25 2022</span><br><span class="line">NAMESPACE: cattle-system</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">TEST SUITE: None</span><br><span class="line">NOTES:</span><br><span class="line">Rancher Server has been installed.</span><br><span class="line"></span><br><span class="line">NOTE: Rancher may take several minutes to fully initialize. Please standby while Certificates are being issued, Containers are started and the Ingress rule comes up.</span><br><span class="line"></span><br><span class="line">Check out our docs at https://rancher.com/docs/</span><br><span class="line"></span><br><span class="line">If you provided your own bootstrap password during installation, browse to https://rancher.my.com to get started.</span><br><span class="line"></span><br><span class="line">If this is the first time you installed Rancher, get started by running this command and clicking the URL it generates:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">echo https://rancher.my.com/dashboard/?setup=$(kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#x27;)</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line">To get just the bootstrap password on its own, run:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#123;&#123; &quot;\n&quot; &#125;&#125;&#x27;</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Happy Containering!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>根据提示，浏览器中访问 <code>https://rancher.my.com/dashboard/?setup=admin</code>，正常情况下，显示如下页面<br><img src="https://i.csms.tech/img_62.png"></p>
+<p>根据页面提示，保持密码，登陆。</p>
+<span id="more"></span>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="helm-版本不支持最新的-kubernetes-版本"><a href="#helm-版本不支持最新的-kubernetes-版本" class="headerlink" title="helm 版本不支持最新的 kubernetes 版本"></a>helm 版本不支持最新的 kubernetes 版本</h2><p>使用 <code>helm</code> 命令报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-stable/rancher --namespace cattle-system --<span class="built_in">set</span> hostname=rancher.my.org --<span class="built_in">set</span> bootstrapPassword=admin</span></span><br><span class="line">Error: INSTALLATION FAILED: chart requires kubeVersion: &lt; 1.25.0-0 which is incompatible with Kubernetes v1.25.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>最新版本 <code>helm</code> 不支持最新版本的 <code>Kubernetes</code>，需按照 <code>helm</code> 提示使用 <a href="https://helm.sh/zh/docs/topics/version_skew/">相应版本</a></p>
+<h2 id="Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding"><a href="#Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding" class="headerlink" title="Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding."></a>Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding.</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>centos7 5.4.242-1</li>
+<li>kubernetes v1.25.4</li>
+<li>helm v3.11.3</li>
+<li>rancher v2.7</li>
+</ul>
+<p>执行以下命令安装 rancher，结果报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx</span></span><br><span class="line">Error: INSTALLATION FAILED: execution error at (rancher/templates/validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding        </span><br></pre></td></tr></table></figure>
+<p>对于 Kubernetes 版本等于或高于 1.25 的安装，需要添加选项 <code>--set global.cattle.psp.enabled=false</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[The target cluster does not have the PodSecurityPolicy API resource](https://github.com/rancher/rancher/issues/41295)">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> global.cattle.psp.enabled=<span class="literal">false</span></span></span><br></pre></td></tr></table></figure>
+
+<h2 id="Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器"><a href="#Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器" class="headerlink" title="Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器"></a>Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器</h2><p>Kubernetes 集群开启防火墙后，在 Rancher 中想通过 <code>Execute Shell</code> 进入 Pod 中的容器，但是一直无法连接到容器。关闭集群 iptables 防火墙后可以正常连接，可以确定问题出在 iptables 防火墙规则，为了定位到需要放通哪个源及端口，可以通过 <a href="https://csms.tech/202210241051/#配置-iptables-记录日志">iptables 的 <strong>日志功能</strong> 进行定位</a>。</p>
+<ol>
+<li>本示例中，iptables 防火墙的 <code>filter</code> 表的 <code>INPUT</code> 链的默认规则为 <code>DROP</code>，为了捕获最终被 <code>DROP</code> 的数据包，在 iptables 的 <code>filter</code> 表的 <code>INPUT</code> 链的最后添加记录日志的规则 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -j LOG --log-prefix &quot;iptables-input-DROP&quot;</span><br></pre></td></tr></table></figure></li>
+<li>规则生效后，检查系统日志 <code>/var/log/messages</code>，看到了以下被 <code>DROP</code> 的数据包信息 <figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0 </span><br><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
+从以上数据包中可以看到，数据包流经的网卡为 <code>cni0</code>，源 IP 为 <code>10.244.0.5</code>，目的 IP 为 <code>172.31.29.60</code>，目的端口为 <code>6443/tcp</code>。继续查看源 IP ，发现其为 <code>cattle-cluster-agent</code>，这是 Rancher 在集群中的 Agent  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep 10.244.0.5</span></span><br><span class="line">cattle-system         cattle-cluster-agent-7c7dd4b97f-9wcbh   1/1     Running   0          57d   10.244.0.5     master   &lt;none&gt;           &lt;none&gt;</span><br></pre></td></tr></table></figure>
+由此可以看出，在开启了 iptables 防火墙后，是因为 <code>cattle-cluster-agent</code> 无法访问集群的 API Server 端口 <code>6443/tcp</code>，从而导致 Rancher 无法通过其 Agent 连接到 Pod 中的容器。在 iptables 中添加防火墙规则允许此类数据包通过，开启 iptables 后 Rancher 可正常连接到 Pod 中的容器 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -s 10.244.0.0/16 -p tcp -m multiport --dports 6443 -j ACCEPT -m comment --comment &quot;for kubernetes API Server from Rancher Agent&quot;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="Cluster-agent-is-not-connected"><a href="#Cluster-agent-is-not-connected" class="headerlink" title="Cluster agent is not connected"></a>Cluster agent is not connected</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code><br><img src="https://i.csms.tech/img_186.png"></p>
+<p>Rancher Server 通过和 Kubernetes 集群中部署的 Rancher Agent (<code>cattle-cluster-agent</code>) 互相通信来获取集群状态及对集群进行操作，Rancher Agent (<code>cattle-cluster-agent</code>) 需要向 Rancher Server 上报心跳信息以使 Rancher Server 知道集群的状态。这个错误出现意味这 Rancher Server 和 Rancher Agent 之间的通信存在问题。<strong>Rancher Server 和 Rancher Agent 不直接通过固定端口通信，Rancher Server 和 Kubernetes 只需要和 Kubernetes API Server 通信，Rancher Agent 需要访问 Rancher Server 以上报心跳及集群状态信息</strong></p>
+<p>要定位此问题原因，首先检查 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep -i agent</span></span><br><span class="line">cattle-fleet-system   fleet-agent-5b5ddb87d-znc8t               1/1     Running            0          80d     10.244.9.222    work1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn      0/1     CrashLoopBackOff   4          107s    10.244.8.12     work2   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-td8tq      0/1     CrashLoopBackOff   3          107s    10.244.16.12    work4   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn</span></span><br><span class="line">INFO: Environment: CATTLE_ADDRESS=10.244.8.12 CATTLE_CA_CHECKSUM= CATTLE_CLUSTER=true CATTLE_CLUSTER_AGENT_PORT=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_443_TCP=tcp://10.1.134.43:443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PORT=443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_PORT_80_TCP=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PORT=80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_SERVICE_HOST=10.1.134.43 CATTLE_CLUSTER_AGENT_SERVICE_PORT=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTP=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTPS_INTERNAL=443 CATTLE_CLUSTER_REGISTRY= CATTLE_FEATURES=embedded-cluster-api=false,fleet=false,monitoringv1=false,multi-cluster-management=false,multi-cluster-management-agent=true,provisioningv2=false,rke2=false CATTLE_INGRESS_IP_DOMAIN=sslip.io CATTLE_INSTALL_UUID=c9a0cc09-dc90-45eb-8bd9-d6344ffddc88 CATTLE_INTERNAL_ADDRESS= CATTLE_IS_RKE=false CATTLE_K8S_MANAGED=true CATTLE_NODE_NAME=cattle-cluster-agent-79dff8f5d-qnvqn CATTLE_SERVER=https://rancher.test.com CATTLE_SERVER_VERSION=v2.7.1</span><br><span class="line">INFO: Using resolv.conf: nameserver 10.1.0.10 search cattle-system.svc.cluster.local svc.cluster.local cluster.local us-west-1.compute.internal options ndots:5</span><br><span class="line">ERROR: https://rancher.test.com/ping is not accessible (The requested URL returned error: 403)</span><br></pre></td></tr></table></figure>
+<p>从 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志中可以看出，Rancher Agent (<code>cattle-cluster-agent</code>) 无法访问 Rancher Server (<code>https://rancher.test.com/ping</code>) 以上报心跳，请求结果为 <code>403</code>。</p>
+<p>本案例中是因为 Rancher Server 的访问域名有白名单限制，将 Kubernetes 集群中的节点添加到 Rancher Server 的域名加白后恢复正常。</p>
+<h2 id="certificate-is-valid-for"><a href="#certificate-is-valid-for" class="headerlink" title="certificate is valid for"></a>certificate is valid for</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code></p>
+<p>检查集群上的 <code>cattle-cluster-agent</code> 日志。报错如下</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">level=fatal msg=&quot;looking up cattle-system/cattle ca/token: failed to find service account cattle-system/cattle: Get \&quot;https://10.1.0.1:443/api/v1/namespaces/cattle-system/serviceaccounts/cattle\&quot;: x509: certificate is valid for 10.96.0.1, 172.31.16.114, 54.67.95.96, not 10.1.0.1&quot;</span><br></pre></td></tr></table></figure>
+
+<p>这个错误信息表明，<code>kube-apiserver</code> 的证书中，没有签发给 IP <code>10.1.0.1</code>，此 IP 一般为 <code>kubernetes</code> 的 <code>service</code> 的 IP</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.1.0.1     &lt;none&gt;        443/TCP   370d</span><br></pre></td></tr></table></figure>
+
+<p>因此要解决此问题，只需要更新 <code>kube-apiserver</code> 的证书，<a href="https://csms.tech/202209121102/#集群之外的服务器使用-kubectl-报错">参考文档进行更新</a></p>
+<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="权限管理配置"><a href="#权限管理配置" class="headerlink" title="权限管理配置"></a>权限管理配置</h2><h3 id="配置只读-Role"><a href="#配置只读-Role" class="headerlink" title="配置只读 Role"></a>配置只读 Role</h3><p>本示例在 Rancher 上配置有对 Pod 只读权限的 Role，确保绑定了 Role 的用户可以通过 Rancher 读取到 Pod 信息，可以 <code>exec</code> 到 Pod，查看 Pod 日志，无其他 <strong>修改</strong> 权限。</p>
+<ol>
+<li><p>在 Rancher 上创建具有对 Pod 只读权限的 Role，本示例中为其命名 <code>PodReadOnlyRole</code></p>
+<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Roles</code><br> <img src="https://i.csms.tech/img_87.png"><br> 选择 <code>Project/Namespaces</code><br> <img src="https://i.csms.tech/img_88.png"><br> 点击 <code>Create Project/Namespaces Role</code>，创建 Role，按照下图，填入对应信息<br> <img src="https://i.csms.tech/img_89.png"><br> 需要添加的 <code>Resource</code> 如下：</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">pods </span><br><span class="line">pods/attach </span><br><span class="line">pods/exec </span><br><span class="line">pods/portforward </span><br><span class="line">pods/proxy </span><br><span class="line">pods/log </span><br><span class="line">pods/status</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>权限选择：<code>get</code>，<code>list</code>，<code>watch</code>。填写完成后点击 <code>Create</code> 创建，无误后会创建 Role : <code>PodReadOnlyRole</code></p>
+</li>
+<li><p>创建用户</p>
+<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Users</code>，创建新用户。<br> <img src="https://i.csms.tech/img_90.png"><br> 在 <code>Global Permissions</code> 中，选择系统预设的 Global Role ： <code>User-Base</code>，此角色仅拥有登陆系统的权限。</p>
+</li>
+<li><p>绑定 User 和 Project&#x2F;Namespaces Role</p>
+<p> Rancher 仅支持对 Rancher 中的 <code>Project</code> 分配 <code>Project/Namespaces Role</code>，所以为了分配权限，需要对不同的项目创建对应的 <code>Project</code>。</p>
+<p> 进入对应的 Cluster，选择要分配权限的 <code>Project</code>，点击 <code>Edit Config</code><br> <img src="https://i.csms.tech/img_91.png"><br> 在 <code>Members</code> 中选择 <code>Add</code> 为 <code>Project</code> 绑定 <code>User</code> 和 <code>Project Permissions</code>，本示例中，权限选择 <code>PodReadOnlyRole</code><br> <img src="https://i.csms.tech/img_92.png"></p>
+</li>
+</ol>
+<p>通过以上步骤创建及分配权限后，通过新创建的用户登陆 Rancher，检查新用户对 Pod 的权限。</p>
+<h3 id="为-Rancher-管理的-Kubernetes-集群分配管理员"><a href="#为-Rancher-管理的-Kubernetes-集群分配管理员" class="headerlink" title="为 Rancher 管理的 Kubernetes 集群分配管理员"></a>为 Rancher 管理的 Kubernetes 集群分配管理员</h3><p>Rancher 提供了一个集中的身份验证和授权机制来管理 Kubernetes 集群的访问。要为 Rancher 管理的 Kubernetes 集群分配管理员，可以按照以下步骤操作</p>
+<ol>
+<li><p>登录 Rancher UI:</p>
+<p>打开你的 Rancher UI 并进行登录。</p>
+</li>
+<li><p>选择你的集群:</p>
+<p>在 Home 页面上，选择你想要授权的 Kubernetes 集群。</p>
+</li>
+<li><p>管理成员:</p>
+<p> 在集群的仪表盘上，找到并点击 “Cluster Members” 选项。这会显示集群的所有成员和他们的角色。</p>
+</li>
+<li><p>添加成员:</p>
+<p> 点击 <code>Add Member</code>。<br> 在提供的搜索框中输入用户的名称或标识符来查找他们。这个用户可以是单独的用户、团队或组，取决于您的身份验证配置。<br> 选择要分配给该成员的角色。对于管理员权限，您应该选择 <code>Cluster Owner</code> 或与之类似的角色。</p>
+</li>
+<li><p>确认权限:</p>
+<p> 确保新添加的成员现在在成员列表中，并且他们已经被分配了正确的角色。</p>
+<p> 通知新管理员他们已经获得权限，并让他们登录 Rancher UI 以确认他们现在可以管理该集群。</p>
+</li>
+</ol>
+<h2 id="Rancher-新增访问域名"><a href="#Rancher-新增访问域名" class="headerlink" title="Rancher 新增访问域名"></a>Rancher 新增访问域名</h2><p>为 Rancher web UI 新增其他可访问域名，参考以下步骤</p>
+<ol>
+<li><p>使用 <code>cert-manager</code> 为新增域名申请证书</p>
+<a href="/202301050935/" title="使用 cert-manager 申请证书的步骤">使用 cert-manager 申请证书的步骤</a></li>
+<li><p>修改 Rancher 的 Ingress 配置，添加新域名及证书到 Ingress</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"> spec:</span><br><span class="line">ingressClassName: nginx</span><br><span class="line">rules:</span><br><span class="line">- host: rancher.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">- host: rancher1.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">tls:</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher.test.com</span><br><span class="line">  secretName: tls-rancher-ingress</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher1.test.com</span><br><span class="line">  secretName: rancher1-test-com</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="nginx-反代-Rancher"><a href="#nginx-反代-Rancher" class="headerlink" title="nginx 反代 Rancher"></a>nginx 反代 Rancher</h2><p>在集群外部通过 Nginx 反代访问 Rancher，可以使用以下 Nginx 配置 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 NGINX 负载均衡](https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">map $http_upgrade $connection_upgrade &#123;</span><br><span class="line">        default upgrade;</span><br><span class="line">        &#x27;&#x27;      close;</span><br><span class="line">    &#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用来对 用户 ip 进行映射，以便后面做访问控制</span>    </span><br><span class="line">map $http_x_forwarded_for $k8s_admin_access &#123;</span><br><span class="line">         default false;</span><br><span class="line">         include k8s_admin_access.list;</span><br><span class="line">        &#125;</span><br><span class="line">        </span><br><span class="line">upstream rancher &#123;</span><br><span class="line">    server 172.31.27.193:443;</span><br><span class="line">    server 172.31.23.72:443;</span><br><span class="line">&#125;</span><br><span class="line">server &#123;</span><br><span class="line">	listen 443 ssl;</span><br><span class="line">	server_name rancher.test.com;</span><br><span class="line">	access_log /home/logs/nginx/access/rancher.access.log main;</span><br><span class="line">	error_log /home/logs/nginx/error/rancher.error.log;	</span><br><span class="line"></span><br><span class="line">	ssl_certificate test.com.pem;</span><br><span class="line">    ssl_certificate_key test.com.pem;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">	location / &#123;</span><br><span class="line">                if ($k8s_admin_access = false) &#123;</span><br><span class="line">                    return 403;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">		proxy_pass https://rancher;      # 本示例中，rancher 使用 https 访问，必须配置为 https</span><br><span class="line">        proxy_set_header Host $host;</span><br><span class="line">        proxy_set_header X-Real-IP $remote_addr;</span><br><span class="line">        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span><br><span class="line">        proxy_set_header REMOTE-HOST $remote_addr;</span><br><span class="line">        proxy_http_version 1.1;</span><br><span class="line">        proxy_set_header Upgrade $http_upgrade;</span><br><span class="line">        proxy_set_header Connection $connection_upgrade;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/">配置 NGINX 负载均衡</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/rancher/rancher/issues/41295">The target cluster does not have the PodSecurityPolicy API resource</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>Rancher</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>redis 配置</title>
     <url>/202307121459/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15424,129 +15547,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Rancher 安装及使用</title>
-    <url>/202210071716/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>centos7 3.10.0</li>
-<li>kubernetes Server Version: v1.21.2</li>
-<li>Helm 3.10.0</li>
-<li>Rancher 2.6</li>
-</ul>
-<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><p><a href="https://docs.ranchermanager.rancher.io/zh/pages-for-subheaders/install-upgrade-on-a-kubernetes-cluster">官方安装文档</a></p>
-<h2 id="安装-Helm"><a href="#安装-Helm" class="headerlink" title="安装 Helm"></a>安装 Helm</h2><p><a href="https://helm.sh/docs/intro/install/">安装文档官网参考</a></p>
-<a href="/202210071543/" title="helm 安装及使用">helm 安装及使用</a>
-
-<h2 id="安装-Ingress-nginx-controller"><a href="#安装-Ingress-nginx-controller" class="headerlink" title="安装 Ingress-nginx-controller"></a>安装 Ingress-nginx-controller</h2><p><a href="https://kubernetes.github.io/ingress-nginx/deploy/#quick-start">安装文档官网参考</a></p>
-<a href="/202209301604/" title="ingress-nginx 安装配置">ingress-nginx 安装配置</a>
-
-
-
-<h2 id="添加-Helm-Chart-仓库"><a href="#添加-Helm-Chart-仓库" class="headerlink" title="添加 Helm Chart 仓库"></a>添加 Helm Chart 仓库</h2><p>添加最新版本，生产环境建议使用稳定版本</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add rancher-latest https://releases.rancher.com/server-charts/latest</span><br></pre></td></tr></table></figure>
-
-<h2 id="为-Rancher-创建命名空间"><a href="#为-Rancher-创建命名空间" class="headerlink" title="为 Rancher 创建命名空间"></a>为 Rancher 创建命名空间</h2><p>你需要定义一个 Kubernetes 命名空间，用于安装由 Chart 创建的资源。这个命名空间的名称为 <code>cattle-system</code>：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create namespace cattle-system</span><br></pre></td></tr></table></figure>
-
-<h2 id="安装-cert-manager"><a href="#安装-cert-manager" class="headerlink" title="安装 cert-manager"></a>安装 cert-manager</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.7.1/cert-manager.crds.yaml</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">添加 Jetstack Helm 仓库</span></span><br><span class="line">helm repo add jetstack https://charts.jetstack.io</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">更新本地 Helm Chart 仓库缓存</span></span><br><span class="line">helm repo update</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 cert-manager Helm Chart</span></span><br><span class="line">helm install cert-manager jetstack/cert-manager \</span><br><span class="line">  --namespace cert-manager \</span><br><span class="line">  --create-namespace \</span><br><span class="line">  --version v1.7.1</span><br></pre></td></tr></table></figure>
-<p>安装完 <code>cert-manager</code> 后，你可以通过检查 <code>cert-manager</code> 命名空间中正在运行的 <code>Pod</code> 来验证它是否已正确部署：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -n cert-manager</span></span><br><span class="line">NAME                                      READY   STATUS    RESTARTS   AGE</span><br><span class="line">cert-manager-5b97785fbd-vvscn             1/1     Running   0          77s</span><br><span class="line">cert-manager-cainjector-c8657d84f-6b8qr   1/1     Running   0          77s</span><br><span class="line">cert-manager-webhook-8564679744-hjgkx     1/1     Running   0          77s</span><br></pre></td></tr></table></figure>
-<h2 id="通过-Helm-安装-Rancher"><a href="#通过-Helm-安装-Rancher" class="headerlink" title="通过 Helm 安装 Rancher"></a>通过 Helm 安装 Rancher</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install rancher rancher-stable/rancher --namespace cattle-system \</span><br><span class="line">     --set hostname=rancher.my.com --set bootstrapPassword=admin \</span><br><span class="line">     --set ingress.ingressClassName=nginx</span><br></pre></td></tr></table></figure>
-<p>安装成功后，输出结果如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">NAME: rancher</span><br><span class="line">LAST DEPLOYED: Wed Oct 12 10:22:25 2022</span><br><span class="line">NAMESPACE: cattle-system</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">TEST SUITE: None</span><br><span class="line">NOTES:</span><br><span class="line">Rancher Server has been installed.</span><br><span class="line"></span><br><span class="line">NOTE: Rancher may take several minutes to fully initialize. Please standby while Certificates are being issued, Containers are started and the Ingress rule comes up.</span><br><span class="line"></span><br><span class="line">Check out our docs at https://rancher.com/docs/</span><br><span class="line"></span><br><span class="line">If you provided your own bootstrap password during installation, browse to https://rancher.my.com to get started.</span><br><span class="line"></span><br><span class="line">If this is the first time you installed Rancher, get started by running this command and clicking the URL it generates:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">echo https://rancher.my.com/dashboard/?setup=$(kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#x27;)</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line">To get just the bootstrap password on its own, run:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#123;&#123; &quot;\n&quot; &#125;&#125;&#x27;</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Happy Containering!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>根据提示，浏览器中访问 <code>https://rancher.my.com/dashboard/?setup=admin</code>，正常情况下，显示如下页面<br><img src="https://i.csms.tech/img_62.png"></p>
-<p>根据页面提示，保持密码，登陆。</p>
-<span id="more"></span>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="helm-版本不支持最新的-kubernetes-版本"><a href="#helm-版本不支持最新的-kubernetes-版本" class="headerlink" title="helm 版本不支持最新的 kubernetes 版本"></a>helm 版本不支持最新的 kubernetes 版本</h2><p>使用 <code>helm</code> 命令报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-stable/rancher --namespace cattle-system --<span class="built_in">set</span> hostname=rancher.my.org --<span class="built_in">set</span> bootstrapPassword=admin</span></span><br><span class="line">Error: INSTALLATION FAILED: chart requires kubeVersion: &lt; 1.25.0-0 which is incompatible with Kubernetes v1.25.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>最新版本 <code>helm</code> 不支持最新版本的 <code>Kubernetes</code>，需按照 <code>helm</code> 提示使用 <a href="https://helm.sh/zh/docs/topics/version_skew/">相应版本</a></p>
-<h2 id="Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding"><a href="#Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding" class="headerlink" title="Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding."></a>Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding.</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>centos7 5.4.242-1</li>
-<li>kubernetes v1.25.4</li>
-<li>helm v3.11.3</li>
-<li>rancher v2.7</li>
-</ul>
-<p>执行以下命令安装 rancher，结果报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx</span></span><br><span class="line">Error: INSTALLATION FAILED: execution error at (rancher/templates/validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding        </span><br></pre></td></tr></table></figure>
-<p>对于 Kubernetes 版本等于或高于 1.25 的安装，需要添加选项 <code>--set global.cattle.psp.enabled=false</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[The target cluster does not have the PodSecurityPolicy API resource](https://github.com/rancher/rancher/issues/41295)">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> global.cattle.psp.enabled=<span class="literal">false</span></span></span><br></pre></td></tr></table></figure>
-
-<h2 id="Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器"><a href="#Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器" class="headerlink" title="Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器"></a>Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器</h2><p>Kubernetes 集群开启防火墙后，在 Rancher 中想通过 <code>Execute Shell</code> 进入 Pod 中的容器，但是一直无法连接到容器。关闭集群 iptables 防火墙后可以正常连接，可以确定问题出在 iptables 防火墙规则，为了定位到需要放通哪个源及端口，可以通过 <a href="https://csms.tech/202210241051/#配置-iptables-记录日志">iptables 的 <strong>日志功能</strong> 进行定位</a>。</p>
-<ol>
-<li>本示例中，iptables 防火墙的 <code>filter</code> 表的 <code>INPUT</code> 链的默认规则为 <code>DROP</code>，为了捕获最终被 <code>DROP</code> 的数据包，在 iptables 的 <code>filter</code> 表的 <code>INPUT</code> 链的最后添加记录日志的规则 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -j LOG --log-prefix &quot;iptables-input-DROP&quot;</span><br></pre></td></tr></table></figure></li>
-<li>规则生效后，检查系统日志 <code>/var/log/messages</code>，看到了以下被 <code>DROP</code> 的数据包信息 <figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0 </span><br><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
-从以上数据包中可以看到，数据包流经的网卡为 <code>cni0</code>，源 IP 为 <code>10.244.0.5</code>，目的 IP 为 <code>172.31.29.60</code>，目的端口为 <code>6443/tcp</code>。继续查看源 IP ，发现其为 <code>cattle-cluster-agent</code>，这是 Rancher 在集群中的 Agent  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep 10.244.0.5</span></span><br><span class="line">cattle-system         cattle-cluster-agent-7c7dd4b97f-9wcbh   1/1     Running   0          57d   10.244.0.5     master   &lt;none&gt;           &lt;none&gt;</span><br></pre></td></tr></table></figure>
-由此可以看出，在开启了 iptables 防火墙后，是因为 <code>cattle-cluster-agent</code> 无法访问集群的 API Server 端口 <code>6443/tcp</code>，从而导致 Rancher 无法通过其 Agent 连接到 Pod 中的容器。在 iptables 中添加防火墙规则允许此类数据包通过，开启 iptables 后 Rancher 可正常连接到 Pod 中的容器 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -s 10.244.0.0/16 -p tcp -m multiport --dports 6443 -j ACCEPT -m comment --comment &quot;for kubernetes API Server from Rancher Agent&quot;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="Cluster-agent-is-not-connected"><a href="#Cluster-agent-is-not-connected" class="headerlink" title="Cluster agent is not connected"></a>Cluster agent is not connected</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code><br><img src="https://i.csms.tech/img_186.png"></p>
-<p>Rancher Server 通过和 Kubernetes 集群中部署的 Rancher Agent (<code>cattle-cluster-agent</code>) 互相通信来获取集群状态及对集群进行操作，Rancher Agent (<code>cattle-cluster-agent</code>) 需要向 Rancher Server 上报心跳信息以使 Rancher Server 知道集群的状态。这个错误出现意味这 Rancher Server 和 Rancher Agent 之间的通信存在问题。<strong>Rancher Server 和 Rancher Agent 不直接通过固定端口通信，Rancher Server 和 Kubernetes 只需要和 Kubernetes API Server 通信，Rancher Agent 需要访问 Rancher Server 以上报心跳及集群状态信息</strong></p>
-<p>要定位此问题原因，首先检查 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep -i agent</span></span><br><span class="line">cattle-fleet-system   fleet-agent-5b5ddb87d-znc8t               1/1     Running            0          80d     10.244.9.222    work1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn      0/1     CrashLoopBackOff   4          107s    10.244.8.12     work2   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-td8tq      0/1     CrashLoopBackOff   3          107s    10.244.16.12    work4   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn</span></span><br><span class="line">INFO: Environment: CATTLE_ADDRESS=10.244.8.12 CATTLE_CA_CHECKSUM= CATTLE_CLUSTER=true CATTLE_CLUSTER_AGENT_PORT=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_443_TCP=tcp://10.1.134.43:443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PORT=443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_PORT_80_TCP=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PORT=80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_SERVICE_HOST=10.1.134.43 CATTLE_CLUSTER_AGENT_SERVICE_PORT=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTP=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTPS_INTERNAL=443 CATTLE_CLUSTER_REGISTRY= CATTLE_FEATURES=embedded-cluster-api=false,fleet=false,monitoringv1=false,multi-cluster-management=false,multi-cluster-management-agent=true,provisioningv2=false,rke2=false CATTLE_INGRESS_IP_DOMAIN=sslip.io CATTLE_INSTALL_UUID=c9a0cc09-dc90-45eb-8bd9-d6344ffddc88 CATTLE_INTERNAL_ADDRESS= CATTLE_IS_RKE=false CATTLE_K8S_MANAGED=true CATTLE_NODE_NAME=cattle-cluster-agent-79dff8f5d-qnvqn CATTLE_SERVER=https://rancher.test.com CATTLE_SERVER_VERSION=v2.7.1</span><br><span class="line">INFO: Using resolv.conf: nameserver 10.1.0.10 search cattle-system.svc.cluster.local svc.cluster.local cluster.local us-west-1.compute.internal options ndots:5</span><br><span class="line">ERROR: https://rancher.test.com/ping is not accessible (The requested URL returned error: 403)</span><br></pre></td></tr></table></figure>
-<p>从 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志中可以看出，Rancher Agent (<code>cattle-cluster-agent</code>) 无法访问 Rancher Server (<code>https://rancher.test.com/ping</code>) 以上报心跳，请求结果为 <code>403</code>。</p>
-<p>本案例中是因为 Rancher Server 的访问域名有白名单限制，将 Kubernetes 集群中的节点添加到 Rancher Server 的域名加白后恢复正常。</p>
-<h2 id="certificate-is-valid-for"><a href="#certificate-is-valid-for" class="headerlink" title="certificate is valid for"></a>certificate is valid for</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code></p>
-<p>检查集群上的 <code>cattle-cluster-agent</code> 日志。报错如下</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">level=fatal msg=&quot;looking up cattle-system/cattle ca/token: failed to find service account cattle-system/cattle: Get \&quot;https://10.1.0.1:443/api/v1/namespaces/cattle-system/serviceaccounts/cattle\&quot;: x509: certificate is valid for 10.96.0.1, 172.31.16.114, 54.67.95.96, not 10.1.0.1&quot;</span><br></pre></td></tr></table></figure>
-
-<p>这个错误信息表明，<code>kube-apiserver</code> 的证书中，没有签发给 IP <code>10.1.0.1</code>，此 IP 一般为 <code>kubernetes</code> 的 <code>service</code> 的 IP</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.1.0.1     &lt;none&gt;        443/TCP   370d</span><br></pre></td></tr></table></figure>
-
-<p>因此要解决此问题，只需要更新 <code>kube-apiserver</code> 的证书，<a href="https://csms.tech/202209121102/#集群之外的服务器使用-kubectl-报错">参考文档进行更新</a></p>
-<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="权限管理配置"><a href="#权限管理配置" class="headerlink" title="权限管理配置"></a>权限管理配置</h2><h3 id="配置只读-Role"><a href="#配置只读-Role" class="headerlink" title="配置只读 Role"></a>配置只读 Role</h3><p>本示例在 Rancher 上配置有对 Pod 只读权限的 Role，确保绑定了 Role 的用户可以通过 Rancher 读取到 Pod 信息，可以 <code>exec</code> 到 Pod，查看 Pod 日志，无其他 <strong>修改</strong> 权限。</p>
-<ol>
-<li><p>在 Rancher 上创建具有对 Pod 只读权限的 Role，本示例中为其命名 <code>PodReadOnlyRole</code></p>
-<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Roles</code><br> <img src="https://i.csms.tech/img_87.png"><br> 选择 <code>Project/Namespaces</code><br> <img src="https://i.csms.tech/img_88.png"><br> 点击 <code>Create Project/Namespaces Role</code>，创建 Role，按照下图，填入对应信息<br> <img src="https://i.csms.tech/img_89.png"><br> 需要添加的 <code>Resource</code> 如下：</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">pods </span><br><span class="line">pods/attach </span><br><span class="line">pods/exec </span><br><span class="line">pods/portforward </span><br><span class="line">pods/proxy </span><br><span class="line">pods/log </span><br><span class="line">pods/status</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>权限选择：<code>get</code>，<code>list</code>，<code>watch</code>。填写完成后点击 <code>Create</code> 创建，无误后会创建 Role : <code>PodReadOnlyRole</code></p>
-</li>
-<li><p>创建用户</p>
-<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Users</code>，创建新用户。<br> <img src="https://i.csms.tech/img_90.png"><br> 在 <code>Global Permissions</code> 中，选择系统预设的 Global Role ： <code>User-Base</code>，此角色仅拥有登陆系统的权限。</p>
-</li>
-<li><p>绑定 User 和 Project&#x2F;Namespaces Role</p>
-<p> Rancher 仅支持对 Rancher 中的 <code>Project</code> 分配 <code>Project/Namespaces Role</code>，所以为了分配权限，需要对不同的项目创建对应的 <code>Project</code>。</p>
-<p> 进入对应的 Cluster，选择要分配权限的 <code>Project</code>，点击 <code>Edit Config</code><br> <img src="https://i.csms.tech/img_91.png"><br> 在 <code>Members</code> 中选择 <code>Add</code> 为 <code>Project</code> 绑定 <code>User</code> 和 <code>Project Permissions</code>，本示例中，权限选择 <code>PodReadOnlyRole</code><br> <img src="https://i.csms.tech/img_92.png"></p>
-</li>
-</ol>
-<p>通过以上步骤创建及分配权限后，通过新创建的用户登陆 Rancher，检查新用户对 Pod 的权限。</p>
-<h3 id="为-Rancher-管理的-Kubernetes-集群分配管理员"><a href="#为-Rancher-管理的-Kubernetes-集群分配管理员" class="headerlink" title="为 Rancher 管理的 Kubernetes 集群分配管理员"></a>为 Rancher 管理的 Kubernetes 集群分配管理员</h3><p>Rancher 提供了一个集中的身份验证和授权机制来管理 Kubernetes 集群的访问。要为 Rancher 管理的 Kubernetes 集群分配管理员，可以按照以下步骤操作</p>
-<ol>
-<li><p>登录 Rancher UI:</p>
-<p>打开你的 Rancher UI 并进行登录。</p>
-</li>
-<li><p>选择你的集群:</p>
-<p>在 Home 页面上，选择你想要授权的 Kubernetes 集群。</p>
-</li>
-<li><p>管理成员:</p>
-<p> 在集群的仪表盘上，找到并点击 “Cluster Members” 选项。这会显示集群的所有成员和他们的角色。</p>
-</li>
-<li><p>添加成员:</p>
-<p> 点击 <code>Add Member</code>。<br> 在提供的搜索框中输入用户的名称或标识符来查找他们。这个用户可以是单独的用户、团队或组，取决于您的身份验证配置。<br> 选择要分配给该成员的角色。对于管理员权限，您应该选择 <code>Cluster Owner</code> 或与之类似的角色。</p>
-</li>
-<li><p>确认权限:</p>
-<p> 确保新添加的成员现在在成员列表中，并且他们已经被分配了正确的角色。</p>
-<p> 通知新管理员他们已经获得权限，并让他们登录 Rancher UI 以确认他们现在可以管理该集群。</p>
-</li>
-</ol>
-<h2 id="Rancher-新增访问域名"><a href="#Rancher-新增访问域名" class="headerlink" title="Rancher 新增访问域名"></a>Rancher 新增访问域名</h2><p>为 Rancher web UI 新增其他可访问域名，参考以下步骤</p>
-<ol>
-<li><p>使用 <code>cert-manager</code> 为新增域名申请证书</p>
-<a href="/202301050935/" title="使用 cert-manager 申请证书的步骤">使用 cert-manager 申请证书的步骤</a></li>
-<li><p>修改 Rancher 的 Ingress 配置，添加新域名及证书到 Ingress</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"> spec:</span><br><span class="line">ingressClassName: nginx</span><br><span class="line">rules:</span><br><span class="line">- host: rancher.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">- host: rancher1.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">tls:</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher.test.com</span><br><span class="line">  secretName: tls-rancher-ingress</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher1.test.com</span><br><span class="line">  secretName: rancher1-test-com</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="nginx-反代-Rancher"><a href="#nginx-反代-Rancher" class="headerlink" title="nginx 反代 Rancher"></a>nginx 反代 Rancher</h2><p>在集群外部通过 Nginx 反代访问 Rancher，可以使用以下 Nginx 配置 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 NGINX 负载均衡](https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">map $http_upgrade $connection_upgrade &#123;</span><br><span class="line">        default upgrade;</span><br><span class="line">        &#x27;&#x27;      close;</span><br><span class="line">    &#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用来对 用户 ip 进行映射，以便后面做访问控制</span>    </span><br><span class="line">map $http_x_forwarded_for $k8s_admin_access &#123;</span><br><span class="line">         default false;</span><br><span class="line">         include k8s_admin_access.list;</span><br><span class="line">        &#125;</span><br><span class="line">        </span><br><span class="line">upstream rancher &#123;</span><br><span class="line">    server 172.31.27.193:443;</span><br><span class="line">    server 172.31.23.72:443;</span><br><span class="line">&#125;</span><br><span class="line">server &#123;</span><br><span class="line">	listen 443 ssl;</span><br><span class="line">	server_name rancher.test.com;</span><br><span class="line">	access_log /home/logs/nginx/access/rancher.access.log main;</span><br><span class="line">	error_log /home/logs/nginx/error/rancher.error.log;	</span><br><span class="line"></span><br><span class="line">	ssl_certificate test.com.pem;</span><br><span class="line">    ssl_certificate_key test.com.pem;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">	location / &#123;</span><br><span class="line">                if ($k8s_admin_access = false) &#123;</span><br><span class="line">                    return 403;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">		proxy_pass https://rancher;      # 本示例中，rancher 使用 https 访问，必须配置为 https</span><br><span class="line">        proxy_set_header Host $host;</span><br><span class="line">        proxy_set_header X-Real-IP $remote_addr;</span><br><span class="line">        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span><br><span class="line">        proxy_set_header REMOTE-HOST $remote_addr;</span><br><span class="line">        proxy_http_version 1.1;</span><br><span class="line">        proxy_set_header Upgrade $http_upgrade;</span><br><span class="line">        proxy_set_header Connection $connection_upgrade;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/">配置 NGINX 负载均衡</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/rancher/rancher/issues/41295">The target cluster does not have the PodSecurityPolicy API resource</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>Rancher</tag>
       </tags>
   </entry>
   <entry>
@@ -16069,35 +16069,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>spinnaker 常见用法</title>
-    <url>/202211101344/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Spinnaker 1.29.0</li>
-<li>Kubernetes 1.24.7</li>
-</ul>
-<h1 id="Spinnaker-引用-Kubernetes-中的-Namespace"><a href="#Spinnaker-引用-Kubernetes-中的-Namespace" class="headerlink" title="Spinnaker 引用 Kubernetes 中的 Namespace"></a>Spinnaker 引用 Kubernetes 中的 Namespace</h1><p>Kubernetes 中的 Namespace，对应 Spinnaker 中的 Application，当 <strong>在 Kubernetes 中创建 Namespace ，并在此 Namespace 创建资源后</strong>，Spinnaker 会自动读取到此 Namespace，并显示在 Applications 中。</p>
-<h1 id="Pipelines-中引用-Docker-Registry-类型的触发器"><a href="#Pipelines-中引用-Docker-Registry-类型的触发器" class="headerlink" title="Pipelines 中引用 Docker Registry 类型的触发器"></a>Pipelines 中引用 Docker Registry 类型的触发器</h1><p>在 Pipelines 中配置 Docker Registry 类型的触发器，并在后面的 Stage 中自动引用。</p>
-<ol>
-<li><p>在要配置的 Pipeline 的 <code>Configuration</code> 部分，配置 <code>Automated Triggers</code>，选择 <code>type</code> 为 <code>Docker Registry</code><br> <img src="https://i.csms.tech/img_85.png"></p>
-<ul>
-<li>Registry Name - 为 <a href="https://csms.tech/202210121639/#添加自建的私有-docker-镜像源">Halyard 中配置的 Docker Registry 的认证信息</a> 的名称</li>
-<li>Organization - 对应 Docker Registry （如 Harbor） 中的 Projects</li>
-</ul>
-</li>
-<li><p>Stage 中使用以下方式引用镜像</p>
-<p> <code>image: &#39;$&#123;trigger.artifacts[0].reference&#125;&#39;</code></p>
-<p> <code>$&#123;trigger&#125;</code> 为镜像名称，当一个镜像名下有多个不同标签的镜像时，<code>$&#123;trigger.artifacts[0]</code> 表示第一个镜像，依此类推。<code>$&#123;trigger.artifacts[0].reference&#125;</code> 值为第一个镜像的完整镜像名加标签。<br> <img src="https://i.csms.tech/img_86.png"></p>
-</li>
-</ol>
-<span id="more"></span>   ]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Spinnaker</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>sftp 服务常用配置说明</title>
     <url>/202207301332/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认ssh启用了sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置sshd以限制sftp登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
@@ -16133,36 +16104,32 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Suse 发行版软件包管理命令使用介绍</title>
-    <url>/202309221652/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 SUSE Linux（无论是 openSUSE 还是 SUSE Linux Enterprise Server）中，可以使用 <code>zypper</code> 命令行工具来管理和安装软件包。</p>
-<h1 id="更新软件包数据库"><a href="#更新软件包数据库" class="headerlink" title="更新软件包数据库"></a>更新软件包数据库</h1><p>在安装任何新的软件包之前，建议首先更新你的软件包数据库，以确保你拥有最新的软件包信息。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper refresh</span><br></pre></td></tr></table></figure>
-
-<h1 id="搜索软件包"><a href="#搜索软件包" class="headerlink" title="搜索软件包"></a>搜索软件包</h1><p>如果你不确定软件包的确切名称，可以使用 zypper search 来查找它</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">zypper search &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
-<h1 id="安装软件包"><a href="#安装软件包" class="headerlink" title="安装软件包"></a>安装软件包</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper install &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
-
-<h1 id="查询软件包信息"><a href="#查询软件包信息" class="headerlink" title="查询软件包信息"></a>查询软件包信息</h1><p>要查看关于特定软件包的详细信息，包括描述、版本和依赖关系等，可以使用</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">zypper info &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
-
-<h1 id="卸载软件包"><a href="#卸载软件包" class="headerlink" title="卸载软件包"></a>卸载软件包</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper remove &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
-
-<h1 id="升级系统"><a href="#升级系统" class="headerlink" title="升级系统"></a>升级系统</h1><p>要升级所有已安装的软件包到其最新版本，可以使用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper update</span><br></pre></td></tr></table></figure>
-
-<h1 id="常用软件包安装"><a href="#常用软件包安装" class="headerlink" title="常用软件包安装"></a>常用软件包安装</h1><p>以下示例安装常用工具包</p>
-<ul>
-<li><code>net-tools</code>，提供 <code>netstat</code> 命令</li>
-<li><code>iproute2</code> 提供 <code>ip</code>、<code>ss</code> 等命令</li>
-<li><code>iputils</code> 提供 <code>ping</code> 命令<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper refresh</span><br><span class="line">sudo zypper install net-tools</span><br><span class="line">zypper install iproute2</span><br><span class="line">sudo zypper install iputils</span><br></pre></td></tr></table></figure></li>
+    <title>spinnaker 常见用法</title>
+    <url>/202211101344/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Spinnaker 1.29.0</li>
+<li>Kubernetes 1.24.7</li>
 </ul>
-]]></content>
+<h1 id="Spinnaker-引用-Kubernetes-中的-Namespace"><a href="#Spinnaker-引用-Kubernetes-中的-Namespace" class="headerlink" title="Spinnaker 引用 Kubernetes 中的 Namespace"></a>Spinnaker 引用 Kubernetes 中的 Namespace</h1><p>Kubernetes 中的 Namespace，对应 Spinnaker 中的 Application，当 <strong>在 Kubernetes 中创建 Namespace ，并在此 Namespace 创建资源后</strong>，Spinnaker 会自动读取到此 Namespace，并显示在 Applications 中。</p>
+<h1 id="Pipelines-中引用-Docker-Registry-类型的触发器"><a href="#Pipelines-中引用-Docker-Registry-类型的触发器" class="headerlink" title="Pipelines 中引用 Docker Registry 类型的触发器"></a>Pipelines 中引用 Docker Registry 类型的触发器</h1><p>在 Pipelines 中配置 Docker Registry 类型的触发器，并在后面的 Stage 中自动引用。</p>
+<ol>
+<li><p>在要配置的 Pipeline 的 <code>Configuration</code> 部分，配置 <code>Automated Triggers</code>，选择 <code>type</code> 为 <code>Docker Registry</code><br> <img src="https://i.csms.tech/img_85.png"></p>
+<ul>
+<li>Registry Name - 为 <a href="https://csms.tech/202210121639/#添加自建的私有-docker-镜像源">Halyard 中配置的 Docker Registry 的认证信息</a> 的名称</li>
+<li>Organization - 对应 Docker Registry （如 Harbor） 中的 Projects</li>
+</ul>
+</li>
+<li><p>Stage 中使用以下方式引用镜像</p>
+<p> <code>image: &#39;$&#123;trigger.artifacts[0].reference&#125;&#39;</code></p>
+<p> <code>$&#123;trigger&#125;</code> 为镜像名称，当一个镜像名下有多个不同标签的镜像时，<code>$&#123;trigger.artifacts[0]</code> 表示第一个镜像，依此类推。<code>$&#123;trigger.artifacts[0].reference&#125;</code> 值为第一个镜像的完整镜像名加标签。<br> <img src="https://i.csms.tech/img_86.png"></p>
+</li>
+</ol>
+<span id="more"></span>   ]]></content>
       <categories>
-        <category>Linux</category>
+        <category>Kubernetes</category>
       </categories>
       <tags>
-        <tag>Linux</tag>
+        <tag>Spinnaker</tag>
       </tags>
   </entry>
   <entry>
@@ -16217,6 +16184,39 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>ssh</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Suse 发行版软件包管理命令使用介绍</title>
+    <url>/202309221652/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 SUSE Linux（无论是 openSUSE 还是 SUSE Linux Enterprise Server）中，可以使用 <code>zypper</code> 命令行工具来管理和安装软件包。</p>
+<h1 id="更新软件包数据库"><a href="#更新软件包数据库" class="headerlink" title="更新软件包数据库"></a>更新软件包数据库</h1><p>在安装任何新的软件包之前，建议首先更新你的软件包数据库，以确保你拥有最新的软件包信息。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper refresh</span><br></pre></td></tr></table></figure>
+
+<h1 id="搜索软件包"><a href="#搜索软件包" class="headerlink" title="搜索软件包"></a>搜索软件包</h1><p>如果你不确定软件包的确切名称，可以使用 zypper search 来查找它</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">zypper search &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
+<h1 id="安装软件包"><a href="#安装软件包" class="headerlink" title="安装软件包"></a>安装软件包</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper install &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
+
+<h1 id="查询软件包信息"><a href="#查询软件包信息" class="headerlink" title="查询软件包信息"></a>查询软件包信息</h1><p>要查看关于特定软件包的详细信息，包括描述、版本和依赖关系等，可以使用</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">zypper info &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
+
+<h1 id="卸载软件包"><a href="#卸载软件包" class="headerlink" title="卸载软件包"></a>卸载软件包</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper remove &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
+
+<h1 id="升级系统"><a href="#升级系统" class="headerlink" title="升级系统"></a>升级系统</h1><p>要升级所有已安装的软件包到其最新版本，可以使用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper update</span><br></pre></td></tr></table></figure>
+
+<h1 id="常用软件包安装"><a href="#常用软件包安装" class="headerlink" title="常用软件包安装"></a>常用软件包安装</h1><p>以下示例安装常用工具包</p>
+<ul>
+<li><code>net-tools</code>，提供 <code>netstat</code> 命令</li>
+<li><code>iproute2</code> 提供 <code>ip</code>、<code>ss</code> 等命令</li>
+<li><code>iputils</code> 提供 <code>ping</code> 命令<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo zypper refresh</span><br><span class="line">sudo zypper install net-tools</span><br><span class="line">zypper install iproute2</span><br><span class="line">sudo zypper install iputils</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -16452,23 +16452,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Vault 概念</title>
-    <url>/202307111710/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Policy"><a href="#Policy" class="headerlink" title="Policy"></a>Policy</h1><p>Vault 模拟了一个文件系统，Vault 中的所有信息，包括 Secret、配置等，都是依照各自的路径来使用和授权的。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Vault 中文参考手册-策略](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
-<p>使用 Vault 策略，可以使用声明式的语法来赋予或者禁止对特定路径的特定操作。Vault 策略默认情况下拒绝一切访问，所以一个空的策略不会赋予对系统的任何访问权限。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Vault 中文参考手册-策略](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
-<p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">身份认证及授权流程</a></p>
-<h2 id="策略语法"><a href="#策略语法" class="headerlink" title="策略语法"></a>策略语法</h2><p>策略使用 HCL 或者 Json 语法编写，描述了一个人或者应用程序允许访问 Vault 中的哪些路径 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Vault 中文参考手册-策略](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考手册-策略</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考手册-策略</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Vault</category>
-      </categories>
-      <tags>
-        <tag>Vault</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>windows 中的 zip 类型压缩文件，linux 中 unzip 解压后文件名乱码</title>
     <url>/202208240911/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -16487,6 +16470,23 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>unzip</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Vault 概念</title>
+    <url>/202307111710/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Policy"><a href="#Policy" class="headerlink" title="Policy"></a>Policy</h1><p>Vault 模拟了一个文件系统，Vault 中的所有信息，包括 Secret、配置等，都是依照各自的路径来使用和授权的。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Vault 中文参考手册-策略](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
+<p>使用 Vault 策略，可以使用声明式的语法来赋予或者禁止对特定路径的特定操作。Vault 策略默认情况下拒绝一切访问，所以一个空的策略不会赋予对系统的任何访问权限。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Vault 中文参考手册-策略](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
+<p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">身份认证及授权流程</a></p>
+<h2 id="策略语法"><a href="#策略语法" class="headerlink" title="策略语法"></a>策略语法</h2><p>策略使用 HCL 或者 Json 语法编写，描述了一个人或者应用程序允许访问 Vault 中的哪些路径 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Vault 中文参考手册-策略](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考手册-策略</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考手册-策略</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Vault</category>
+      </categories>
+      <tags>
+        <tag>Vault</tag>
       </tags>
   </entry>
   <entry>
