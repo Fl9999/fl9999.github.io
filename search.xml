@@ -690,58 +690,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -839,27 +787,55 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>TCP 协议</title>
-    <url>/202211251549/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="TCP-协议抓包分析"><a href="#TCP-协议抓包分析" class="headerlink" title="TCP 协议抓包分析"></a>TCP 协议抓包分析</h1><h2 id="TCP-通信过程中-seq-和-ACK-值说明"><a href="#TCP-通信过程中-seq-和-ACK-值说明" class="headerlink" title="TCP 通信过程中 seq 和 ACK 值说明"></a>TCP 通信过程中 seq 和 ACK 值说明</h2><p><img src="https://i.csms.tech/img_96.png"></p>
-<ul>
-<li><p>TCP 连接通信过程中，client 和 server 端各自维护自己的 <code>seq</code>。后面一个数据包的 <code>seq</code> 是前面一个数据包的 <code>seq</code> 加上前面一个数据包的大小。表示发送的字节位置。 </p>
-<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 0，则当前要发送的数据包的 <code>seq = 0</code></p>
-<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 20，则当前要发送的数据包的 <code>seq = 120</code></p>
-</li>
-<li><p>TCP 连接通信过程中，client 和 server 端要发送给对方的包的 <code>ACK</code> 的值为：收到的包的 <code>seq</code> + 收到的包的 <code>Len</code>，此值告知发送方，接收方希望接收到的下一个包的序列号。</p>
-<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 0</code> 的包，接收方需要发送的 <code>ACK = 100 + 1</code></p>
-<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 20</code> 的包，接收方需要发送的 <code>ACK = 100 + 20</code></p>
-</li>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
 </ul>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://xiaolincoding.com/network/3_tcp/tcp_tcpdump.html#%E6%98%BE%E5%BD%A2-%E4%B8%8D%E5%8F%AF%E8%A7%81-%E7%9A%84%E7%BD%91%E7%BB%9C%E5%8C%85">TCP 实战抓包分析</a></p>
-<p><a href="https://www.cnblogs.com/163yun/p/9552368.html">wireshark抓包分析——TCP&#x2F;IP协议</a></p>
-]]></content>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
       <categories>
-        <category>TCPIP</category>
+        <category>Mysql</category>
       </categories>
       <tags>
-        <tag>TCP</tag>
+        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -886,6 +862,30 @@ width: 20%;
       </categories>
       <tags>
         <tag>生活日常</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>TCP 协议</title>
+    <url>/202211251549/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="TCP-协议抓包分析"><a href="#TCP-协议抓包分析" class="headerlink" title="TCP 协议抓包分析"></a>TCP 协议抓包分析</h1><h2 id="TCP-通信过程中-seq-和-ACK-值说明"><a href="#TCP-通信过程中-seq-和-ACK-值说明" class="headerlink" title="TCP 通信过程中 seq 和 ACK 值说明"></a>TCP 通信过程中 seq 和 ACK 值说明</h2><p><img src="https://i.csms.tech/img_96.png"></p>
+<ul>
+<li><p>TCP 连接通信过程中，client 和 server 端各自维护自己的 <code>seq</code>。后面一个数据包的 <code>seq</code> 是前面一个数据包的 <code>seq</code> 加上前面一个数据包的大小。表示发送的字节位置。 </p>
+<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 0，则当前要发送的数据包的 <code>seq = 0</code></p>
+<p>  假如当前连接中，之前一个包 <code>seq = 100</code>，其发送数据包大小为 20，则当前要发送的数据包的 <code>seq = 120</code></p>
+</li>
+<li><p>TCP 连接通信过程中，client 和 server 端要发送给对方的包的 <code>ACK</code> 的值为：收到的包的 <code>seq</code> + 收到的包的 <code>Len</code>，此值告知发送方，接收方希望接收到的下一个包的序列号。</p>
+<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 0</code> 的包，接收方需要发送的 <code>ACK = 100 + 1</code></p>
+<p>  假如接收方接收到了 <code>seq = 100</code> ，<code>Len = 20</code> 的包，接收方需要发送的 <code>ACK = 100 + 20</code></p>
+</li>
+</ul>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://xiaolincoding.com/network/3_tcp/tcp_tcpdump.html#%E6%98%BE%E5%BD%A2-%E4%B8%8D%E5%8F%AF%E8%A7%81-%E7%9A%84%E7%BD%91%E7%BB%9C%E5%8C%85">TCP 实战抓包分析</a></p>
+<p><a href="https://www.cnblogs.com/163yun/p/9552368.html">wireshark抓包分析——TCP&#x2F;IP协议</a></p>
+]]></content>
+      <categories>
+        <category>TCPIP</category>
+      </categories>
+      <tags>
+        <tag>TCP</tag>
       </tags>
   </entry>
   <entry>
@@ -1060,37 +1060,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>aliyun 相关配置</title>
-    <url>/202305101732/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="cmd-工具"><a href="#cmd-工具" class="headerlink" title="cmd 工具"></a>cmd 工具</h1><h2 id="ossutil-工具"><a href="#ossutil-工具" class="headerlink" title="ossutil 工具"></a>ossutil 工具</h2><p><a href="https://help.aliyun.com/document_detail/44075.html?spm=a2c4g.120052.0.0.3b587786PQJ64i">阿里云云存储 OSS 相关工具汇总</a></p>
-<p><a href="https://help.aliyun.com/document_detail/50452.htm?spm=a2c4g.44075.0.0.20d17d73gZwhGF#concept-cnr-3d4-vdb">ossutil 概述、安装、配置、常用命令</a></p>
-<h3 id="列出-oss-中的所有对象"><a href="#列出-oss-中的所有对象" class="headerlink" title="列出 oss 中的所有对象"></a>列出 oss 中的所有对象</h3><p>命令格式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[列举账号级别下的资源](https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804)
-">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./ossutil64 ls oss://bucketname[/prefix] [-s] [-d] [--limited-num] [--marker] [--include] [--exclude]  [--version-id-marker] [--all-versions]</span><br></pre></td></tr></table></figure>
-
-<h3 id="查看桶中资源总数及总的存储大小"><a href="#查看桶中资源总数及总的存储大小" class="headerlink" title="查看桶中资源总数及总的存储大小"></a>查看桶中资源总数及总的存储大小</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ossutil64 <span class="built_in">du</span> oss://test-bucket</span></span><br><span class="line">object count:417000     object sum size:73556695567</span><br></pre></td></tr></table></figure>
-
-<h1 id="CDN-加速域名配置缓存共享"><a href="#CDN-加速域名配置缓存共享" class="headerlink" title="CDN 加速域名配置缓存共享"></a>CDN 加速域名配置缓存共享</h1><p><a href="https://s.csms.tech/file/dogjois.pdf">CDN 加速域名配置缓存共享参考文档</a></p>
-<h2 id="CDN-加速域名配置缓存共享验证方法"><a href="#CDN-加速域名配置缓存共享验证方法" class="headerlink" title="CDN 加速域名配置缓存共享验证方法"></a>CDN 加速域名配置缓存共享验证方法</h2><p>比如 A 域名使用 B 域名的共享缓存，测试的时候先访问一条 B 域名中的新资源，使用 B 域名查看对应的缓存状态响应头，第一次访问应该是 <code>X-Cache: MISS</code>，重新访问一次，应该变成 <code>X-Cache: HIT</code>。接下来使用 A 域名访问，如果首次访问结果即为 <code>HIT</code>，说明共享缓存配置成功</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I A/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-
-<h1 id="ossfs-使用"><a href="#ossfs-使用" class="headerlink" title="ossfs 使用"></a>ossfs 使用</h1><p>使用阿里云的 ossfs 工具，可以将 OSS 云存储桶使用基于 FUSE 的形式挂载到本地服务器。</p>
-<p><a href="https://github.com/aliyun/ossfs">ossfs 安装使用官方文档</a></p>
-<h2 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h2><h3 id="fuse-device-not-found-try-‘modprobe-fuse’-first"><a href="#fuse-device-not-found-try-‘modprobe-fuse’-first" class="headerlink" title="fuse: device not found, try ‘modprobe fuse’ first"></a>fuse: device not found, try ‘modprobe fuse’ first</h3><p>需要先在系统安装 <code>fuse</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apt-get install fuse</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804">列举账号级别下的资源</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/31837.html">OSS Region和Endpoint对照表</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Aliyun</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Alpine linux apk 命令使用</title>
     <url>/202210201436/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="更新索引"><a href="#更新索引" class="headerlink" title="更新索引"></a>更新索引</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">apk update</span></span><br><span class="line"></span><br><span class="line">fetch https://dl-cdn.alpinelinux.org/alpine/v3.14/main/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch https://dl-cdn.alpinelinux.org/alpine/v3.14/community/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch http://nl.alpinelinux.org/alpine/edge/main/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch http://nl.alpinelinux.org/alpine/edge/testing/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch http://nl.alpinelinux.org/alpine/edge/community/x86_64/APKINDEX.tar.gz</span><br><span class="line">v3.14.8-65-g0f3285f2cf [https://dl-cdn.alpinelinux.org/alpine/v3.14/main]</span><br><span class="line">v3.14.8-66-ge9853dea68 [https://dl-cdn.alpinelinux.org/alpine/v3.14/community]</span><br><span class="line">v20220809-6223-gb7f2956912 [http://nl.alpinelinux.org/alpine/edge/main]</span><br><span class="line">v20220809-6223-gb7f2956912 [http://nl.alpinelinux.org/alpine/edge/testing]</span><br><span class="line">v20220809-6223-gb7f2956912 [http://nl.alpinelinux.org/alpine/edge/community]</span><br><span class="line">OK: 38705 distinct packages available</span><br><span class="line"></span><br></pre></td></tr></table></figure>
@@ -1124,6 +1093,37 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>Alpine</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>aliyun 相关配置</title>
+    <url>/202305101732/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="cmd-工具"><a href="#cmd-工具" class="headerlink" title="cmd 工具"></a>cmd 工具</h1><h2 id="ossutil-工具"><a href="#ossutil-工具" class="headerlink" title="ossutil 工具"></a>ossutil 工具</h2><p><a href="https://help.aliyun.com/document_detail/44075.html?spm=a2c4g.120052.0.0.3b587786PQJ64i">阿里云云存储 OSS 相关工具汇总</a></p>
+<p><a href="https://help.aliyun.com/document_detail/50452.htm?spm=a2c4g.44075.0.0.20d17d73gZwhGF#concept-cnr-3d4-vdb">ossutil 概述、安装、配置、常用命令</a></p>
+<h3 id="列出-oss-中的所有对象"><a href="#列出-oss-中的所有对象" class="headerlink" title="列出 oss 中的所有对象"></a>列出 oss 中的所有对象</h3><p>命令格式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[列举账号级别下的资源](https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804)
+">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./ossutil64 ls oss://bucketname[/prefix] [-s] [-d] [--limited-num] [--marker] [--include] [--exclude]  [--version-id-marker] [--all-versions]</span><br></pre></td></tr></table></figure>
+
+<h3 id="查看桶中资源总数及总的存储大小"><a href="#查看桶中资源总数及总的存储大小" class="headerlink" title="查看桶中资源总数及总的存储大小"></a>查看桶中资源总数及总的存储大小</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ossutil64 <span class="built_in">du</span> oss://test-bucket</span></span><br><span class="line">object count:417000     object sum size:73556695567</span><br></pre></td></tr></table></figure>
+
+<h1 id="CDN-加速域名配置缓存共享"><a href="#CDN-加速域名配置缓存共享" class="headerlink" title="CDN 加速域名配置缓存共享"></a>CDN 加速域名配置缓存共享</h1><p><a href="https://s.csms.tech/file/dogjois.pdf">CDN 加速域名配置缓存共享参考文档</a></p>
+<h2 id="CDN-加速域名配置缓存共享验证方法"><a href="#CDN-加速域名配置缓存共享验证方法" class="headerlink" title="CDN 加速域名配置缓存共享验证方法"></a>CDN 加速域名配置缓存共享验证方法</h2><p>比如 A 域名使用 B 域名的共享缓存，测试的时候先访问一条 B 域名中的新资源，使用 B 域名查看对应的缓存状态响应头，第一次访问应该是 <code>X-Cache: MISS</code>，重新访问一次，应该变成 <code>X-Cache: HIT</code>。接下来使用 A 域名访问，如果首次访问结果即为 <code>HIT</code>，说明共享缓存配置成功</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I A/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+
+<h1 id="ossfs-使用"><a href="#ossfs-使用" class="headerlink" title="ossfs 使用"></a>ossfs 使用</h1><p>使用阿里云的 ossfs 工具，可以将 OSS 云存储桶使用基于 FUSE 的形式挂载到本地服务器。</p>
+<p><a href="https://github.com/aliyun/ossfs">ossfs 安装使用官方文档</a></p>
+<h2 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h2><h3 id="fuse-device-not-found-try-‘modprobe-fuse’-first"><a href="#fuse-device-not-found-try-‘modprobe-fuse’-first" class="headerlink" title="fuse: device not found, try ‘modprobe fuse’ first"></a>fuse: device not found, try ‘modprobe fuse’ first</h3><p>需要先在系统安装 <code>fuse</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apt-get install fuse</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804">列举账号级别下的资源</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/31837.html">OSS Region和Endpoint对照表</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Aliyun</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
       </tags>
   </entry>
   <entry>
@@ -6536,6 +6536,46 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>helm 安装及使用</title>
+    <url>/202210071543/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>centos7 5.4.212-1.el7</li>
+<li>kubernetes Server Version: v1.25.0</li>
+<li>Helm 3.10.0</li>
+</ul>
+<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><ol>
+<li><p>下载 <a href="https://github.com/helm/helm/releases">需要的版本</a></p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">wget https://get.helm.sh/helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
+<li><p>解压</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">tar -xf helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
+<li><p>在解压目中找到 <code>helm</code> 程序，移动到需要的目录中</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">cp linux-amd64/helm /usr/local/bin/</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>验证</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ helm version</span><br><span class="line"> version.BuildInfo&#123;Version:&quot;v3.10.0&quot;, GitCommit:&quot;ce66412a723e4d89555dc67217607c6579ffcb21&quot;, GitTreeState:&quot;clean&quot;, GoVersion:&quot;go1.18.6&quot;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="查看已安装的-release"><a href="#查看已安装的-release" class="headerlink" title="查看已安装的 release"></a>查看已安装的 release</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm ls</span><br><span class="line"></span><br><span class="line">helm ls -A</span><br></pre></td></tr></table></figure>
+
+<h2 id="卸载"><a href="#卸载" class="headerlink" title="卸载"></a>卸载</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm <span class="built_in">ls</span> -A</span></span><br><span class="line">NAME        	NAMESPACE    	REVISION	UPDATED                                	STATUS	CHART                APP VERSION</span><br><span class="line">cert-manager	cert-manager 	1       	2022-11-01 09:57:11.373366484 +0800 CST	failed	cert-manager-v1.7.1  v1.7.1     </span><br><span class="line">rancher     	cattle-system	1       	2022-11-01 10:05:07.370131566 +0800 CST	failed	rancher-2.6.9        v2.6.9     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm uninstall rancher -n cattle-system</span></span><br><span class="line">W1101 10:21:32.764269   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:34.043445   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:39.809766   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">release &quot;rancher&quot; uninstalled</span><br></pre></td></tr></table></figure>
+
+<h2 id="查看导入的-repo"><a href="#查看导入的-repo" class="headerlink" title="查看导入的 repo"></a>查看导入的 repo</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm repo <span class="built_in">ls</span></span></span><br><span class="line">NAME          	URL                                              </span><br><span class="line">rancher-stable	https://releases.rancher.com/server-charts/stable</span><br><span class="line">jetstack      	https://charts.jetstack.io                       </span><br><span class="line">hashicorp     	https://helm.releases.hashicorp.com</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>搜索&#x2F;查看可用的 repo</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                          </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart       </span><br><span class="line">hashicorp/vault-secrets-operator	0.1.0        	0.1.0      	Official Vault Secrets Operator Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>查看可用的 releases</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault -l</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                               </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.1       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.0       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.23.0       	1.12.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.1       	1.12.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.0       	1.11.3     	Official HashiCorp Vault Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="安装-1"><a href="#安装-1" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install vault hashicorp/vault --version 0.25.0</span></span><br><span class="line">NAME: vault</span><br><span class="line">LAST DEPLOYED: Mon Jul 10 14:59:13 2023</span><br><span class="line">NAMESPACE: default</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">NOTES:</span><br><span class="line">Thank you for installing HashiCorp Vault!</span><br><span class="line"></span><br><span class="line">Now that you have deployed Vault, you should look over the docs on using</span><br><span class="line">Vault with Kubernetes available here:</span><br><span class="line"></span><br><span class="line">https://www.vaultproject.io/docs/</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Your release is named vault. To learn more about the release, try:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm status vault</span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm get manifest vault</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>helm</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Grafana 使用</title>
     <url>/202306051707/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Grafana 是一款用 GO 语言开发的开源数据可视化工具，可以做数据监控和数据统计，带有告警功能。</p>
@@ -6619,46 +6659,6 @@ width: 20%;
       <categories>
         <category>Tools</category>
       </categories>
-  </entry>
-  <entry>
-    <title>helm 安装及使用</title>
-    <url>/202210071543/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>centos7 5.4.212-1.el7</li>
-<li>kubernetes Server Version: v1.25.0</li>
-<li>Helm 3.10.0</li>
-</ul>
-<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><ol>
-<li><p>下载 <a href="https://github.com/helm/helm/releases">需要的版本</a></p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">wget https://get.helm.sh/helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
-<li><p>解压</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">tar -xf helm-v3.10.0-linux-amd64.tar.gz</span><br></pre></td></tr></table></figure></li>
-<li><p>在解压目中找到 <code>helm</code> 程序，移动到需要的目录中</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">cp linux-amd64/helm /usr/local/bin/</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>验证</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ helm version</span><br><span class="line"> version.BuildInfo&#123;Version:&quot;v3.10.0&quot;, GitCommit:&quot;ce66412a723e4d89555dc67217607c6579ffcb21&quot;, GitTreeState:&quot;clean&quot;, GoVersion:&quot;go1.18.6&quot;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ol>
-<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="查看已安装的-release"><a href="#查看已安装的-release" class="headerlink" title="查看已安装的 release"></a>查看已安装的 release</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm ls</span><br><span class="line"></span><br><span class="line">helm ls -A</span><br></pre></td></tr></table></figure>
-
-<h2 id="卸载"><a href="#卸载" class="headerlink" title="卸载"></a>卸载</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm <span class="built_in">ls</span> -A</span></span><br><span class="line">NAME        	NAMESPACE    	REVISION	UPDATED                                	STATUS	CHART                APP VERSION</span><br><span class="line">cert-manager	cert-manager 	1       	2022-11-01 09:57:11.373366484 +0800 CST	failed	cert-manager-v1.7.1  v1.7.1     </span><br><span class="line">rancher     	cattle-system	1       	2022-11-01 10:05:07.370131566 +0800 CST	failed	rancher-2.6.9        v2.6.9     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm uninstall rancher -n cattle-system</span></span><br><span class="line">W1101 10:21:32.764269   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:34.043445   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">W1101 10:21:39.809766   11113 warnings.go:70] policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+</span><br><span class="line">release &quot;rancher&quot; uninstalled</span><br></pre></td></tr></table></figure>
-
-<h2 id="查看导入的-repo"><a href="#查看导入的-repo" class="headerlink" title="查看导入的 repo"></a>查看导入的 repo</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm repo <span class="built_in">ls</span></span></span><br><span class="line">NAME          	URL                                              </span><br><span class="line">rancher-stable	https://releases.rancher.com/server-charts/stable</span><br><span class="line">jetstack      	https://charts.jetstack.io                       </span><br><span class="line">hashicorp     	https://helm.releases.hashicorp.com</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>搜索&#x2F;查看可用的 repo</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                          </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart       </span><br><span class="line">hashicorp/vault-secrets-operator	0.1.0        	0.1.0      	Official Vault Secrets Operator Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看可用的 releases</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm search repo hashicorp/vault -l</span></span><br><span class="line">NAME                            	CHART VERSION	APP VERSION	DESCRIPTION                               </span><br><span class="line">hashicorp/vault                 	0.25.0       	1.14.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.1       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.24.0       	1.13.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.23.0       	1.12.1     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.1       	1.12.0     	Official HashiCorp Vault Chart            </span><br><span class="line">hashicorp/vault                 	0.22.0       	1.11.3     	Official HashiCorp Vault Chart</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="安装-1"><a href="#安装-1" class="headerlink" title="安装"></a>安装</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install vault hashicorp/vault --version 0.25.0</span></span><br><span class="line">NAME: vault</span><br><span class="line">LAST DEPLOYED: Mon Jul 10 14:59:13 2023</span><br><span class="line">NAMESPACE: default</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">NOTES:</span><br><span class="line">Thank you for installing HashiCorp Vault!</span><br><span class="line"></span><br><span class="line">Now that you have deployed Vault, you should look over the docs on using</span><br><span class="line">Vault with Kubernetes available here:</span><br><span class="line"></span><br><span class="line">https://www.vaultproject.io/docs/</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Your release is named vault. To learn more about the release, try:</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm status vault</span></span><br><span class="line"><span class="meta prompt_">  $ </span><span class="language-bash">helm get manifest vault</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>helm</tag>
-      </tags>
   </entry>
   <entry>
     <title>和田玉知识归纳</title>
@@ -11249,70 +11249,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux 进程常见状态说明</title>
-    <url>/202304181637/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><table>
-<thead>
-<tr>
-<th>状态标识</th>
-<th>状态名称</th>
-<th>状态说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>R</code></td>
-<td>task_running</td>
-<td>进程处于运行或就绪状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>S</code></td>
-<td>task_interruptible<br/> sleeping</td>
-<td>可中断的睡眠状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>D</code></td>
-<td>task_uninterruptible</td>
-<td>不可中断的睡眠状态<br/>1. 它是一种睡眠状态，意味着处于此状态的进程不会消耗 CPU<br/>2. 睡眠的原因是等待某些资源（比如锁或者磁盘 IO），这也是非常多 D 状态的进程都处在处理 IO 操作的原因<br/>3. 是它不能被中断，这个要区别于 <code>硬件中断</code> 的中断，是指不希望在其获取到资源或者超时前被终止。因此他不会被信号唤醒，也就不会响应 <code>kill -9</code> 这类信号。这也是它跟 <code>S（可中断睡眠）</code>状态的区别</td>
-<td></td>
-</tr>
-<tr>
-<td><code>T</code></td>
-<td>task_stopped <br/> task_traced<br/>Traced</td>
-<td>暂停状态或跟踪状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Z</code></td>
-<td>task_dead <br/> exit_zombie<br/>zombie</td>
-<td>退出状态，进程成为僵尸进程</td>
-<td></td>
-</tr>
-<tr>
-<td><code>X</code></td>
-<td>task_dead <br/> exit_dead</td>
-<td>退出状态，进程即将被销毁</td>
-<td></td>
-</tr>
-<tr>
-<td><code>I</code></td>
-<td>idle</td>
-<td>空闲状态</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="参考文档"><a href="#参考文档" class="headerlink" title="参考文档"></a>参考文档</h1><p><a href="http://lionheartwang.github.io/blog/2018/06/05/linuxjin-cheng-zhuang-tai-shuo-ming/">Linux进程状态说明</a></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>linux rsyslog 服务</title>
     <url>/202208191014/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -11501,6 +11437,70 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>rsyslog</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux 进程常见状态说明</title>
+    <url>/202304181637/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><table>
+<thead>
+<tr>
+<th>状态标识</th>
+<th>状态名称</th>
+<th>状态说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>R</code></td>
+<td>task_running</td>
+<td>进程处于运行或就绪状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>S</code></td>
+<td>task_interruptible<br/> sleeping</td>
+<td>可中断的睡眠状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>D</code></td>
+<td>task_uninterruptible</td>
+<td>不可中断的睡眠状态<br/>1. 它是一种睡眠状态，意味着处于此状态的进程不会消耗 CPU<br/>2. 睡眠的原因是等待某些资源（比如锁或者磁盘 IO），这也是非常多 D 状态的进程都处在处理 IO 操作的原因<br/>3. 是它不能被中断，这个要区别于 <code>硬件中断</code> 的中断，是指不希望在其获取到资源或者超时前被终止。因此他不会被信号唤醒，也就不会响应 <code>kill -9</code> 这类信号。这也是它跟 <code>S（可中断睡眠）</code>状态的区别</td>
+<td></td>
+</tr>
+<tr>
+<td><code>T</code></td>
+<td>task_stopped <br/> task_traced<br/>Traced</td>
+<td>暂停状态或跟踪状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Z</code></td>
+<td>task_dead <br/> exit_zombie<br/>zombie</td>
+<td>退出状态，进程成为僵尸进程</td>
+<td></td>
+</tr>
+<tr>
+<td><code>X</code></td>
+<td>task_dead <br/> exit_dead</td>
+<td>退出状态，进程即将被销毁</td>
+<td></td>
+</tr>
+<tr>
+<td><code>I</code></td>
+<td>idle</td>
+<td>空闲状态</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="参考文档"><a href="#参考文档" class="headerlink" title="参考文档"></a>参考文档</h1><p><a href="http://lionheartwang.github.io/blog/2018/06/05/linuxjin-cheng-zhuang-tai-shuo-ming/">Linux进程状态说明</a></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -12060,43 +12060,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>linux tun/tap 设备的工作原理</title>
-    <url>/202304241633/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>从 Linux 文件系统的角度看，tun&#x2F;tap 设备是用户可以使用文件句柄操作的字符设备</p>
-<p>从 Linux 网络虚拟化的角度看，tun&#x2F;tap 设备是虚拟网卡，一端连接内核网络协议栈，一端连接用户态的程序。</p>
-<p>tun&#x2F;tap 设备主要的作用是可以将 TCP&#x2F;IP 协议栈处理好的数据包发送给任何一个使用 tun&#x2F;tap 设备驱动的程序，由用户态程序重新处理数据包后重新发送到 TCP&#x2F;IP 协议栈。</p>
-<p>tun&#x2F;tap 设备的工作原理完全相同，主要区别在于：</p>
-<ul>
-<li>tun 设备的 &#x2F;dev&#x2F;tunX 文件收发的是 IP 包，因此只能工作在网络层（L3），无法与物理网卡做桥接，可以通过三层交换(如 ip_forward) 与物理网卡交互</li>
-<li>tap 设备的 &#x2F;dev&#x2F;tapX 文件收发的是数据链路层报文，可以与物理网卡做桥接。</li>
-</ul>
-<h1 id="tun-x2F-tap-设备的工作原理"><a href="#tun-x2F-tap-设备的工作原理" class="headerlink" title="tun&#x2F;tap 设备的工作原理"></a>tun&#x2F;tap 设备的工作原理</h1><p><img src="https://i.csms.tech/img_135.png"></p>
-<p>上图展示了物理设备上的数据是如何通过 Linux 内核网络协议栈发送到用户态程序的。</p>
-<p>物理网卡的数据送达网络协议栈，进程通过 Socket 创建特殊套接字，从网络协议栈接收数据。</p>
-<p>从网络协议栈的角度看，tun&#x2F;tap 设备这类虚拟网卡与物理网卡并无区别。对 tun&#x2F;tap 设备而言，他与物理网卡的不同表现在它的数据源不是物理链路，而是来自用户态。</p>
-<p><img src="https://i.csms.tech/img_136.png"></p>
-<p>普通的物理网卡通过网线收发数据包，而 tun&#x2F;tap 设备通过一个设备文件 （<code>/dev/tunX</code>，<code>/dev/tapX</code>）收发数据包，所有对这个文件的写操作会通过 tun&#x2F;tap 设备转换成一个网络数据包传送给内核的网络协议栈。当内核网络协议栈发送一个包给 tun&#x2F;tap 设备时，用户态的进程通过读取设备文件，就可以拿到报的内容。用户态的程序也可以通过写入这个设备文件向 tun&#x2F;tap 设备发送数据。</p>
-<h1 id="VPN-原理简述"><a href="#VPN-原理简述" class="headerlink" title="VPN 原理简述"></a>VPN 原理简述</h1><p><img src="https://i.csms.tech/img_137.png"></p>
-<p>如上图所示，整个数据包的流程包括</p>
-<ol>
-<li>App1 通过 Socket API 发送了一个数据包，假设这个数据包的目的 IP 地址是 192.168.1.3，和 tun0 位于同一个网段</li>
-<li>数据包到达网络协议栈后，协议栈根据数据包的目的 IP 地址进行路由，匹配到数据包应该发送给 tun0 网卡，于是将数据包发送给 tun0 网卡</li>
-<li>tun0 网卡收到数据包，将数据包写入 &#x2F;dev&#x2F;tun0，&#x2F;dev&#x2F;tun0 由 App2 打开，于是 App2 获得了数据包</li>
-<li>App2 获得数据包后，通过报文封装，将原来的目的 IP 为 192.168.1.3 的报文封装在源 IP 为 eth0 的 IP，目的 IP 为 VPN 对端 IP 地址的报文中，构造出新的报文，并通过   Socket API 发送给内核网络协议栈</li>
-<li>内核网络协议栈根据路由，发现数据包应该由 eth0 发送出去，于是将数据包发给 eth0，最终通过 eth0 将数据包发送到 VPN 的对端。</li>
-</ol>
-<p>综上所述，发到 192.168.1.0&#x2F;24 的数据包，首先通过监听在 tun0 设备上的 App2 （VPN 客户端）进行封包，再利用物理网卡 eth0 发送到远端网络的物理网卡上，从而实现 VPN。</p>
-<p>VPN 网络报文真正从物理网卡出去需要经过 2 次内核网络协议栈，因此会有一定的性能损耗。</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>network</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>logstash 使用详解</title>
     <url>/202307211022/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -12260,6 +12223,43 @@ width: 20%;
       <categories>
         <category>Linux</category>
         <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux tun/tap 设备的工作原理</title>
+    <url>/202304241633/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>从 Linux 文件系统的角度看，tun&#x2F;tap 设备是用户可以使用文件句柄操作的字符设备</p>
+<p>从 Linux 网络虚拟化的角度看，tun&#x2F;tap 设备是虚拟网卡，一端连接内核网络协议栈，一端连接用户态的程序。</p>
+<p>tun&#x2F;tap 设备主要的作用是可以将 TCP&#x2F;IP 协议栈处理好的数据包发送给任何一个使用 tun&#x2F;tap 设备驱动的程序，由用户态程序重新处理数据包后重新发送到 TCP&#x2F;IP 协议栈。</p>
+<p>tun&#x2F;tap 设备的工作原理完全相同，主要区别在于：</p>
+<ul>
+<li>tun 设备的 &#x2F;dev&#x2F;tunX 文件收发的是 IP 包，因此只能工作在网络层（L3），无法与物理网卡做桥接，可以通过三层交换(如 ip_forward) 与物理网卡交互</li>
+<li>tap 设备的 &#x2F;dev&#x2F;tapX 文件收发的是数据链路层报文，可以与物理网卡做桥接。</li>
+</ul>
+<h1 id="tun-x2F-tap-设备的工作原理"><a href="#tun-x2F-tap-设备的工作原理" class="headerlink" title="tun&#x2F;tap 设备的工作原理"></a>tun&#x2F;tap 设备的工作原理</h1><p><img src="https://i.csms.tech/img_135.png"></p>
+<p>上图展示了物理设备上的数据是如何通过 Linux 内核网络协议栈发送到用户态程序的。</p>
+<p>物理网卡的数据送达网络协议栈，进程通过 Socket 创建特殊套接字，从网络协议栈接收数据。</p>
+<p>从网络协议栈的角度看，tun&#x2F;tap 设备这类虚拟网卡与物理网卡并无区别。对 tun&#x2F;tap 设备而言，他与物理网卡的不同表现在它的数据源不是物理链路，而是来自用户态。</p>
+<p><img src="https://i.csms.tech/img_136.png"></p>
+<p>普通的物理网卡通过网线收发数据包，而 tun&#x2F;tap 设备通过一个设备文件 （<code>/dev/tunX</code>，<code>/dev/tapX</code>）收发数据包，所有对这个文件的写操作会通过 tun&#x2F;tap 设备转换成一个网络数据包传送给内核的网络协议栈。当内核网络协议栈发送一个包给 tun&#x2F;tap 设备时，用户态的进程通过读取设备文件，就可以拿到报的内容。用户态的程序也可以通过写入这个设备文件向 tun&#x2F;tap 设备发送数据。</p>
+<h1 id="VPN-原理简述"><a href="#VPN-原理简述" class="headerlink" title="VPN 原理简述"></a>VPN 原理简述</h1><p><img src="https://i.csms.tech/img_137.png"></p>
+<p>如上图所示，整个数据包的流程包括</p>
+<ol>
+<li>App1 通过 Socket API 发送了一个数据包，假设这个数据包的目的 IP 地址是 192.168.1.3，和 tun0 位于同一个网段</li>
+<li>数据包到达网络协议栈后，协议栈根据数据包的目的 IP 地址进行路由，匹配到数据包应该发送给 tun0 网卡，于是将数据包发送给 tun0 网卡</li>
+<li>tun0 网卡收到数据包，将数据包写入 &#x2F;dev&#x2F;tun0，&#x2F;dev&#x2F;tun0 由 App2 打开，于是 App2 获得了数据包</li>
+<li>App2 获得数据包后，通过报文封装，将原来的目的 IP 为 192.168.1.3 的报文封装在源 IP 为 eth0 的 IP，目的 IP 为 VPN 对端 IP 地址的报文中，构造出新的报文，并通过   Socket API 发送给内核网络协议栈</li>
+<li>内核网络协议栈根据路由，发现数据包应该由 eth0 发送出去，于是将数据包发给 eth0，最终通过 eth0 将数据包发送到 VPN 的对端。</li>
+</ol>
+<p>综上所述，发到 192.168.1.0&#x2F;24 的数据包，首先通过监听在 tun0 设备上的 App2 （VPN 客户端）进行封包，再利用物理网卡 eth0 发送到远端网络的物理网卡上，从而实现 VPN。</p>
+<p>VPN 网络报文真正从物理网卡出去需要经过 2 次内核网络协议栈，因此会有一定的性能损耗。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>network</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -15426,130 +15426,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>redis 配置</title>
-    <url>/202307121459/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Redis 6</li>
-</ul>
-<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
-<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
-<p>创建服务启动需要的数据目录及日志目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
-<p>7380 服务使用如下配置文件</p>
-<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
-
-<p>分别启动服务（7380-7385）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<p><strong>创建集群</strong> 命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>redis-cli</code> 命令参数说明：</p>
-<table>
-<thead>
-<tr>
-<th>命令参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--cluster</code></td>
-<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
-<td><code>redis-cli --cluster create</code><br/>创建集群</td>
-</tr>
-<tr>
-<td><code>--cluster-replicas</code></td>
-<td>redis cluster 副本数比例</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-a</code></td>
-<td>redis 密码</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-c</code></td>
-<td>操作 redis cluster</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-p</code></td>
-<td>指定连接的端口</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看新建的集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
-<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
-<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
-</ul>
-<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>新增节点的命令示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
-
-<p>再次查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
-<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
-<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
-<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
-<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
-</ul>
-<p>本示例中执行以下命令为新添加的节点分配 slot</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
-
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
-<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
-<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
-<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
-<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
-</ul>
-<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-
-<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
-<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>rsyncd 服务</title>
     <url>/36f703dc/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="命令格式"><a href="#命令格式" class="headerlink" title="命令格式"></a>命令格式</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">rsync [OPTION]... SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]host:DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST:SRC DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST::SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]HOST::DEST</span><br><span class="line">rsync [OPTION]... rsync://[USER@]HOST[:PORT]/SRC [DEST]</span><br></pre></td></tr></table></figure>
@@ -16041,6 +15917,130 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>redis 配置</title>
+    <url>/202307121459/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Redis 6</li>
+</ul>
+<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
+<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
+<p>创建服务启动需要的数据目录及日志目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
+<p>7380 服务使用如下配置文件</p>
+<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
+
+<p>分别启动服务（7380-7385）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<p><strong>创建集群</strong> 命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>redis-cli</code> 命令参数说明：</p>
+<table>
+<thead>
+<tr>
+<th>命令参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--cluster</code></td>
+<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
+<td><code>redis-cli --cluster create</code><br/>创建集群</td>
+</tr>
+<tr>
+<td><code>--cluster-replicas</code></td>
+<td>redis cluster 副本数比例</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-a</code></td>
+<td>redis 密码</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-c</code></td>
+<td>操作 redis cluster</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td>指定连接的端口</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>查看新建的集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
+<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
+<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
+</ul>
+<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>新增节点的命令示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
+
+<p>再次查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
+<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
+<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
+<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
+<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
+</ul>
+<p>本示例中执行以下命令为新添加的节点分配 slot</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
+
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
+<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
+<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
+<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
+<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
+</ul>
+<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+
+<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
+<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>sed 命令使用示例</title>
     <url>/202207291520/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="常用选项说明"><a href="#常用选项说明" class="headerlink" title="常用选项说明"></a>常用选项说明</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-n    使用安静(silent)模式。在一般 sed 的用法中，所有来自 STDIN （例如文件内容）的内容一般都会被列出到屏幕上。但如果加上 -n 参数后，则只有经过sed 特殊处理的那一行(或者动作)才会被列出来。</span><br><span class="line">-i    直接修改读取的内容，而不是由屏幕输出。</span><br><span class="line">-f    直接将 sed 的动作写在一个文件内， -f filename 则可以执行 filename 内的sed 动作；</span><br></pre></td></tr></table></figure>
@@ -16066,41 +16066,6 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>sed</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>sftp 服务常用配置说明</title>
-    <url>/202207301332/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认ssh启用了sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置sshd以限制sftp登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
-<span id="more"></span>
-
-<h3 id="基本配置"><a href="#基本配置" class="headerlink" title="基本配置"></a>基本配置</h3><p><strong><code>ChrootDirectory</code> 配置前提</strong>:<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，属主和属组必须是 root；<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，只有属主能拥有写权限，权限最大设置只能是 755。</p>
-<blockquote>
-<p><strong>如果权限配置不对，会导致无法登录</strong><br>如果上级目录无法设置为root权限，可以通过<code>ln</code>链接的方式实现<br>限制后的用户无法 <code>ssh</code> 登录系统</p>
-</blockquote>
-<p>创建相关用户和组</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd sftp</span><br><span class="line">useradd -g sftp -d /data/sftp/sftpuser1 -s /sbin/nologin sftpuser1</span><br><span class="line">echo 123456 | passwd --stdin sftpuser1</span><br><span class="line"></span><br><span class="line">chown root:root /data/sftp/sftpuser1</span><br><span class="line">chmod 755 /data/sftp/sftpuser1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">因为 /data/sftp/sftpuser1 属主和属组都为root，其他用户无写入权限，需要创建sftpuser1可写入的目录</span></span><br><span class="line">mkdir -p /data/sftp/sftpuser1/upload</span><br><span class="line">chown sftpuser1:sftp /data/sftp/sftpuser/upload</span><br><span class="line">chmod 755 /data/sftp/sftpuser1/upload</span><br></pre></td></tr></table></figure>
-
-<p>修改 <code>sshd_config</code> 配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">Subsystem      sftp    /usr/libexec/openssh/sftp-server</span></span><br><span class="line">Subsystem sftp internal-sftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">拒绝指定用户登录,不能放在Match user中</span></span><br><span class="line">DenyUsers user1 user2</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">maxsessions 10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户配置sftp, 多个用户可重复配置以下内容，或者通过针对组配置sftp</span></span><br><span class="line">Match user sftpuser1,sftpuser2</span><br><span class="line">    # 该行强制执行内部 sftp，并忽略任何 ~/.ssh/rc 文件中的命令。</span><br><span class="line">   ForceCommand internal-sftp</span><br><span class="line">	</span><br><span class="line">   ChrootDirectory /data/sftp/sftpuser1</span><br><span class="line">	</span><br><span class="line"><span class="meta prompt_">   # </span><span class="language-bash">下面两项是与安全有关</span></span><br><span class="line">    AllowTcpForwarding no</span><br><span class="line">    X11Forwarding no</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户组配置sftp</span></span><br><span class="line">Match Group sftp,sftp1</span><br><span class="line">    ForceCommand internal-sftp</span><br><span class="line">    </span><br><span class="line">    # %h 代表用户 home 目录，%u 代表用户名。</span><br><span class="line">    ChrootDirectory /data/sftp/%u</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>修改配置后，重启 <code>sshd</code> 服务生效<br><code>systemctl restart sshd</code></p>
-</blockquote>
-<h3 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h3><h4 id="Unable-to-open-permission-denied"><a href="#Unable-to-open-permission-denied" class="headerlink" title="Unable to open .: permission denied"></a>Unable to open .: permission denied</h4><p><strong>解决方法</strong>： 如果启动了 <code>selinux</code>， 关闭 <code>selinux</code></p>
-<h4 id="Couldn’t-read-packet-Connection-reset-by-peer"><a href="#Couldn’t-read-packet-Connection-reset-by-peer" class="headerlink" title="Couldn’t read packet: Connection reset by peer"></a>Couldn’t read packet: Connection reset by peer</h4><p><strong>问题原因</strong>: <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录及所有上级目录的用户和组必须为 <code>root</code>，权限最多为 755, <a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
-<h4 id="remote-readdir-“-x2F-“-Permission-denied"><a href="#remote-readdir-“-x2F-“-Permission-denied" class="headerlink" title="remote readdir(“&#x2F;“): Permission denied"></a>remote readdir(“&#x2F;“): Permission denied</h4><p><strong>问题原因</strong>: sftp 用户对 <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录要有读取权限，<a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
-<h3 id="禁用-sftp-功能"><a href="#禁用-sftp-功能" class="headerlink" title="禁用 sftp 功能"></a>禁用 sftp 功能</h3><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code>,注释以下内容</p>
-<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Subsystem sftp /usr/libexec/openssh/sftp-server</span></span><br></pre></td></tr></table></figure>
-<p>修改配置文件后重启 <code>sshd</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
-<p>使用<code>sftp</code>登录时会报错 ： <code>Error:	Could not connect to server</code></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>sftp</tag>
       </tags>
   </entry>
   <entry>
@@ -16217,6 +16182,41 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>sftp 服务常用配置说明</title>
+    <url>/202207301332/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认ssh启用了sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置sshd以限制sftp登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
+<span id="more"></span>
+
+<h3 id="基本配置"><a href="#基本配置" class="headerlink" title="基本配置"></a>基本配置</h3><p><strong><code>ChrootDirectory</code> 配置前提</strong>:<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，属主和属组必须是 root；<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，只有属主能拥有写权限，权限最大设置只能是 755。</p>
+<blockquote>
+<p><strong>如果权限配置不对，会导致无法登录</strong><br>如果上级目录无法设置为root权限，可以通过<code>ln</code>链接的方式实现<br>限制后的用户无法 <code>ssh</code> 登录系统</p>
+</blockquote>
+<p>创建相关用户和组</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd sftp</span><br><span class="line">useradd -g sftp -d /data/sftp/sftpuser1 -s /sbin/nologin sftpuser1</span><br><span class="line">echo 123456 | passwd --stdin sftpuser1</span><br><span class="line"></span><br><span class="line">chown root:root /data/sftp/sftpuser1</span><br><span class="line">chmod 755 /data/sftp/sftpuser1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">因为 /data/sftp/sftpuser1 属主和属组都为root，其他用户无写入权限，需要创建sftpuser1可写入的目录</span></span><br><span class="line">mkdir -p /data/sftp/sftpuser1/upload</span><br><span class="line">chown sftpuser1:sftp /data/sftp/sftpuser/upload</span><br><span class="line">chmod 755 /data/sftp/sftpuser1/upload</span><br></pre></td></tr></table></figure>
+
+<p>修改 <code>sshd_config</code> 配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">Subsystem      sftp    /usr/libexec/openssh/sftp-server</span></span><br><span class="line">Subsystem sftp internal-sftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">拒绝指定用户登录,不能放在Match user中</span></span><br><span class="line">DenyUsers user1 user2</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">maxsessions 10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户配置sftp, 多个用户可重复配置以下内容，或者通过针对组配置sftp</span></span><br><span class="line">Match user sftpuser1,sftpuser2</span><br><span class="line">    # 该行强制执行内部 sftp，并忽略任何 ~/.ssh/rc 文件中的命令。</span><br><span class="line">   ForceCommand internal-sftp</span><br><span class="line">	</span><br><span class="line">   ChrootDirectory /data/sftp/sftpuser1</span><br><span class="line">	</span><br><span class="line"><span class="meta prompt_">   # </span><span class="language-bash">下面两项是与安全有关</span></span><br><span class="line">    AllowTcpForwarding no</span><br><span class="line">    X11Forwarding no</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户组配置sftp</span></span><br><span class="line">Match Group sftp,sftp1</span><br><span class="line">    ForceCommand internal-sftp</span><br><span class="line">    </span><br><span class="line">    # %h 代表用户 home 目录，%u 代表用户名。</span><br><span class="line">    ChrootDirectory /data/sftp/%u</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>修改配置后，重启 <code>sshd</code> 服务生效<br><code>systemctl restart sshd</code></p>
+</blockquote>
+<h3 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h3><h4 id="Unable-to-open-permission-denied"><a href="#Unable-to-open-permission-denied" class="headerlink" title="Unable to open .: permission denied"></a>Unable to open .: permission denied</h4><p><strong>解决方法</strong>： 如果启动了 <code>selinux</code>， 关闭 <code>selinux</code></p>
+<h4 id="Couldn’t-read-packet-Connection-reset-by-peer"><a href="#Couldn’t-read-packet-Connection-reset-by-peer" class="headerlink" title="Couldn’t read packet: Connection reset by peer"></a>Couldn’t read packet: Connection reset by peer</h4><p><strong>问题原因</strong>: <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录及所有上级目录的用户和组必须为 <code>root</code>，权限最多为 755, <a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
+<h4 id="remote-readdir-“-x2F-“-Permission-denied"><a href="#remote-readdir-“-x2F-“-Permission-denied" class="headerlink" title="remote readdir(“&#x2F;“): Permission denied"></a>remote readdir(“&#x2F;“): Permission denied</h4><p><strong>问题原因</strong>: sftp 用户对 <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录要有读取权限，<a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
+<h3 id="禁用-sftp-功能"><a href="#禁用-sftp-功能" class="headerlink" title="禁用 sftp 功能"></a>禁用 sftp 功能</h3><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code>,注释以下内容</p>
+<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Subsystem sftp /usr/libexec/openssh/sftp-server</span></span><br></pre></td></tr></table></figure>
+<p>修改配置文件后重启 <code>sshd</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
+<p>使用<code>sftp</code>登录时会报错 ： <code>Error:	Could not connect to server</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>sftp</tag>
       </tags>
   </entry>
   <entry>
