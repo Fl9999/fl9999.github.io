@@ -690,6 +690,58 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -784,58 +836,6 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -6715,25 +6715,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Modular Admin HTML 模板使用注意事项</title>
-    <url>/202308071022/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Django 4.4</li>
-<li>Modular Admin v1.4.0</li>
-</ul>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type"><a href="#because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type" class="headerlink" title="because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type"></a>because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type</h2><p>使用 Django 模板语法加载 <code>index.html</code> 中的静态文件后，有个 <code>app.css</code> 文件请求 404，Console 中报错： <code>because its MIME type (&#39;text/html&#39;) is not a supported stylesheet MIME type</code></p>
-<p><em><strong>问题原因</strong></em> 在 Modular Admin 代码中搜索 <code>app.css</code>，除了 <code>index.html</code> 引用了此文件，<code>js/app.js</code> 也引用了此文件。在 Django 中使用次模板，需要修改此处的路径正确。<br><img src="https://i.csms.tech/img_213.png"></p>
-<h1 id="常用修改事项说明"><a href="#常用修改事项说明" class="headerlink" title="常用修改事项说明"></a>常用修改事项说明</h1><h2 id="菜单项的展开标签"><a href="#菜单项的展开标签" class="headerlink" title="菜单项的展开标签"></a>菜单项的展开标签</h2><p>要在页面中让菜单处于展开状态，需要给菜单应用 <code>active open</code> 的 class<br><img src="https://i.csms.tech/img_214.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-area-chart&quot;&gt;&lt;/i&gt; Charts &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-flot.html&quot;&gt; Flot Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-morris.html&quot;&gt; Morris Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li class=&quot;active open&quot;&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-table&quot;&gt;&lt;/i&gt; Tables &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li class=&quot;active&quot;&gt;</span><br><span class="line">            &lt;a href=&quot;static-tables.html&quot;&gt; Static Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;responsive-tables.html&quot;&gt; Responsive Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;forms.html&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-pencil-square-o&quot;&gt;&lt;/i&gt; Forms &lt;/a&gt;</span><br><span class="line">&lt;/li&gt;</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>HTML</category>
-      </categories>
-      <tags>
-        <tag>HTML</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Hexo Next 添加 canvas-nest 特效</title>
     <url>/b12589273/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -6763,6 +6744,25 @@ width: 20%;
         <tag>Hexo</tag>
         <tag>canvas-nest</tag>
         <tag>Next</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Modular Admin HTML 模板使用注意事项</title>
+    <url>/202308071022/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Django 4.4</li>
+<li>Modular Admin v1.4.0</li>
+</ul>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type"><a href="#because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type" class="headerlink" title="because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type"></a>because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type</h2><p>使用 Django 模板语法加载 <code>index.html</code> 中的静态文件后，有个 <code>app.css</code> 文件请求 404，Console 中报错： <code>because its MIME type (&#39;text/html&#39;) is not a supported stylesheet MIME type</code></p>
+<p><em><strong>问题原因</strong></em> 在 Modular Admin 代码中搜索 <code>app.css</code>，除了 <code>index.html</code> 引用了此文件，<code>js/app.js</code> 也引用了此文件。在 Django 中使用次模板，需要修改此处的路径正确。<br><img src="https://i.csms.tech/img_213.png"></p>
+<h1 id="常用修改事项说明"><a href="#常用修改事项说明" class="headerlink" title="常用修改事项说明"></a>常用修改事项说明</h1><h2 id="菜单项的展开标签"><a href="#菜单项的展开标签" class="headerlink" title="菜单项的展开标签"></a>菜单项的展开标签</h2><p>要在页面中让菜单处于展开状态，需要给菜单应用 <code>active open</code> 的 class<br><img src="https://i.csms.tech/img_214.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-area-chart&quot;&gt;&lt;/i&gt; Charts &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-flot.html&quot;&gt; Flot Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-morris.html&quot;&gt; Morris Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li class=&quot;active open&quot;&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-table&quot;&gt;&lt;/i&gt; Tables &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li class=&quot;active&quot;&gt;</span><br><span class="line">            &lt;a href=&quot;static-tables.html&quot;&gt; Static Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;responsive-tables.html&quot;&gt; Responsive Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;forms.html&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-pencil-square-o&quot;&gt;&lt;/i&gt; Forms &lt;/a&gt;</span><br><span class="line">&lt;/li&gt;</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>HTML</category>
+      </categories>
+      <tags>
+        <tag>HTML</tag>
       </tags>
   </entry>
   <entry>
@@ -7960,6 +7960,57 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://kubernetes.github.io/ingress-nginx/deploy/baremetal/">裸机注意事项</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/deploy/baremetal/#via-the-host-network">Via the host network</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/">Ingress NGINX Configuration</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/examples/rewrite/#examples">Rewrite Target</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/examples/rewrite/#app-root">App Root</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#session-affinity">Session Affinity</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#enable-cors">Enable CORS</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#redirect-fromto-www">Redirect from/to www</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#whitelist-source-range">Whitelist source range</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-timeouts">Custom timeouts</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/#configuration-options">Configuration options</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/#access-log-path">access-log-path</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes 监控</title>
+    <url>/202305231329/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="Kubernetes-Metrics-Server"><a href="#Kubernetes-Metrics-Server" class="headerlink" title="Kubernetes Metrics Server"></a>Kubernetes Metrics Server</h1><p>Kubernetes Metrics Server 从 <code>kubelet</code> 收集资源使用指标（情况）并通过 Metrics API 将其暴露给 Kubernetes API Server，以供 HPA(Horizontal Pod Autoscaler) 和 VPA(Vertical Pod Autoscaler) 使用。<code>kubectl top</code> 也使用 Metrics API。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server](https://github.com/kubernetes-sigs/metrics-server)">[1]</span></a></sup></p>
+<h2 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h2><p>Kubernetes Metrics Server 安装之前必须要开启 kube api-server 的聚合层功能以及认证鉴权功能 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置聚合层](https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/)">[3]</span></a></sup> </p>
+<p>检查 Kubernetes API Server 是否启用了聚合层功能及认证鉴权功能</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -ef | grep apiserver | grep -E <span class="string">&quot;authorization-mode|enable-aggregator-routing&quot;</span></span></span><br><span class="line">root       390   369  7 13:55 ?        00:00:37 kube-apiserver --advertise-address=172.31.26.116 \</span><br><span class="line">                                                               --allow-privileged=true \</span><br><span class="line">                                                               --authorization-mode=Node,RBAC \</span><br><span class="line">                                                               --client-ca-file=/etc/kubernetes/pki/ca.crt \</span><br><span class="line">                                                               --enable-admission-plugins=NodeRestriction \</span><br><span class="line">                                                               --enable-bootstrap-token-auth=true \</span><br><span class="line">                                                               --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt \</span><br><span class="line">                                                               --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt \</span><br><span class="line">                                                               --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key \</span><br><span class="line">                                                               --etcd-servers=https://127.0.0.1:2379 \</span><br><span class="line">                                                               --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \</span><br><span class="line">                                                               --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname \</span><br><span class="line">                                                               --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt \</span><br><span class="line">                                                               --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key \</span><br><span class="line">                                                               --requestheader-allowed-names=front-proxy-client \</span><br><span class="line">                                                               --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt \</span><br><span class="line">                                                               --requestheader-extra-headers-prefix=X-Remote-Extra- \</span><br><span class="line">                                                               --requestheader-group-headers=X-Remote-Group \</span><br><span class="line">                                                               --requestheader-username-headers=X-Remote-User \</span><br><span class="line">                                                               --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local \</span><br><span class="line">                                                               --service-account-key-file=/etc/kubernetes/pki/sa.pub \</span><br><span class="line">                                                               --service-account-signing-key-file=/etc/kubernetes/pki/sa.key \</span><br><span class="line">                                                               --service-cluster-ip-range=10.96.0.0/12 \</span><br><span class="line">                                                               --tls-cert-file=/etc/kubernetes/pki/apiserver.crt --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \</span><br><span class="line">                                                               --enable-aggregator-routing=true</span><br></pre></td></tr></table></figure>
+<p>输出中包含了 <code>--authorization-mode=Node,RBAC</code> 和 <code>--enable-aggregator-routing=true</code>，表示已开启对应功能。如若未开启，修改 <code>api-server</code> 的 manifest 文件 <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>，在 <code>kube-apiserver</code> 的启动参数中添加 <code>--enable-aggregator-routing=true</code> 和 <code>--authorization-mode=Node,RBAC</code></p>
+<p>以下命令使用 yaml 文件安装最新版本 Metrics Server <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server installation](https://github.com/kubernetes-sigs/metrics-server#installation)">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</span><br></pre></td></tr></table></figure>
+
+<h2 id="Kubernetes-Metrics-Server-部署配置常见错误"><a href="#Kubernetes-Metrics-Server-部署配置常见错误" class="headerlink" title="Kubernetes Metrics Server 部署配置常见错误"></a>Kubernetes Metrics Server 部署配置常见错误</h2><h3 id="Failed-to-scrape-node"><a href="#Failed-to-scrape-node" class="headerlink" title="Failed to scrape node"></a>Failed to scrape node</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep metrics</span></span><br><span class="line">kube-system                 metrics-server-5cdf47479d-rwtd6             0/1     Running       0              5m53s</span><br></pre></td></tr></table></figure>
+<p>检查 Pod 日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.21.3:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.21.3 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.26.116:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.26.116 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.19.164:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.19.164 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster2&quot;</span><br></pre></td></tr></table></figure>
+<p>根据日志提示，由于 metrics-server 未获得TLS Bootstrap 签发证书的导致访问各节点资源时报错。</p>
+<ol>
+<li><a href="https://www.modb.pro/db/408792">参考解决办法</a></li>
+<li>添加选项 <code>--kubelet-insecure-tls</code> 不验证 Kubelet 的 CA 证书 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=InternalIP</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    - --kubelet-insecure-tls</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+<h3 id="no-such-host"><a href="#no-such-host" class="headerlink" title="no such host"></a>no such host</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态，检查 Pod 日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster3:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster3 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker1:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker1 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker2:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker2 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker2&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster2:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster2 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster2&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">I0524 09:32:43.033797       1 server.go:187] &quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br></pre></td></tr></table></figure>
+<p>根据日志显示，API Server 的主机名解析存在问题。这是因为节点主机名在集群的 DNS 中无法解析导致，可以通过在 Metrics Server 的 Pod 中手动添加解析解决</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">spec:</span><br><span class="line">  hostAliases:</span><br><span class="line">  - ip: &#x27;172.31.26.116&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.19.164&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master2&#x27;</span><br><span class="line">  - ip: &#x27;172.31.21.3&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master3&#x27;</span><br><span class="line">  - ip: &#x27;172.31.16.124&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.22.159&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker2&#x27;</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=Hostname</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br></pre></td></tr></table></figure>
+
+<h2 id="Metrics-Server-无法获取所在节点的主机的监控信息"><a href="#Metrics-Server-无法获取所在节点的主机的监控信息" class="headerlink" title="Metrics Server 无法获取所在节点的主机的监控信息"></a>Metrics Server 无法获取所在节点的主机的监控信息</h2><p>Metrics Server 部署成功后，无法获取所在节点的主机的监控信息，获取其他主机的监控信息正常，具体信息如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME          STATUS   ROLES           AGE    VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME</span><br><span class="line">k8s-master1   Ready    control-plane   169d   v1.24.7   172.31.26.116   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master2   Ready    control-plane   169d   v1.24.7   172.31.19.164   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master3   Ready    control-plane   169d   v1.24.7   172.31.21.3     &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker1   Ready    &lt;none&gt;          169d   v1.24.7   172.31.16.124   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker2   Ready    &lt;none&gt;          169d   v1.24.7   172.31.22.159   &lt;none&gt;        CentOS Linux 7 (Core)   3.10.0-1160.80.1.el7.x86_64   docker://20.10.9</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep met</span></span><br><span class="line">metrics-server-c48655c66-jxwpt             1/1     Running   0              12m    10.244.4.138    k8s-worker1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME          CPU(cores)   CPU%        MEMORY(bytes)   MEMORY%     </span><br><span class="line">k8s-master1   381m         9%          3263Mi          43%         </span><br><span class="line">k8s-master2   149m         3%          3432Mi          45%         </span><br><span class="line">k8s-master3   166m         4%          3163Mi          41%         </span><br><span class="line">k8s-worker2   2093m        13%         21933Mi         71%         </span><br><span class="line">k8s-worker1   &lt;unknown&gt;    &lt;unknown&gt;   &lt;unknown&gt;       &lt;unknown&gt; </span><br></pre></td></tr></table></figure>
+
+<p>查看 Metrics Server Pod 日志，显示</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-c48655c66-jxwpt</span></span><br><span class="line">E0525 05:19:42.085468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:19:57.125457       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:12.101468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:27.077495       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>根据日志显示，是因为无法连接节点的 kubelet (端口 10250) 导致。为了定位问题，修改 Metrics Server 的部署 Yaml 文件，在其中加入一个容器，来方便使用工具测试问题。参考以下内容，在 Pod 中加入容器 <code>centos:centos7.9.2009</code></p>
+<figure class="highlight shell"><figcaption><span>metrics-server.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">  name: metrics-server</span><br><span class="line">  namespace: kube-system</span><br><span class="line">spec:</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      k8s-app: metrics-server</span><br><span class="line">  strategy:</span><br><span class="line">    rollingUpdate:</span><br><span class="line">      maxUnavailable: 0</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        k8s-app: metrics-server</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">      - image: centos:centos7.9.2009</span><br><span class="line">        command:</span><br><span class="line">        - ping</span><br><span class="line">        - 127.0.0.1</span><br><span class="line">        name: centos7</span><br><span class="line">      - args:</span><br><span class="line">        - --cert-dir=/tmp</span><br><span class="line">        - --secure-port=4443</span><br><span class="line">        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname</span><br><span class="line">        - --kubelet-use-node-status-port</span><br><span class="line">        - --metric-resolution=15s</span><br><span class="line">        - --kubelet-insecure-tls</span><br><span class="line">        image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br><span class="line">        imagePullPolicy: IfNotPresent</span><br><span class="line">        ...</span><br></pre></td></tr></table></figure>
+<p>重新部署后，登陆容器 <code>centos7</code>，安装所需工具进行测试。根据日志信息，首先测试 Pod 是否能连接到节点的 kubelet</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.22.159:10250</span></span><br><span class="line">* About to connect() to 172.31.22.159 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.22.159...</span><br><span class="line">* Connected to 172.31.22.159 (172.31.22.159) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.22.159:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>根据以上测试，Metrics Server 的 Pod 无法连接所在节点 k8s-worker1（<code>172.31.16.124</code>）的 kubelet （<code>172.31.16.124:10250</code>），可以正常连接其他节点的 kubelet。由此可以确定问题原因。</p>
+<p>考虑到 Metrics Server 的 Pod 只是访问不到宿主节点所在的 kubelet，可以访问其他节点的 kubelet，梳理其中的网络连同流程发现，<strong>在访问其他节点的 kubelet 时，Metrics Server Pod 的报文在流出宿主节点前，会被 SNAT 为宿主节点的出口 IP，报文源 IP 为 宿主节点的 IP。而访问宿主节点的 kubelet 的报文，其源 IP 为 Metrics Server Pod 的 IP，目的 IP 为宿主节点的 IP。怀疑可能因为集群节点上的 iptables 允许集群节点的 IP 访问 kubelet，而 Pod 的 IP 未被允许访问 kubelet</strong>。为验证此猜想，在节点 <code>k8s-worker1</code> 的 iptables 添加允许 Metrics Server Pod 的 IP 访问的规则进行测试</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -I INPUT 7 -s 10.244.4.138 -j ACCEPT</span><br></pre></td></tr></table></figure>
+<p>再次测试和 kubelet 的连通性，发现可以正常连通，再次检查 <code>kubectl top node</code>，可以查到所有节点的监控数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* Connected to 172.31.16.124 (172.31.16.124) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.16.124:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME                CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   </span><br><span class="line">fm-k8s-c1-master1   286m         7%     3242Mi          42%       </span><br><span class="line">fm-k8s-c1-master2   150m         3%     3262Mi          43%       </span><br><span class="line">fm-k8s-c1-master3   251m         6%     3247Mi          42%       </span><br><span class="line">fm-k8s-c1-worker1   166m         1%     4317Mi          13%       </span><br><span class="line">fm-k8s-c1-worker2   2013m        12%    21684Mi         70%</span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">metrics-server</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server#installation">metrics-server installation</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/">配置聚合层</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
@@ -10531,45 +10582,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>linux logrotate 服务</title>
-    <url>/202208191317/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos 7</li>
-</ul>
-<p><code>logrotate</code> 程序是一个日志文件管理工具。用于分割日志文件，压缩转存、删除旧的日志文件，并创建新的日志文件  </p>
-<p><code>logrotate</code> 是基于 <code>crond</code> 来运行的，其脚本是 <code>/etc/cron.daily/logrotate</code>，日志轮转是系统自动完成的。<br>实际运行时，<code>logrotate</code> 会调用配置文件 <code>/etc/logrotate.conf</code>。<br><code>/etc/cron.daily/logrotate</code> 文件内容如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/cron.daily/logrotate</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">/usr/sbin/logrotate -s /var/lib/logrotate/logrotate.status /etc/logrotate.conf</span><br><span class="line">EXITVALUE=$?</span><br><span class="line">if [ $EXITVALUE != 0 ]; then</span><br><span class="line">    /usr/bin/logger -t logrotate &quot;ALERT exited abnormally with [$EXITVALUE]&quot;</span><br><span class="line">fi</span><br><span class="line">exit 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>可以执行以下命令手动执行日志切割：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -f /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
-<p>以下命令可以检测配置文件是否正确：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -d /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h3 id="配置说明"><a href="#配置说明" class="headerlink" title="配置说明"></a>配置说明</h3><p><code>logrotate</code> 的主配置文件默认为 <code>/etc/logrotate.conf</code>，默认配置如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">默认每一周执行一次 rotate 轮转工作</span></span><br><span class="line">weekly</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保留多少个日志文件(轮转几次).默认保留四个.0 指没有备份</span></span><br><span class="line">rotate 4</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">自动创建新的日志文件，新的日志文件具有和原来的文件相同的权限；</span></span><br><span class="line">create</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个参数很重要！就是切割后的日志文件以当前日期为格式结尾，如xxx.log-20131216这样,</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果注释掉,切割出来是按数字递增,即 xxx.log-1这种格式</span></span><br><span class="line">dateext</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含 /etc/logrotate.d 下的其他配置文件 ，用于隔离出各个服务的配置</span></span><br><span class="line">include /etc/logrotate.d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是否通过gzip压缩转储以后的日志文件，如xxx.log-20131216.gz ；如果不需要压缩，注释掉就行</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">compress</span> </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nocompress</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对指定的文件做轮转切割</span></span><br><span class="line">/var/log/wtmp &#123;</span><br><span class="line">    # 每月轮转一次，取代全局默认值</span><br><span class="line">    monthly</span><br><span class="line">    </span><br><span class="line">    # 创建新文件，并指定权限，用户和组</span><br><span class="line">    create 0664 root utmp</span><br><span class="line">    </span><br><span class="line">    # 文件大小超过 1m 后才进行切割，到了 1 个月，文件大小小于 1m，不会进行切割</span><br><span class="line">	minsize 1M</span><br><span class="line">	</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br><span class="line">/var/log/btmp &#123;</span><br><span class="line">    # 如果日志丢失，不报错继续滚动下一个日志</span><br><span class="line">    missingok</span><br><span class="line">    </span><br><span class="line">    monthly</span><br><span class="line">    create 0600 root utmp</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>其他常用选项说明如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定转储周期为每天</span></span><br><span class="line">daily </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">即使日志文件为空文件也做轮转，这个是 logrotate 的缺省选项。</span></span><br><span class="line">ifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件为空时，不进行轮转</span></span><br><span class="line">notifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件大于指定大小后就轮转，支持的单位： k，K，m，M</span></span><br><span class="line">size 5M</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用于还在打开中的日志文件，把当前日志备份并截断；</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是先拷贝再清空的方式，拷贝和清空之间有一个时间差，可能会丢失部分日志数据。</span></span><br><span class="line">copytruncate</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">运行 postrotate 脚本，作用是在所有日志都轮转后统一执行一次脚本。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果没有配置这个，那么每个日志轮转后都会执行一次脚本</span></span><br><span class="line">sharedscripts                      </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之后需要执行的指令，例如重新启动 (<span class="built_in">kill</span> -HUP) 某个服务！必须独立成行</span></span><br><span class="line">postrotate                         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之前需要执行的指令，例如修改文件的属性等动作；必须独立成行</span></span><br><span class="line">prerotate      </span><br><span class="line">                    </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将轮转的日志保存到指定路径下，默认保存在日志文件同一目录下</span></span><br><span class="line">olddir /data/logs/</span><br></pre></td></tr></table></figure>
-
-<h3 id="配置示例"><a href="#配置示例" class="headerlink" title="配置示例"></a>配置示例</h3><p><code>nginx</code> 日志切割配置文件示例，创建 <code>/etc/logrotate.d/nginx</code>:</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    sharedscripts</span><br><span class="line">    postrotate</span><br><span class="line">        if [ -f /run/nginx.pid ]; then</span><br><span class="line">                    kill -USR1 `cat /run/nginx.pid`</span><br><span class="line">        fi</span><br><span class="line">    endscript</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>copytruncate</code> 方式切割 <code>nginx</code> 日志，此种方式不需要重启 <code>nginx</code> 服务<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[logrotate 原理介绍和配置详解](https://wsgzao.github.io/post/logrotate/)
-">[1]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    copytruncate</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    </span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a></p>
-<h3 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h3><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>logrotate</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>iptables 服务使用说明</title>
     <url>/202210241051/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，netfilter 的架构是在整个网络流程的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
@@ -10805,6 +10817,45 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>iptables</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux logrotate 服务</title>
+    <url>/202208191317/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos 7</li>
+</ul>
+<p><code>logrotate</code> 程序是一个日志文件管理工具。用于分割日志文件，压缩转存、删除旧的日志文件，并创建新的日志文件  </p>
+<p><code>logrotate</code> 是基于 <code>crond</code> 来运行的，其脚本是 <code>/etc/cron.daily/logrotate</code>，日志轮转是系统自动完成的。<br>实际运行时，<code>logrotate</code> 会调用配置文件 <code>/etc/logrotate.conf</code>。<br><code>/etc/cron.daily/logrotate</code> 文件内容如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/cron.daily/logrotate</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">/usr/sbin/logrotate -s /var/lib/logrotate/logrotate.status /etc/logrotate.conf</span><br><span class="line">EXITVALUE=$?</span><br><span class="line">if [ $EXITVALUE != 0 ]; then</span><br><span class="line">    /usr/bin/logger -t logrotate &quot;ALERT exited abnormally with [$EXITVALUE]&quot;</span><br><span class="line">fi</span><br><span class="line">exit 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>可以执行以下命令手动执行日志切割：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -f /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
+<p>以下命令可以检测配置文件是否正确：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -d /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h3 id="配置说明"><a href="#配置说明" class="headerlink" title="配置说明"></a>配置说明</h3><p><code>logrotate</code> 的主配置文件默认为 <code>/etc/logrotate.conf</code>，默认配置如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">默认每一周执行一次 rotate 轮转工作</span></span><br><span class="line">weekly</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保留多少个日志文件(轮转几次).默认保留四个.0 指没有备份</span></span><br><span class="line">rotate 4</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">自动创建新的日志文件，新的日志文件具有和原来的文件相同的权限；</span></span><br><span class="line">create</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个参数很重要！就是切割后的日志文件以当前日期为格式结尾，如xxx.log-20131216这样,</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果注释掉,切割出来是按数字递增,即 xxx.log-1这种格式</span></span><br><span class="line">dateext</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含 /etc/logrotate.d 下的其他配置文件 ，用于隔离出各个服务的配置</span></span><br><span class="line">include /etc/logrotate.d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是否通过gzip压缩转储以后的日志文件，如xxx.log-20131216.gz ；如果不需要压缩，注释掉就行</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">compress</span> </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nocompress</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对指定的文件做轮转切割</span></span><br><span class="line">/var/log/wtmp &#123;</span><br><span class="line">    # 每月轮转一次，取代全局默认值</span><br><span class="line">    monthly</span><br><span class="line">    </span><br><span class="line">    # 创建新文件，并指定权限，用户和组</span><br><span class="line">    create 0664 root utmp</span><br><span class="line">    </span><br><span class="line">    # 文件大小超过 1m 后才进行切割，到了 1 个月，文件大小小于 1m，不会进行切割</span><br><span class="line">	minsize 1M</span><br><span class="line">	</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br><span class="line">/var/log/btmp &#123;</span><br><span class="line">    # 如果日志丢失，不报错继续滚动下一个日志</span><br><span class="line">    missingok</span><br><span class="line">    </span><br><span class="line">    monthly</span><br><span class="line">    create 0600 root utmp</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>其他常用选项说明如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定转储周期为每天</span></span><br><span class="line">daily </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">即使日志文件为空文件也做轮转，这个是 logrotate 的缺省选项。</span></span><br><span class="line">ifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件为空时，不进行轮转</span></span><br><span class="line">notifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件大于指定大小后就轮转，支持的单位： k，K，m，M</span></span><br><span class="line">size 5M</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用于还在打开中的日志文件，把当前日志备份并截断；</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是先拷贝再清空的方式，拷贝和清空之间有一个时间差，可能会丢失部分日志数据。</span></span><br><span class="line">copytruncate</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">运行 postrotate 脚本，作用是在所有日志都轮转后统一执行一次脚本。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果没有配置这个，那么每个日志轮转后都会执行一次脚本</span></span><br><span class="line">sharedscripts                      </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之后需要执行的指令，例如重新启动 (<span class="built_in">kill</span> -HUP) 某个服务！必须独立成行</span></span><br><span class="line">postrotate                         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之前需要执行的指令，例如修改文件的属性等动作；必须独立成行</span></span><br><span class="line">prerotate      </span><br><span class="line">                    </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将轮转的日志保存到指定路径下，默认保存在日志文件同一目录下</span></span><br><span class="line">olddir /data/logs/</span><br></pre></td></tr></table></figure>
+
+<h3 id="配置示例"><a href="#配置示例" class="headerlink" title="配置示例"></a>配置示例</h3><p><code>nginx</code> 日志切割配置文件示例，创建 <code>/etc/logrotate.d/nginx</code>:</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    sharedscripts</span><br><span class="line">    postrotate</span><br><span class="line">        if [ -f /run/nginx.pid ]; then</span><br><span class="line">                    kill -USR1 `cat /run/nginx.pid`</span><br><span class="line">        fi</span><br><span class="line">    endscript</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>copytruncate</code> 方式切割 <code>nginx</code> 日志，此种方式不需要重启 <code>nginx</code> 服务<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[logrotate 原理介绍和配置详解](https://wsgzao.github.io/post/logrotate/)
+">[1]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    copytruncate</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    </span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a></p>
+<h3 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h3><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>logrotate</tag>
       </tags>
   </entry>
   <entry>
@@ -11528,6 +11579,37 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux sudo 使用介绍</title>
+    <url>/202308311739/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
+<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
+<p>主要配置文件内容如下</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
+
+<p>各列值含义说明：</p>
+<ul>
+<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
+<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
+<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
+</ul>
+<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
+<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
+<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
+<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
+<p>若要禁止此行为，删除此文件即可。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux 常用内核参数说明</title>
     <url>/202302131009/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>sysctl</code> 命令被用于在内核运行时动态地修改内核的运行参数，可用的内核参数在目录 <code>/proc/sys</code> 中。</p>
@@ -11608,37 +11690,6 @@ width: 20%;
 </li>
 </ul>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="http://33f.net/linux/linux-Out-of-Memory-Killer.html">OOM</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux sudo 使用介绍</title>
-    <url>/202308311739/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
-<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
-<p>主要配置文件内容如下</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
-
-<p>各列值含义说明：</p>
-<ul>
-<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
-<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
-<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
-</ul>
-<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
-<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
-<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
-<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
-<p>若要禁止此行为，删除此文件即可。</p>
-]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -14977,31 +15028,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>python 执行 shell 命令</title>
-    <url>/202301201542/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python3.10</li>
-</ul>
-<h1 id="Python-执行-shell-命令"><a href="#Python-执行-shell-命令" class="headerlink" title="Python 执行 shell 命令"></a>Python 执行 shell 命令</h1><h2 id="subprocess-模块"><a href="#subprocess-模块" class="headerlink" title="subprocess 模块"></a>subprocess 模块</h2><p><code>subprocess.check_output()</code> 执行一个外部命令并以Python字符串的形式获取执行结果 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[执行外部命令并获取它的输出](https://python3-cookbook-personal.readthedocs.io/zh_CN/latest/c13/p06_executing_external_command_and_get_its_output.html#id1)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">import subprocess</span><br><span class="line">out_bytes = subprocess.check_output([&#x27;netstat&#x27;,&#x27;-a&#x27;])</span><br></pre></td></tr></table></figure>
-<p>如果你需要文本形式返回，加一个解码步骤即可</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">out_text = out_bytes.decode(&#x27;utf-8&#x27;)</span><br></pre></td></tr></table></figure>
-<p>如果被执行的命令以非零码返回，就会抛出异常。 下面的例子捕获到错误并获取返回码：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">try:</span><br><span class="line">    out_bytes = subprocess.check_output([&#x27;cmd&#x27;,&#x27;arg1&#x27;,&#x27;arg2&#x27;])</span><br><span class="line">except subprocess.CalledProcessError as e:</span><br><span class="line">    out_bytes = e.output       # Output generated before error</span><br><span class="line">    code      = e.returncode   # Return code</span><br></pre></td></tr></table></figure>
-
-<p>默认情况下，<code>check_output()</code> 仅仅返回输入到标准输出的值。 如果你需要同时收集标准输出和错误输出，使用 <code>stderr</code> 参数：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">out_bytes = subprocess.check_output([&#x27;cmd&#x27;,&#x27;arg1&#x27;,&#x27;arg2&#x27;],</span><br><span class="line">                                    stderr=subprocess.STDOUT)</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://python3-cookbook-personal.readthedocs.io/zh_CN/latest/c13/p06_executing_external_command_and_get_its_output.html#id1">执行外部命令并获取它的输出</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Python selenium 使用说明</title>
     <url>/202309130955/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15130,6 +15156,31 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>python 执行 shell 命令</title>
+    <url>/202301201542/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python3.10</li>
+</ul>
+<h1 id="Python-执行-shell-命令"><a href="#Python-执行-shell-命令" class="headerlink" title="Python 执行 shell 命令"></a>Python 执行 shell 命令</h1><h2 id="subprocess-模块"><a href="#subprocess-模块" class="headerlink" title="subprocess 模块"></a>subprocess 模块</h2><p><code>subprocess.check_output()</code> 执行一个外部命令并以Python字符串的形式获取执行结果 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[执行外部命令并获取它的输出](https://python3-cookbook-personal.readthedocs.io/zh_CN/latest/c13/p06_executing_external_command_and_get_its_output.html#id1)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">import subprocess</span><br><span class="line">out_bytes = subprocess.check_output([&#x27;netstat&#x27;,&#x27;-a&#x27;])</span><br></pre></td></tr></table></figure>
+<p>如果你需要文本形式返回，加一个解码步骤即可</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">out_text = out_bytes.decode(&#x27;utf-8&#x27;)</span><br></pre></td></tr></table></figure>
+<p>如果被执行的命令以非零码返回，就会抛出异常。 下面的例子捕获到错误并获取返回码：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">try:</span><br><span class="line">    out_bytes = subprocess.check_output([&#x27;cmd&#x27;,&#x27;arg1&#x27;,&#x27;arg2&#x27;])</span><br><span class="line">except subprocess.CalledProcessError as e:</span><br><span class="line">    out_bytes = e.output       # Output generated before error</span><br><span class="line">    code      = e.returncode   # Return code</span><br></pre></td></tr></table></figure>
+
+<p>默认情况下，<code>check_output()</code> 仅仅返回输入到标准输出的值。 如果你需要同时收集标准输出和错误输出，使用 <code>stderr</code> 参数：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">out_bytes = subprocess.check_output([&#x27;cmd&#x27;,&#x27;arg1&#x27;,&#x27;arg2&#x27;],</span><br><span class="line">                                    stderr=subprocess.STDOUT)</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://python3-cookbook-personal.readthedocs.io/zh_CN/latest/c13/p06_executing_external_command_and_get_its_output.html#id1">执行外部命令并获取它的输出</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>python 用法小结及常见错误</title>
     <url>/202302271543/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15241,6 +15292,31 @@ width: 20%;
       </categories>
       <tags>
         <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux rabbitmq</title>
+    <url>/202304261014/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 3.10.0-1160.45.1.el7</li>
+<li>RabbitMQ 3.9.10</li>
+</ul>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="RabbitMQ-启动失败"><a href="#RabbitMQ-启动失败" class="headerlink" title="RabbitMQ 启动失败"></a>RabbitMQ 启动失败</h2><p>使用命令启动，报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/sbin/rabbitmq-server -v</span></span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; Protocol &#x27;inet_tcp&#x27;: register/listen error: ehostunreach</span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; </span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     supervisor: &#123;local,net_sup&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     errorContext: start_error</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     reason: &#123;&#x27;EXIT&#x27;,nodistribution&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     offender: [&#123;pid,undefined&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;id,net_kernel&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;mfargs,&#123;net_kernel,start_link,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                    [[rabbit_prelaunch_21812@localhost,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                      shortnames],</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                     false,net_sup_dynamic]&#125;&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;restart_type,permanent&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;shutdown,2000&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;child_type,worker&#125;]</span><br></pre></td></tr></table></figure>
+
+<p>关键错误信息 <code>Protocol &#39;inet_tcp&#39;: register/listen error: ehostunreach</code>，根据提示，可能是某个地址不可达，rabbitmq 启动时需要连接 epmd ，默认端口为 4369，在本地测试连接此端口，发现不通 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Protocol 'inet_tcp': register/listen error: econnrefused](https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 127.0.0.1:4369; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 127.0.0.1:4369; No route to host</span><br></pre></td></tr></table></figure>
+<p>根据输出的错误可知，是因为 <code>127.0.0.1</code> 无法连接，检查 iptables 防火墙策略，发现未允许回环网卡访问，在 iptables 中添加以下规则允许回环网卡访问</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD DROP [0:0]</span><br><span class="line">:OUTPUT ACCEPT [9020367577:7010759848370]</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br></pre></td></tr></table></figure>
+<p>允许回环网卡访问后，重新测试连接 epmd ，可以正常连接，重新启动 rabbitmq-server 正常。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* Connected to 127.0.0.1 (127.0.0.1) port 4369 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 127.0.0.1:4369</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* Empty reply from server</span></span><br><span class="line">* Connection #0 to host 127.0.0.1 left intact</span><br><span class="line">curl: (52) Empty reply from server</span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused">Protocol 'inet_tcp': register/listen error: econnrefused</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -15364,31 +15440,6 @@ width: 20%;
       <tags>
         <tag>Kubernetes</tag>
         <tag>Rancher</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux rabbitmq</title>
-    <url>/202304261014/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 3.10.0-1160.45.1.el7</li>
-<li>RabbitMQ 3.9.10</li>
-</ul>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="RabbitMQ-启动失败"><a href="#RabbitMQ-启动失败" class="headerlink" title="RabbitMQ 启动失败"></a>RabbitMQ 启动失败</h2><p>使用命令启动，报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/sbin/rabbitmq-server -v</span></span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; Protocol &#x27;inet_tcp&#x27;: register/listen error: ehostunreach</span><br><span class="line">2023-04-26 10:02:47.621248+08:00 [noti] &lt;0.146.0&gt; </span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     supervisor: &#123;local,net_sup&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     errorContext: start_error</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     reason: &#123;&#x27;EXIT&#x27;,nodistribution&#125;</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;     offender: [&#123;pid,undefined&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;id,net_kernel&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;mfargs,&#123;net_kernel,start_link,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                    [[rabbit_prelaunch_21812@localhost,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                      shortnames],</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                                     false,net_sup_dynamic]&#125;&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;restart_type,permanent&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;shutdown,2000&#125;,</span><br><span class="line">2023-04-26 10:02:47.626643+08:00 [erro] &lt;0.143.0&gt;                &#123;child_type,worker&#125;]</span><br></pre></td></tr></table></figure>
-
-<p>关键错误信息 <code>Protocol &#39;inet_tcp&#39;: register/listen error: ehostunreach</code>，根据提示，可能是某个地址不可达，rabbitmq 启动时需要连接 epmd ，默认端口为 4369，在本地测试连接此端口，发现不通 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Protocol 'inet_tcp': register/listen error: econnrefused](https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 127.0.0.1:4369; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 127.0.0.1:4369; No route to host</span><br></pre></td></tr></table></figure>
-<p>根据输出的错误可知，是因为 <code>127.0.0.1</code> 无法连接，检查 iptables 防火墙策略，发现未允许回环网卡访问，在 iptables 中添加以下规则允许回环网卡访问</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD DROP [0:0]</span><br><span class="line">:OUTPUT ACCEPT [9020367577:7010759848370]</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br></pre></td></tr></table></figure>
-<p>允许回环网卡访问后，重新测试连接 epmd ，可以正常连接，重新启动 rabbitmq-server 正常。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 127.0.0.1:4369</span></span><br><span class="line">* About to connect() to 127.0.0.1 port 4369 (#0)</span><br><span class="line">*   Trying 127.0.0.1...</span><br><span class="line">* Connected to 127.0.0.1 (127.0.0.1) port 4369 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 127.0.0.1:4369</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* Empty reply from server</span></span><br><span class="line">* Connection #0 to host 127.0.0.1 left intact</span><br><span class="line">curl: (52) Empty reply from server</span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://stackoverflow.com/questions/51616600/ssh-rabbitmq-protocol-inet-tcp-register-listen-error-econnrefused">Protocol 'inet_tcp': register/listen error: econnrefused</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -16922,37 +16973,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>网宿云存储 python sdk 常用操作</title>
-    <url>/f63bf868/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li><p>Centos7</p>
-</li>
-<li><p>Python3</p>
-</li>
-<li><p>wcs-python3-sdk (5.0.35)</p>
-</li>
-</ul>
-<p>网宿云 python sdk 安装命令 <code>pip3 install wcs-python3-sdk</code>， 安装后包含 cli 工具 <code>wcscmd</code></p>
-<h1 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd --configure [--config=FILE] </span><br></pre></td></tr></table></figure>
-
-<p><code>--config=FILE  </code>配置文件存储路径，默认<code>~/.wcscfg</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[参考链接](https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk)">[1]</span></a></sup></p>
-<h1 id="wcscmd-常用操作"><a href="#wcscmd-常用操作" class="headerlink" title="wcscmd 常用操作"></a>wcscmd 常用操作</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listbucket </span><br><span class="line">wcscmd stat wcs://BUCKET/OBJECT  \# 查询文件信息</span><br><span class="line">wcscmd deletePrefix wcs://BUCKET PREFIX  \# 根据前缀（文件路径，必须从头开始匹配，不需要最前面的/）删除目录或文件</span><br><span class="line">wcscmd put wcs://BUCKET/file file</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h2 id="列出所有的文件"><a href="#列出所有的文件" class="headerlink" title="列出所有的文件"></a>列出所有的文件</h2><p>以下命令列出所有文件列表，并写入文件中</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listall wcs://BUCKET ./temp/f</span><br></pre></td></tr></table></figure>
-
-<h1 id="python3-sdk-操作"><a href="#python3-sdk-操作" class="headerlink" title="python3 sdk 操作"></a>python3 sdk 操作</h1><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> wcs.commons.config <span class="keyword">import</span> Config</span><br><span class="line"><span class="keyword">from</span> wcs.services.client <span class="keyword">import</span> Client</span><br><span class="line"></span><br><span class="line">config_file = <span class="string">&quot;/root/.wcscfg&quot;</span></span><br><span class="line">cfg = Config(config_file)</span><br><span class="line">cli = Client(cfg)</span><br><span class="line">bucketName = <span class="string">&quot;TestBucket&quot;</span></span><br><span class="line">buckList = cli.bucket_list(bucketName, marker=<span class="string">&#x27;&#x27;</span>)    <span class="comment"># 列出bucket中的文件列表，每次最多获取1000个，第一页 `marker=&#x27;&#x27;`, 请求第一页的响应中marker的值为新的页的marker，可通过新的marker继续发起请求</span></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk">参考链接</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>网宿</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
-        <tag>网宿</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>网宿云 cdn 预热脚本</title>
     <url>/202207251026/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>将源站的内容主动预取到 CDN 节点，用户首次访问可直接命中缓存，即提升首次访问速度，又能有效缓解源站压力。</p>
@@ -17039,6 +17059,37 @@ width: 20%;
 
 <h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://wcs.chinanetcenter.com/document/Tools/GenerateUploadToken">官网说明</a><br><a href="https://s.csms.tech/file/01%E6%8E%A8%E8%8D%90-%E9%A2%84%E5%8F%96%E6%96%87%E4%BB%B6.pdf">网宿cdn预热完整文档</a></p>
 ]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>网宿</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
+        <tag>网宿</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>网宿云存储 python sdk 常用操作</title>
+    <url>/f63bf868/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li><p>Centos7</p>
+</li>
+<li><p>Python3</p>
+</li>
+<li><p>wcs-python3-sdk (5.0.35)</p>
+</li>
+</ul>
+<p>网宿云 python sdk 安装命令 <code>pip3 install wcs-python3-sdk</code>， 安装后包含 cli 工具 <code>wcscmd</code></p>
+<h1 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd --configure [--config=FILE] </span><br></pre></td></tr></table></figure>
+
+<p><code>--config=FILE  </code>配置文件存储路径，默认<code>~/.wcscfg</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[参考链接](https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk)">[1]</span></a></sup></p>
+<h1 id="wcscmd-常用操作"><a href="#wcscmd-常用操作" class="headerlink" title="wcscmd 常用操作"></a>wcscmd 常用操作</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listbucket </span><br><span class="line">wcscmd stat wcs://BUCKET/OBJECT  \# 查询文件信息</span><br><span class="line">wcscmd deletePrefix wcs://BUCKET PREFIX  \# 根据前缀（文件路径，必须从头开始匹配，不需要最前面的/）删除目录或文件</span><br><span class="line">wcscmd put wcs://BUCKET/file file</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h2 id="列出所有的文件"><a href="#列出所有的文件" class="headerlink" title="列出所有的文件"></a>列出所有的文件</h2><p>以下命令列出所有文件列表，并写入文件中</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listall wcs://BUCKET ./temp/f</span><br></pre></td></tr></table></figure>
+
+<h1 id="python3-sdk-操作"><a href="#python3-sdk-操作" class="headerlink" title="python3 sdk 操作"></a>python3 sdk 操作</h1><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> wcs.commons.config <span class="keyword">import</span> Config</span><br><span class="line"><span class="keyword">from</span> wcs.services.client <span class="keyword">import</span> Client</span><br><span class="line"></span><br><span class="line">config_file = <span class="string">&quot;/root/.wcscfg&quot;</span></span><br><span class="line">cfg = Config(config_file)</span><br><span class="line">cli = Client(cfg)</span><br><span class="line">bucketName = <span class="string">&quot;TestBucket&quot;</span></span><br><span class="line">buckList = cli.bucket_list(bucketName, marker=<span class="string">&#x27;&#x27;</span>)    <span class="comment"># 列出bucket中的文件列表，每次最多获取1000个，第一页 `marker=&#x27;&#x27;`, 请求第一页的响应中marker的值为新的页的marker，可通过新的marker继续发起请求</span></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk">参考链接</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>云平台</category>
         <category>网宿</category>
@@ -17256,31 +17307,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>yum</title>
-    <url>/202208111442/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>CentOS Linux release 7.9.2009 (Core)</li>
-<li>yum-3.4.3</li>
-</ul>
-<h1 id="yum-命令示例"><a href="#yum-命令示例" class="headerlink" title="yum 命令示例"></a>yum 命令示例</h1><h2 id="查询指定命令来自哪个安装包"><a href="#查询指定命令来自哪个安装包" class="headerlink" title="查询指定命令来自哪个安装包"></a>查询指定命令来自哪个安装包</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum whatprovides ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64 : Advanced IP routing and network device configuration tools</span><br><span class="line">Repo        : base</span><br><span class="line">Matched from:</span><br><span class="line">Filename    : /sbin/ip</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>rpm</code> 查询已安装文件来自哪个安装包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qf /sbin/ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64</span><br></pre></td></tr></table></figure>
-
-<h2 id="仅下载安装包而不进行安装操作"><a href="#仅下载安装包而不进行安装操作" class="headerlink" title="仅下载安装包而不进行安装操作"></a>仅下载安装包而不进行安装操作</h2><p>如果只下载安装包而不进行安装，可以使用 <code>yumdownloader</code> 命令，此命令来自安装包 <code>yum-utils</code>，如果不存在可以安装 <code>yum-utils</code>。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yumdownloader &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
-<p>以上下载指定的安装包而不安装，安装包会下载到当前目录</p>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package"><a href="#The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package" class="headerlink" title="The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package"></a>The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package</h2><p><strong>解决方法</strong></p>
-<p>修改对应 <code>yum</code> 源的配置文件，将其中的配置 <code>gpgcheck=1</code> 改为 <code>gpgcheck=0</code>，以此跳过 key 验证</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>xshell 常用配置</title>
     <url>/202208101059/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -17307,54 +17333,28 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes 监控</title>
-    <url>/202305231329/</url>
+    <title>yum</title>
+    <url>/202208111442/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Kubernetes 1.24</li>
+<li>CentOS Linux release 7.9.2009 (Core)</li>
+<li>yum-3.4.3</li>
 </ul>
-<h1 id="Kubernetes-Metrics-Server"><a href="#Kubernetes-Metrics-Server" class="headerlink" title="Kubernetes Metrics Server"></a>Kubernetes Metrics Server</h1><p>Kubernetes Metrics Server 从 <code>kubelet</code> 收集资源使用指标（情况）并通过 Metrics API 将其暴露给 Kubernetes API Server，以供 HPA(Horizontal Pod Autoscaler) 和 VPA(Vertical Pod Autoscaler) 使用。<code>kubectl top</code> 也使用 Metrics API。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server](https://github.com/kubernetes-sigs/metrics-server)">[1]</span></a></sup></p>
-<h2 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h2><p>Kubernetes Metrics Server 安装之前必须要开启 kube api-server 的聚合层功能以及认证鉴权功能 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置聚合层](https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/)">[3]</span></a></sup> </p>
-<p>检查 Kubernetes API Server 是否启用了聚合层功能及认证鉴权功能</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -ef | grep apiserver | grep -E <span class="string">&quot;authorization-mode|enable-aggregator-routing&quot;</span></span></span><br><span class="line">root       390   369  7 13:55 ?        00:00:37 kube-apiserver --advertise-address=172.31.26.116 \</span><br><span class="line">                                                               --allow-privileged=true \</span><br><span class="line">                                                               --authorization-mode=Node,RBAC \</span><br><span class="line">                                                               --client-ca-file=/etc/kubernetes/pki/ca.crt \</span><br><span class="line">                                                               --enable-admission-plugins=NodeRestriction \</span><br><span class="line">                                                               --enable-bootstrap-token-auth=true \</span><br><span class="line">                                                               --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt \</span><br><span class="line">                                                               --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt \</span><br><span class="line">                                                               --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key \</span><br><span class="line">                                                               --etcd-servers=https://127.0.0.1:2379 \</span><br><span class="line">                                                               --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \</span><br><span class="line">                                                               --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname \</span><br><span class="line">                                                               --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt \</span><br><span class="line">                                                               --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key \</span><br><span class="line">                                                               --requestheader-allowed-names=front-proxy-client \</span><br><span class="line">                                                               --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt \</span><br><span class="line">                                                               --requestheader-extra-headers-prefix=X-Remote-Extra- \</span><br><span class="line">                                                               --requestheader-group-headers=X-Remote-Group \</span><br><span class="line">                                                               --requestheader-username-headers=X-Remote-User \</span><br><span class="line">                                                               --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local \</span><br><span class="line">                                                               --service-account-key-file=/etc/kubernetes/pki/sa.pub \</span><br><span class="line">                                                               --service-account-signing-key-file=/etc/kubernetes/pki/sa.key \</span><br><span class="line">                                                               --service-cluster-ip-range=10.96.0.0/12 \</span><br><span class="line">                                                               --tls-cert-file=/etc/kubernetes/pki/apiserver.crt --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \</span><br><span class="line">                                                               --enable-aggregator-routing=true</span><br></pre></td></tr></table></figure>
-<p>输出中包含了 <code>--authorization-mode=Node,RBAC</code> 和 <code>--enable-aggregator-routing=true</code>，表示已开启对应功能。如若未开启，修改 <code>api-server</code> 的 manifest 文件 <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>，在 <code>kube-apiserver</code> 的启动参数中添加 <code>--enable-aggregator-routing=true</code> 和 <code>--authorization-mode=Node,RBAC</code></p>
-<p>以下命令使用 yaml 文件安装最新版本 Metrics Server <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server installation](https://github.com/kubernetes-sigs/metrics-server#installation)">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</span><br></pre></td></tr></table></figure>
+<h1 id="yum-命令示例"><a href="#yum-命令示例" class="headerlink" title="yum 命令示例"></a>yum 命令示例</h1><h2 id="查询指定命令来自哪个安装包"><a href="#查询指定命令来自哪个安装包" class="headerlink" title="查询指定命令来自哪个安装包"></a>查询指定命令来自哪个安装包</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum whatprovides ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64 : Advanced IP routing and network device configuration tools</span><br><span class="line">Repo        : base</span><br><span class="line">Matched from:</span><br><span class="line">Filename    : /sbin/ip</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>rpm</code> 查询已安装文件来自哪个安装包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qf /sbin/ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64</span><br></pre></td></tr></table></figure>
 
-<h2 id="Kubernetes-Metrics-Server-部署配置常见错误"><a href="#Kubernetes-Metrics-Server-部署配置常见错误" class="headerlink" title="Kubernetes Metrics Server 部署配置常见错误"></a>Kubernetes Metrics Server 部署配置常见错误</h2><h3 id="Failed-to-scrape-node"><a href="#Failed-to-scrape-node" class="headerlink" title="Failed to scrape node"></a>Failed to scrape node</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep metrics</span></span><br><span class="line">kube-system                 metrics-server-5cdf47479d-rwtd6             0/1     Running       0              5m53s</span><br></pre></td></tr></table></figure>
-<p>检查 Pod 日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.21.3:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.21.3 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.26.116:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.26.116 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.19.164:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.19.164 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster2&quot;</span><br></pre></td></tr></table></figure>
-<p>根据日志提示，由于 metrics-server 未获得TLS Bootstrap 签发证书的导致访问各节点资源时报错。</p>
-<ol>
-<li><a href="https://www.modb.pro/db/408792">参考解决办法</a></li>
-<li>添加选项 <code>--kubelet-insecure-tls</code> 不验证 Kubelet 的 CA 证书 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=InternalIP</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    - --kubelet-insecure-tls</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ol>
-<h3 id="no-such-host"><a href="#no-such-host" class="headerlink" title="no such host"></a>no such host</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态，检查 Pod 日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster3:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster3 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker1:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker1 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker2:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker2 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker2&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster2:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster2 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster2&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">I0524 09:32:43.033797       1 server.go:187] &quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br></pre></td></tr></table></figure>
-<p>根据日志显示，API Server 的主机名解析存在问题。这是因为节点主机名在集群的 DNS 中无法解析导致，可以通过在 Metrics Server 的 Pod 中手动添加解析解决</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">spec:</span><br><span class="line">  hostAliases:</span><br><span class="line">  - ip: &#x27;172.31.26.116&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.19.164&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master2&#x27;</span><br><span class="line">  - ip: &#x27;172.31.21.3&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master3&#x27;</span><br><span class="line">  - ip: &#x27;172.31.16.124&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.22.159&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker2&#x27;</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=Hostname</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br></pre></td></tr></table></figure>
-
-<h2 id="Metrics-Server-无法获取所在节点的主机的监控信息"><a href="#Metrics-Server-无法获取所在节点的主机的监控信息" class="headerlink" title="Metrics Server 无法获取所在节点的主机的监控信息"></a>Metrics Server 无法获取所在节点的主机的监控信息</h2><p>Metrics Server 部署成功后，无法获取所在节点的主机的监控信息，获取其他主机的监控信息正常，具体信息如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME          STATUS   ROLES           AGE    VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME</span><br><span class="line">k8s-master1   Ready    control-plane   169d   v1.24.7   172.31.26.116   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master2   Ready    control-plane   169d   v1.24.7   172.31.19.164   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master3   Ready    control-plane   169d   v1.24.7   172.31.21.3     &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker1   Ready    &lt;none&gt;          169d   v1.24.7   172.31.16.124   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker2   Ready    &lt;none&gt;          169d   v1.24.7   172.31.22.159   &lt;none&gt;        CentOS Linux 7 (Core)   3.10.0-1160.80.1.el7.x86_64   docker://20.10.9</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep met</span></span><br><span class="line">metrics-server-c48655c66-jxwpt             1/1     Running   0              12m    10.244.4.138    k8s-worker1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME          CPU(cores)   CPU%        MEMORY(bytes)   MEMORY%     </span><br><span class="line">k8s-master1   381m         9%          3263Mi          43%         </span><br><span class="line">k8s-master2   149m         3%          3432Mi          45%         </span><br><span class="line">k8s-master3   166m         4%          3163Mi          41%         </span><br><span class="line">k8s-worker2   2093m        13%         21933Mi         71%         </span><br><span class="line">k8s-worker1   &lt;unknown&gt;    &lt;unknown&gt;   &lt;unknown&gt;       &lt;unknown&gt; </span><br></pre></td></tr></table></figure>
-
-<p>查看 Metrics Server Pod 日志，显示</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-c48655c66-jxwpt</span></span><br><span class="line">E0525 05:19:42.085468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:19:57.125457       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:12.101468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:27.077495       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>根据日志显示，是因为无法连接节点的 kubelet (端口 10250) 导致。为了定位问题，修改 Metrics Server 的部署 Yaml 文件，在其中加入一个容器，来方便使用工具测试问题。参考以下内容，在 Pod 中加入容器 <code>centos:centos7.9.2009</code></p>
-<figure class="highlight shell"><figcaption><span>metrics-server.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">  name: metrics-server</span><br><span class="line">  namespace: kube-system</span><br><span class="line">spec:</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      k8s-app: metrics-server</span><br><span class="line">  strategy:</span><br><span class="line">    rollingUpdate:</span><br><span class="line">      maxUnavailable: 0</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        k8s-app: metrics-server</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">      - image: centos:centos7.9.2009</span><br><span class="line">        command:</span><br><span class="line">        - ping</span><br><span class="line">        - 127.0.0.1</span><br><span class="line">        name: centos7</span><br><span class="line">      - args:</span><br><span class="line">        - --cert-dir=/tmp</span><br><span class="line">        - --secure-port=4443</span><br><span class="line">        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname</span><br><span class="line">        - --kubelet-use-node-status-port</span><br><span class="line">        - --metric-resolution=15s</span><br><span class="line">        - --kubelet-insecure-tls</span><br><span class="line">        image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br><span class="line">        imagePullPolicy: IfNotPresent</span><br><span class="line">        ...</span><br></pre></td></tr></table></figure>
-<p>重新部署后，登陆容器 <code>centos7</code>，安装所需工具进行测试。根据日志信息，首先测试 Pod 是否能连接到节点的 kubelet</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.22.159:10250</span></span><br><span class="line">* About to connect() to 172.31.22.159 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.22.159...</span><br><span class="line">* Connected to 172.31.22.159 (172.31.22.159) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.22.159:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>根据以上测试，Metrics Server 的 Pod 无法连接所在节点 k8s-worker1（<code>172.31.16.124</code>）的 kubelet （<code>172.31.16.124:10250</code>），可以正常连接其他节点的 kubelet。由此可以确定问题原因。</p>
-<p>考虑到 Metrics Server 的 Pod 只是访问不到宿主节点所在的 kubelet，可以访问其他节点的 kubelet，梳理其中的网络连同流程发现，<strong>在访问其他节点的 kubelet 时，Metrics Server Pod 的报文在流出宿主节点前，会被 SNAT 为宿主节点的出口 IP，报文源 IP 为 宿主节点的 IP。而访问宿主节点的 kubelet 的报文，其源 IP 为 Metrics Server Pod 的 IP，目的 IP 为宿主节点的 IP。怀疑可能因为集群节点上的 iptables 允许集群节点的 IP 访问 kubelet，而 Pod 的 IP 未被允许访问 kubelet</strong>。为验证此猜想，在节点 <code>k8s-worker1</code> 的 iptables 添加允许 Metrics Server Pod 的 IP 访问的规则进行测试</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -I INPUT 7 -s 10.244.4.138 -j ACCEPT</span><br></pre></td></tr></table></figure>
-<p>再次测试和 kubelet 的连通性，发现可以正常连通，再次检查 <code>kubectl top node</code>，可以查到所有节点的监控数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* Connected to 172.31.16.124 (172.31.16.124) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.16.124:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME                CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   </span><br><span class="line">fm-k8s-c1-master1   286m         7%     3242Mi          42%       </span><br><span class="line">fm-k8s-c1-master2   150m         3%     3262Mi          43%       </span><br><span class="line">fm-k8s-c1-master3   251m         6%     3247Mi          42%       </span><br><span class="line">fm-k8s-c1-worker1   166m         1%     4317Mi          13%       </span><br><span class="line">fm-k8s-c1-worker2   2013m        12%    21684Mi         70%</span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">metrics-server</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server#installation">metrics-server installation</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/">配置聚合层</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<h2 id="仅下载安装包而不进行安装操作"><a href="#仅下载安装包而不进行安装操作" class="headerlink" title="仅下载安装包而不进行安装操作"></a>仅下载安装包而不进行安装操作</h2><p>如果只下载安装包而不进行安装，可以使用 <code>yumdownloader</code> 命令，此命令来自安装包 <code>yum-utils</code>，如果不存在可以安装 <code>yum-utils</code>。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yumdownloader &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
+<p>以上下载指定的安装包而不安装，安装包会下载到当前目录</p>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package"><a href="#The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package" class="headerlink" title="The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package"></a>The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package</h2><p><strong>解决方法</strong></p>
+<p>修改对应 <code>yum</code> 源的配置文件，将其中的配置 <code>gpgcheck=1</code> 改为 <code>gpgcheck=0</code>，以此跳过 key 验证</p>
+]]></content>
       <categories>
-        <category>Kubernetes</category>
+        <category>Linux</category>
+        <category>常用命令</category>
       </categories>
       <tags>
-        <tag>Kubernetes</tag>
+        <tag>Linux</tag>
       </tags>
   </entry>
 </search>
