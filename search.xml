@@ -7884,95 +7884,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>ingress-nginx 安装配置</title>
     <url>/202209301604/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8188,6 +8099,95 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
@@ -9011,48 +9011,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>kibana 管理操作</title>
-    <url>/202307281401/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kibana 8.8</li>
-</ul>
-<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
-<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
-<p>space 隔离以下资源：</p>
-<ul>
-<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
-<li>Dashboard</li>
-</ul>
-<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<p>内置 role：</p>
-<ul>
-<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
-</ul>
-<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
-<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
-<ol>
-<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
-<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
-</ol>
-<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
-<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
-<ol>
-<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
-<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
-</ol>
-<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes 理论知识点汇总</title>
     <url>/202401101016/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -9190,6 +9148,48 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>kibana 管理操作</title>
+    <url>/202307281401/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kibana 8.8</li>
+</ul>
+<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
+<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
+<p>space 隔离以下资源：</p>
+<ul>
+<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
+<li>Dashboard</li>
+</ul>
+<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<p>内置 role：</p>
+<ul>
+<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
+</ul>
+<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
+<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
+<ol>
+<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
+<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
+</ol>
+<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
+<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
+<ol>
+<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
+<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
+</ol>
+<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -11191,6 +11191,30 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>linux 网络接口的混杂模式</title>
+    <url>/202304041014/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Linux 网卡的混杂模式（Promiscuous mode），简称 Promisc mode，俗称 <code>监听模式</code>。在非混杂模式下，网卡只会接受目的 MAC 地址是它自己的单播帧，以及多播帧；在混杂模式下，网卡会接受经过它的所有帧。</p>
+<p>查看网卡是否处于 <code>Promiscuous mode</code>，可以使用 <code>ifconfig</code> 或者 <code>netstat -i</code> 命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ifconfig ens33</span><br><span class="line">ens33: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1500</span><br><span class="line">        inet 192.168.142.10  netmask 255.255.255.0  broadcast 192.168.142.255</span><br><span class="line">        inet6 fe80::20c:29ff:fee7:c027  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 00:0c:29:e7:c0:27  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 194243  bytes 257521006 (245.5 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 92488  bytes 6051258 (5.7 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br></pre></td></tr></table></figure>
+<p>当输出包含 <code>PROMISC</code> 时，表明该网络接口处于 <code>Promiscuous mode</code>，否则表明未处于 <code>Promiscuous mode</code>。要开启网卡的 <code>Promiscuous mode</code> ，可以使用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig ens33 promisc</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig ens33</span></span><br><span class="line">ens33: flags=4419&lt;UP,BROADCAST,RUNNING,PROMISC,MULTICAST&gt;  mtu 1500</span><br><span class="line">        inet 192.168.142.10  netmask 255.255.255.0  broadcast 192.168.142.255</span><br><span class="line">        inet6 fe80::20c:29ff:fee7:c027  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 00:0c:29:e7:c0:27  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 194383  bytes 257531059 (245.6 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 92561  bytes 6058652 (5.7 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br></pre></td></tr></table></figure>
+<p>以下命令使网卡退出 <code>Promiscuous mode</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ifconfig ens33 -promisc</span><br></pre></td></tr></table></figure>
+
+<p>将网络设备加入 Linux bridge 后，网络设备会自动进入混杂模式，此种情况使用 <code>ifconfig</code> 或者 <code>netstat -i</code> 命令查看网卡，未显示 <code>PROMISC</code>，但是查看内核日志，显示网卡已进入混杂模式，并且无法退出，直到将 veth 从Linux bridge 中移除。网络设备移除网桥后，会自动退出混杂模式。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> add veth0 <span class="built_in">type</span> veth peer name veth1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">brctl show</span></span><br><span class="line">bridge name	bridge id		STP enabled	interfaces</span><br><span class="line">br0		8000.000000000000	no		</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">brctl addif br0 veth0</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig veth0</span></span><br><span class="line">veth0: flags=4099&lt;UP,BROADCAST,MULTICAST&gt;  mtu 1500</span><br><span class="line">        inet 192.168.10.1  netmask 255.255.255.0  broadcast 192.168.10.255</span><br><span class="line">        ether b6:b3:aa:ae:61:05  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 0  bytes 0 (0.0 B)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 0  bytes 0 (0.0 B)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -i</span></span><br><span class="line">Kernel Interface table</span><br><span class="line">Iface             MTU    RX-OK RX-ERR RX-DRP RX-OVR    TX-OK TX-ERR TX-DRP TX-OVR Flg</span><br><span class="line">br0              1500        0      0      0 0            34      0      0      0 BMU</span><br><span class="line">ens33            1500   195528      0      1 0         93168      0      0      0 BMPRU</span><br><span class="line">veth0            1500        0      0      0 0             0      0      0      0 BMU</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">dmesg | grep promisc</span></span><br><span class="line">[75099.376421] device veth2d80973 entered promiscuous mode</span><br><span class="line">[77630.104784] device ens33 entered promiscuous mode</span><br><span class="line">[77719.626596] device ens33 left promiscuous mode</span><br><span class="line">[77877.905587] device ens33 entered promiscuous mode</span><br><span class="line">[78153.928533] device veth0 entered promiscuous mode</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>network</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>linux network namespace 使用说明</title>
     <url>/202304031317/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -11314,30 +11338,6 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> vxlan</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN mode DEFAULT group default </span><br><span class="line">    link/ether ce:8c:56:84:e1:7a brd ff:ff:ff:ff:ff:ff</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> veth</span></span><br><span class="line">2350: veth2fd77154@if3: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue master cni0 state UP mode DEFAULT group default </span><br><span class="line">    link/ether 5a:02:6c:65:c8:5f brd ff:ff:ff:ff:ff:ff link-netnsid 0</span><br><span class="line">2352: vethfef50370@if3: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue master cni0 state UP mode DEFAULT group default </span><br><span class="line">    link/ether 3a:1c:0b:4f:af:b2 brd ff:ff:ff:ff:ff:ff link-netnsid 2</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> show <span class="built_in">type</span> bridge</span></span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:48:54:ca:75 brd ff:ff:ff:ff:ff:ff</span><br><span class="line">2349: cni0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 26:4e:46:b2:2a:4c brd ff:ff:ff:ff:ff:ff</span><br></pre></td></tr></table></figure>
 <p>以下命令查看网卡的详细信息，包括网卡类型</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show veth1_p</span></span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show docker0</span></span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer   48.83 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 ::1/128 scope host </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:e7:c0:27 brd ff:ff:ff:ff:ff:ff promiscuity 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 192.168.142.10/24 brd 192.168.142.255 scope global noprefixroute ens33</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::20c:29ff:fee7:c027/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer  147.42 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 172.17.0.1/16 brd 172.17.255.255 scope global docker0</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.10.10.1/24 scope global veth1_p</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::70f1:d6ff:fef6:c953/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">6: veth2_p@if7: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000</span><br><span class="line">    link/ether b6:17:a8:92:57:09 brd ff:ff:ff:ff:ff:ff link-netnsid 1 promiscuity 0 </span><br><span class="line">    veth numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.10.20.1/24 scope global veth2_p</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::b417:a8ff:fe92:5709/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever  </span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span></span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">2: ens33: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 00:0c:29:e7:c0:27 brd ff:ff:ff:ff:ff:ff promiscuity 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">3: docker0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default </span><br><span class="line">    link/ether 02:42:f2:1b:dc:ea brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q bridge_id 8000.2:42:f2:1b:dc:ea designated_root 8000.2:42:f2:1b:dc:ea root_port 0 root_path_cost 0 topology_change 0 topology_change_detected 0 hello_timer    0.00 tcn_timer    0.00 topology_change_timer    0.00 gc_timer   67.56 vlan_default_pvid 1 vlan_stats_enabled 0 group_fwd_mask 0 group_address 01:80:c2:00:00:00 mcast_snooping 1 mcast_router 1 mcast_query_use_ifaddr 0 mcast_querier 0 mcast_hash_elasticity 16 mcast_hash_max 4096 mcast_last_member_count 2 mcast_startup_query_count 2 mcast_last_member_interval 100 mcast_membership_interval 26000 mcast_querier_interval 25500 mcast_query_interval 12500 mcast_query_response_interval 1000 mcast_startup_query_interval 3125 mcast_stats_enabled 0 mcast_igmp_version 2 mcast_mld_version 1 nf_call_iptables 0 nf_call_ip6tables 0 nf_call_arptables 0 addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">4: veth1_p@if5: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether 72:f1:d6:f6:c9:53 brd ff:ff:ff:ff:ff:ff link-netnsid 0 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">6: veth2_p@if7: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000</span><br><span class="line">    link/ether b6:17:a8:92:57:09 brd ff:ff:ff:ff:ff:ff link-netnsid 1 promiscuity 0 </span><br><span class="line">    veth addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535       </span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>network</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux 网络接口的混杂模式</title>
-    <url>/202304041014/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Linux 网卡的混杂模式（Promiscuous mode），简称 Promisc mode，俗称 <code>监听模式</code>。在非混杂模式下，网卡只会接受目的 MAC 地址是它自己的单播帧，以及多播帧；在混杂模式下，网卡会接受经过它的所有帧。</p>
-<p>查看网卡是否处于 <code>Promiscuous mode</code>，可以使用 <code>ifconfig</code> 或者 <code>netstat -i</code> 命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ifconfig ens33</span><br><span class="line">ens33: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1500</span><br><span class="line">        inet 192.168.142.10  netmask 255.255.255.0  broadcast 192.168.142.255</span><br><span class="line">        inet6 fe80::20c:29ff:fee7:c027  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 00:0c:29:e7:c0:27  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 194243  bytes 257521006 (245.5 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 92488  bytes 6051258 (5.7 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br></pre></td></tr></table></figure>
-<p>当输出包含 <code>PROMISC</code> 时，表明该网络接口处于 <code>Promiscuous mode</code>，否则表明未处于 <code>Promiscuous mode</code>。要开启网卡的 <code>Promiscuous mode</code> ，可以使用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig ens33 promisc</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig ens33</span></span><br><span class="line">ens33: flags=4419&lt;UP,BROADCAST,RUNNING,PROMISC,MULTICAST&gt;  mtu 1500</span><br><span class="line">        inet 192.168.142.10  netmask 255.255.255.0  broadcast 192.168.142.255</span><br><span class="line">        inet6 fe80::20c:29ff:fee7:c027  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 00:0c:29:e7:c0:27  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 194383  bytes 257531059 (245.6 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 92561  bytes 6058652 (5.7 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br></pre></td></tr></table></figure>
-<p>以下命令使网卡退出 <code>Promiscuous mode</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ifconfig ens33 -promisc</span><br></pre></td></tr></table></figure>
-
-<p>将网络设备加入 Linux bridge 后，网络设备会自动进入混杂模式，此种情况使用 <code>ifconfig</code> 或者 <code>netstat -i</code> 命令查看网卡，未显示 <code>PROMISC</code>，但是查看内核日志，显示网卡已进入混杂模式，并且无法退出，直到将 veth 从Linux bridge 中移除。网络设备移除网桥后，会自动退出混杂模式。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip <span class="built_in">link</span> add veth0 <span class="built_in">type</span> veth peer name veth1</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">brctl show</span></span><br><span class="line">bridge name	bridge id		STP enabled	interfaces</span><br><span class="line">br0		8000.000000000000	no		</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">brctl addif br0 veth0</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig veth0</span></span><br><span class="line">veth0: flags=4099&lt;UP,BROADCAST,MULTICAST&gt;  mtu 1500</span><br><span class="line">        inet 192.168.10.1  netmask 255.255.255.0  broadcast 192.168.10.255</span><br><span class="line">        ether b6:b3:aa:ae:61:05  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 0  bytes 0 (0.0 B)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 0  bytes 0 (0.0 B)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -i</span></span><br><span class="line">Kernel Interface table</span><br><span class="line">Iface             MTU    RX-OK RX-ERR RX-DRP RX-OVR    TX-OK TX-ERR TX-DRP TX-OVR Flg</span><br><span class="line">br0              1500        0      0      0 0            34      0      0      0 BMU</span><br><span class="line">ens33            1500   195528      0      1 0         93168      0      0      0 BMPRU</span><br><span class="line">veth0            1500        0      0      0 0             0      0      0      0 BMU</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">dmesg | grep promisc</span></span><br><span class="line">[75099.376421] device veth2d80973 entered promiscuous mode</span><br><span class="line">[77630.104784] device ens33 entered promiscuous mode</span><br><span class="line">[77719.626596] device ens33 left promiscuous mode</span><br><span class="line">[77877.905587] device ens33 entered promiscuous mode</span><br><span class="line">[78153.928533] device veth0 entered promiscuous mode</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>network</category>
@@ -13272,6 +13272,140 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Nginx 安装及升级</title>
+    <url>/202306270934/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>本文档主要做为需要安装或升级 Nginx 版本或者需要重新编译 Nginx 为其添加新模块时的参考。<a href="/202207261420/" title="Nginx 服务常用配置说明">Nginx 服务常用配置说明</a></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 5.4.225-1</li>
+<li>nginx stable 1.24.0</li>
+</ul>
+<h1 id="编译安装-Nginx"><a href="#编译安装-Nginx" class="headerlink" title="编译安装 Nginx"></a>编译安装 Nginx</h1><p>编译安装 Nginx 之前，首先需要安装依赖包 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Compiling and Installing from Source](https://docs.nginx.com/nginx/admin-guide/installing-nginx/installing-nginx-open-source/)">[1]</span></a></sup></p>
+<h2 id="pcre"><a href="#pcre" class="headerlink" title="pcre"></a>pcre</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd /tmp</span><br><span class="line">wget github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz</span><br><span class="line">tar -zxf pcre2-10.42.tar.gz</span><br><span class="line">cd pcre2-10.42</span><br><span class="line">./configure</span><br><span class="line">make</span><br><span class="line">sudo make install</span><br></pre></td></tr></table></figure>
+
+<h2 id="zlib"><a href="#zlib" class="headerlink" title="zlib"></a>zlib</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd /tmp</span><br><span class="line">wget http://zlib.net/zlib-1.2.13.tar.gz</span><br><span class="line">tar -zxf zlib-1.2.13.tar.gz</span><br><span class="line">cd zlib-1.2.13</span><br><span class="line">./configure</span><br><span class="line">make</span><br><span class="line">sudo make install</span><br></pre></td></tr></table></figure>
+<h2 id="openssl"><a href="#openssl" class="headerlink" title="openssl"></a>openssl</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd /tmp</span><br><span class="line">wget --no-check-certificate http://www.openssl.org/source/openssl-1.1.1t.tar.gz</span><br><span class="line">tar -zxf openssl-1.1.1t.tar.gz</span><br><span class="line">cd openssl-1.1.1t</span><br><span class="line">./config shared zlib</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<h2 id="编译安装-Nginx-1"><a href="#编译安装-Nginx-1" class="headerlink" title="编译安装 Nginx"></a>编译安装 Nginx</h2><p>下载 Nginx stable 版本编译安装</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://nginx.org/download/nginx-1.24.0.tar.gz</span><br><span class="line">tar zxf nginx-1.24.0.tar.gz</span><br><span class="line">cd nginx-1.24.0</span><br></pre></td></tr></table></figure>
+<p>要启用或者停用指定的 Nginx 自带模块，<a href="https://nginx.org/en/docs/configure.html">参考 Nginx 编译配置选项说明</a></p>
+<p>此处编译配置添加第三方模块 <code>nginx-module-vts</code> 以支持 Prometheus。执行以下命令编译 Nginx 并添加第三方模块 <code>nginx-module-vts</code>。<a href="https://github.com/vozlt/nginx-module-vts/#compatibility">Nginx 和 nginx-module-vts 版本兼容列表</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/vozlt/nginx-module-vts/archive/refs/tags/v0.2.2.tar.gz</span><br><span class="line">tar -xf v0.2.2.tar.gz</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/nginx-1.24.0 \</span><br><span class="line">            --with-http_stub_status_module \</span><br><span class="line">            --with-http_ssl_module \</span><br><span class="line">            --with-stream --with-stream_ssl_module \</span><br><span class="line">            --with-openssl=/tmp/openssl-1.1.1t \</span><br><span class="line">            --with-http_v2_module \</span><br><span class="line">            --add-module=nginx-module-vts-0.2.2/</span><br><span class="line"></span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<p>编译安装后的软件包，只需要安装好依赖，便可以迁移到其他机器上面使用，<a href="https://s.csms.tech/file/nginx-1.24.0.tar">本文档编译安装后的软件包下载链接</a></p>
+<h2 id="为-Nginx-配置-systemd-管理配置文件"><a href="#为-Nginx-配置-systemd-管理配置文件" class="headerlink" title="为 Nginx 配置 systemd 管理配置文件"></a>为 Nginx 配置 systemd 管理配置文件</h2><p>为了能使用 <code>systemctl</code> 管理源码编译安装的 nginx，可以为其使用以下配置文件将其托管到 <code>systemd</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/nginx.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=The nginx HTTP and reverse proxy server</span><br><span class="line">After=network-online.target remote-fs.target nss-lookup.target</span><br><span class="line">Wants=network-online.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=forking</span><br><span class="line">PIDFile=/run/nginx.pid</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Nginx will fail to start <span class="keyword">if</span> /run/nginx.pid already exists but has the wrong</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">SELinux context. This might happen when running `nginx -t` from the cmdline.</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">https://bugzilla.redhat.com/show_bug.cgi?<span class="built_in">id</span>=1268621</span></span><br><span class="line">ExecStartPre=/usr/bin/rm -f /run/nginx.pid</span><br><span class="line">ExecStartPre=/usr/local/nginx-1.24.0/sbin/nginx -t</span><br><span class="line">ExecStart=/usr/local/nginx-1.24.0/sbin/nginx</span><br><span class="line">ExecReload=/usr/local/nginx-1.24.0/sbin/nginx -s reload</span><br><span class="line">KillSignal=SIGQUIT</span><br><span class="line">TimeoutStopSec=5</span><br><span class="line">KillMode=process</span><br><span class="line">PrivateTmp=true</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="Prometheus-采集-Nginx-监控数据"><a href="#Prometheus-采集-Nginx-监控数据" class="headerlink" title="Prometheus 采集 Nginx 监控数据"></a>Prometheus 采集 Nginx 监控数据</h1><p><a href="#%E7%BC%96%E8%AF%91%E5%AE%89%E8%A3%85-Nginx">参考步骤安装 <code>nginx-module-vts</code> 模块</a>，以支持 Prometheus 采集 Nginx 统计数据。</p>
+<p>如果要统计 Nginx 所有的 vhost 数据，则将 <code>nginx-module-vts</code> 模块相关配置放置于 <code>http</code> 模块内，否则可以在只想要监控（统计）的 vhost (<code>server</code> 配置段) 中添加配置。</p>
+<p><code>nginx-module-vts</code> 模块相关配置命令说明：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+<th>用法示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>vhost_traffic_status_zone</code></td>
+<td>定义 <code>vhost_traffic_status</code> 模块使用的共享内存区域。用于存储虚拟主机的流量统计信息</td>
+<td><code>vhost_traffic_status_zone shared_memory_name size;</code><br/><code>shared_memory_name</code> 是共享内存区域的名称，<code>size</code> 是共享内存区域的大小。</td>
+</tr>
+<tr>
+<td><code>vhost_traffic_status_filter_by_host</code></td>
+<td>按主机名过滤虚拟主机状态信息<br/>默认会将流量全部计算到第一个 server_name 上；启用后，只会显示与请求的主机名匹配的虚拟主机状态信息。</td>
+<td><code>vhost_traffic_status_filter_by_host on;</code></td>
+</tr>
+<tr>
+<td><code>vhost_traffic_status_filter_by_set_key</code></td>
+<td>根据自定义键值对来过滤虚拟主机的状态信息</td>
+<td><code>vhost_traffic_status_filter_by_set_key $host$request_uri;</code></td>
+</tr>
+<tr>
+<td><code>vhost_traffic_status_filter_by_set_zone</code></td>
+<td>过滤器使用的共享内存区域</td>
+<td></td>
+</tr>
+<tr>
+<td><code>vhost_traffic_status_display</code></td>
+<td>用于显示虚拟主机状态信息的格式<br/>支持 <code>json</code>、<code>CSV</code> 和 <code>html</code></td>
+<td><code>vhost_traffic_status_display_format html;</code></td>
+</tr>
+<tr>
+<td><code>vhost_traffic_status_display_format</code></td>
+<td>用于显示虚拟主机状态信息的字段格式。<br/>可以选择显示的字段有：request、status、request_time、request_length、request_method、request_uri、request_length、request_time、request_time_counter、request_time_counter_overflows、request_time_min、request_time_max、request_time_avg、request_time_median、request_time_percentile。</td>
+<td><code>vhost_traffic_status_display_format field1 field2 ...;</code></td>
+</tr>
+</tbody></table>
+<p>为了获取所有域名的统计信息，在 Nginx 的 <code>http</code> 模块内添加以下配置：</p>
+<figure class="highlight shell"><figcaption><span>nginx.con</span></figcaption><table><tr><td class="code"><pre><span class="line">http &#123;</span><br><span class="line">    ...   </span><br><span class="line">    vhost_traffic_status_zone;</span><br><span class="line"></span><br><span class="line">    vhost_traffic_status_filter_by_host on;</span><br><span class="line"></span><br><span class="line">    server &#123;</span><br><span class="line">        listen 8888;</span><br><span class="line">        server_name localhost;</span><br><span class="line">        location /status &#123;</span><br><span class="line">            vhost_traffic_status_display;</span><br><span class="line">            vhost_traffic_status_display_format json;</span><br><span class="line">        &#125;</span><br><span class="line"> </span><br><span class="line">    &#125;                                                                                                                                                        </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>重载配置后查看请求内容：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl localhost:8888/status</span></span><br><span class="line">&#123;&quot;hostName&quot;:&quot;testhost&quot;,&quot;moduleVersion&quot;:&quot;v0.2.2&quot;,&quot;nginxVersion&quot;:&quot;1.24.0&quot;,&quot;loadMsec&quot;:1713418497362,&quot;nowMsec&quot;:1713418504352,&quot;connections&quot;:&#123;&quot;active&quot;:7,&quot;reading&quot;:0,&quot;writing&quot;:1,&quot;waiting&quot;:6,&quot;accepted&quot;:7,&quot;handled&quot;:7,&quot;requests&quot;:14&#125;,&quot;sharedZones&quot;:&#123;&quot;name&quot;:&quot;ngx_http_vhost_traffic_status&quot;,&quot;maxSize&quot;:1048575,&quot;usedSize&quot;:10587,&quot;usedNode&quot;:3&#125;,&quot;serverZones&quot;:&#123;&quot;api.testdomain.com&quot;:&#123;&quot;requestCounter&quot;:12,&quot;inBytes&quot;:9330,&quot;outBytes&quot;:6249,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:12,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0&#125;,&quot;requestMsecCounter&quot;:11,&quot;requestMsec&quot;:0,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418503612,1713418503612,1713418503612,1713418503612,1713418503612,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966,1713418504330,1713418504331],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3,0,0]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0,&quot;requestMsecCounter&quot;:0&#125;&#125;,&quot;src.testdomain.ph&quot;:&#123;&quot;requestCounter&quot;:1,&quot;inBytes&quot;:393,&quot;outBytes&quot;:309,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:1,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0&#125;,&quot;requestMsecCounter&quot;:0,&quot;requestMsec&quot;:0,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418500180],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0,&quot;requestMsecCounter&quot;:0&#125;&#125;,&quot;*&quot;:&#123;&quot;requestCounter&quot;:13,&quot;inBytes&quot;:9723,&quot;outBytes&quot;:6558,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:12,&quot;3xx&quot;:1,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0&#125;,&quot;requestMsecCounter&quot;:11,&quot;requestMsec&quot;:0,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418500180,1713418503612,1713418503612,1713418503612,1713418503612,1713418503612,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966,1713418504330,1713418504331],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3,0,0]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0,&quot;requestMsecCounter&quot;:0&#125;&#125;&#125;,&quot;upstreamZones&quot;:&#123;&quot;::nogroups&quot;:[&#123;&quot;server&quot;:&quot;127.0.0.1:12000&quot;,&quot;requestCounter&quot;:5,&quot;inBytes&quot;:4154,&quot;outBytes&quot;:3351,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:5,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0&#125;,&quot;requestMsecCounter&quot;:11,&quot;requestMsec&quot;:2,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;responseMsecCounter&quot;:11,&quot;responseMsec&quot;:2,&quot;responseMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3]&#125;,&quot;responseBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;weight&quot;:0,&quot;maxFails&quot;:0,&quot;failTimeout&quot;:0,&quot;backup&quot;:false,&quot;down&quot;:false,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;requestMsecCounter&quot;:0,&quot;responseMsecCounter&quot;:0&#125;&#125;]&#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>统计信息输出结果支持多种格式：</p>
+<ul>
+<li><code>localhost:8888/status/format/json</code> - Json</li>
+<li><code>localhost:8888/status/format/html</code> - Html</li>
+<li><code>localhost:8888/status/format/jsonp</code> - Jsonp</li>
+<li><code>localhost:8888/status/format/prometheus</code> - Prometheus</li>
+<li><code>localhost:8888/status/format/control</code> - control</li>
+</ul>
+<p>在 Prometheus 中添加以下 Targets 配置抓取 <code>nginx-module-vts</code> 模块暴露出的统计信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &quot;Nginx&quot;</span><br><span class="line">    metrics_path: &#x27;/status/format/prometheus&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">    - targets: [&#x27;IPADDRESS:8888&#x27;]</span><br><span class="line">      labels:</span><br><span class="line">        Department : &#x27;OP&#x27;</span><br></pre></td></tr></table></figure>
+
+<p>在 Prometheus 中检查抓取到的数据<br><img src="https://i.csms.tech/img_229.png"></p>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="error-while-loading-shared-libraries"><a href="#error-while-loading-shared-libraries" class="headerlink" title="error while loading shared libraries"></a>error while loading shared libraries</h2><p>Nginx 编译安装成功后，启动报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/usr/local/nginx-1.24.0/sbin/nginx -t</span></span><br><span class="line">/usr/local/nginx-1.24.0/sbin/nginx: error while loading shared libraries: libpcre2-8.so.0: cannot open shared object file: No such file or directory</span><br></pre></td></tr></table></figure>
+<p><strong>问题原因</strong> 为 Nginx 在系统的库文件路径中未找到已经安装的 <code>libpcre2-8.so.0</code> 库文件。可以通过以下方式验证</p>
+<ol>
+<li>搜索 <code>libpcre2-8.so.0</code>，可以看到系统上已经存在此库文件 <code>/usr/local/lib/libpcre2-8.so.0</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">find / -name libpcre2-8.so.0</span></span><br><span class="line">/usr/local/lib/libpcre2-8.so.0</span><br></pre></td></tr></table></figure></li>
+<li>检查此库文件是否在系统已加载的库文件中。执行以下命令搜索系统已经加载的库文件，发现没有 <code>/usr/local/lib/libpcre2-8.so.0</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ldconfig -p | grep libpcre</span></span><br><span class="line">    libpcre32.so.0 (libc6,x86-64) =&gt; /lib64/libpcre32.so.0</span><br><span class="line">    libpcre16.so.0 (libc6,x86-64) =&gt; /lib64/libpcre16.so.0</span><br><span class="line">    libpcreposix.so.0 (libc6,x86-64) =&gt; /lib64/libpcreposix.so.0</span><br><span class="line">    libpcrecpp.so.0 (libc6,x86-64) =&gt; /lib64/libpcrecpp.so.0</span><br><span class="line">    libpcre.so.1 (libc6,x86-64) =&gt; /lib64/libpcre.so.1</span><br></pre></td></tr></table></figure></li>
+<li>检查系统共享库文件的查找路径的配置文件 <code>/etc/ld.so.conf</code>，发现其中不包括路径 <code>/usr/local/lib/</code>，因此位于此路径下的共享库文件无法被搜索到 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /etc/ld.so.conf</span></span><br><span class="line">include ld.so.conf.d/*.conf</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+<p>要解决此问题，可以使用以下方法之一：</p>
+<ul>
+<li><p>添加 <code>/usr/local/lib/</code> 到系统共享库查找路径配置文件 <code>/etc/ld.so.conf</code></p>
+  <figure class="highlight shell"><figcaption><span>/etc/ld.so.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">include ld.so.conf.d/*.conf</span><br><span class="line">/usr/local/lib/</span><br></pre></td></tr></table></figure>
+<p> 执行以下命令，使配置生效</p>
+  <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">ldconfig</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>设置系统环境变量 <code>LD_LIBRARY_PATH</code>，这个变量定义了系统共享库的查找目录。将 <code>/usr/local/lib</code> 添加到此变量的值中，要永久生效需要将其写入配置文件，如 <code>~/.bash_profile</code> 等</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">export LD_LIBRARY_PATH=&quot;/usr/local/lib:$LD_LIBRARY_PATH&quot;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建符号链接</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">ln -s /usr/local/lib/libpcre2-8.so.0 /usr/local/nginx-1.24.0/sbin/libpcre2-8.so.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>或者</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">ln -s /usr/local/lib/libpcre2-8.so.0 /lib64/libpcre2-8.so.0</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ul>
+<h2 id="SSL-modules-require-the-OpenSSL-library"><a href="#SSL-modules-require-the-OpenSSL-library" class="headerlink" title="SSL modules require the OpenSSL library"></a>SSL modules require the OpenSSL library</h2><p>执行以下命令执行编译前配置时报错 <code>./configure: error: SSL modules require the OpenSSL library.</code>：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">./configure --prefix=/usr/local/nginx-1.24.0 \</span></span><br><span class="line"><span class="language-bash">            --with-http_stub_status_module \</span></span><br><span class="line"><span class="language-bash">            --with-http_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-stream --with-stream_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-http_v2_module \</span></span><br><span class="line"><span class="language-bash">            --add-module=nginx-module-vts-0.2.2/</span></span><br><span class="line"></span><br><span class="line">checking for PCRE2 library ... found</span><br><span class="line">checking for OpenSSL library ... not found</span><br><span class="line">checking for OpenSSL library in /usr/local/ ... not found</span><br><span class="line">checking for OpenSSL library in /usr/pkg/ ... not found</span><br><span class="line">checking for OpenSSL library in /opt/local/ ... not found</span><br><span class="line"></span><br><span class="line">./configure: error: SSL modules require the OpenSSL library.</span><br><span class="line">You can either do not enable the modules, or install the OpenSSL library</span><br><span class="line">into the system, or build the OpenSSL library statically from the source</span><br><span class="line">with nginx by using --with-openssl=&lt;path&gt; option.</span><br></pre></td></tr></table></figure>
+<p>此报错原因为未找到 OpenSSL 的库文件。</p>
+<p>针对此场景，可以通过在编译配置时指定 OpenSSL 的源码中库文件的具体位置(<code>--with-openssl=/tmp/openssl-1.1.1t</code>)，参考以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./configure --prefix=/usr/local/nginx-1.24.0 \</span><br><span class="line">            --with-http_stub_status_module \</span><br><span class="line">            --with-http_ssl_module \</span><br><span class="line">            --with-stream --with-stream_ssl_module \</span><br><span class="line">            --with-openssl=/tmp/openssl-1.1.1t \</span><br><span class="line">            --with-http_v2_module \</span><br><span class="line">            --add-module=nginx-module-vts-0.2.2/</span><br></pre></td></tr></table></figure>
+
+
+<h2 id="Error-127"><a href="#Error-127" class="headerlink" title="Error 127"></a>Error 127</h2><p>Nginx 执行 <code>make</code> 命令时报错： <code>/bin/sh: line 2: ./config: No such file or directory</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">./configure --prefix=/usr/local/nginx-1.24.0 \</span></span><br><span class="line"><span class="language-bash">            --with-http_stub_status_module \</span></span><br><span class="line"><span class="language-bash">            --with-http_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-stream --with-stream_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-openssl=/usr/local/lib64/ \</span></span><br><span class="line"><span class="language-bash">            --with-http_v2_module \</span></span><br><span class="line"><span class="language-bash">            --add-module=nginx-module-vts-0.2.2/</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">make</span></span><br><span class="line">make -f objs/Makefile</span><br><span class="line">make[1]: Entering directory `/root/nginx-1.24.0&#x27;</span><br><span class="line">cd /usr/local/lib64/ \</span><br><span class="line">&amp;&amp; if [ -f Makefile ]; then make clean; fi \</span><br><span class="line">&amp;&amp; ./config --prefix=/usr/local/lib64//.openssl no-shared no-threads  \</span><br><span class="line">&amp;&amp; make \</span><br><span class="line">&amp;&amp; make install_sw LIBDIR=lib</span><br><span class="line">/bin/sh: line 2: ./config: No such file or directory</span><br><span class="line">make[1]: *** [/usr/local/lib64//.openssl/include/openssl/ssl.h] Error 127</span><br><span class="line">make[1]: Leaving directory `/root/nginx-1.24.0&#x27;</span><br><span class="line">make: *** [build] Error 2</span><br></pre></td></tr></table></figure>
+
+<p>错误信息表明在编译 nginx 时，<code>make</code> 命令无法找到 OpenSSL 的配置脚本 <code>config</code>。此脚本位于 OpenSSL 的源码目录中。可以通过 <code>--with-openssl=/tmp/openssl-1.1.1t</code> 指定。<br>修改编译前的配置命令如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./configure --prefix=/usr/local/nginx-1.24.0 \</span><br><span class="line">            --with-http_stub_status_module \</span><br><span class="line">            --with-http_ssl_module \</span><br><span class="line">            --with-stream --with-stream_ssl_module \</span><br><span class="line">            --with-openssl=/tmp/openssl-1.1.1t \</span><br><span class="line">            --with-http_v2_module \</span><br><span class="line">            --add-module=nginx-module-vts-0.2.2/</span><br><span class="line"></span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<h2 id="getpwnam-“nginx”-failed"><a href="#getpwnam-“nginx”-failed" class="headerlink" title="getpwnam(“nginx”) failed"></a>getpwnam(“nginx”) failed</h2><p>nginx 报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">nginx: the configuration file /usr/local/nginx-1.24.0/conf/nginx.conf syntax is ok</span><br><span class="line">nginx: [emerg] getpwnam(&quot;nginx&quot;) failed</span><br><span class="line">nginx: configuration file /usr/local/nginx-1.24.0/conf/nginx.conf test failed</span><br></pre></td></tr></table></figure>
+
+<p><strong>问题原因</strong> 为 <code>nginx</code> 用户不存在，创建 <code>nginx</code> 用户或者修改配置文件，使用已有的用户运行 <code>nginx</code></p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://nginx.org/en/docs/">Nginx 官网文档</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.nginx.com/nginx/admin-guide/installing-nginx/installing-nginx-open-source/">Compiling and Installing from Source</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>nodejs 安装配置</title>
     <url>/647e4c1a/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://nodejs.org/dist/latest/node-v15.12.0-linux-x64.tar.gz</span><br><span class="line">tar -xf node-v15.12.0-linux-x64.tar.gz -C /usr/local</span><br><span class="line">ln -s /usr/local/node-v15.12.0-linux-x64/bin/* /bin/</span><br></pre></td></tr></table></figure>
@@ -13552,140 +13686,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>php</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Nginx 安装及升级</title>
-    <url>/202306270934/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>本文档主要做为需要安装或升级 Nginx 版本或者需要重新编译 Nginx 为其添加新模块时的参考。<a href="/202207261420/" title="Nginx 服务常用配置说明">Nginx 服务常用配置说明</a></p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 5.4.225-1</li>
-<li>nginx stable 1.24.0</li>
-</ul>
-<h1 id="编译安装-Nginx"><a href="#编译安装-Nginx" class="headerlink" title="编译安装 Nginx"></a>编译安装 Nginx</h1><p>编译安装 Nginx 之前，首先需要安装依赖包 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Compiling and Installing from Source](https://docs.nginx.com/nginx/admin-guide/installing-nginx/installing-nginx-open-source/)">[1]</span></a></sup></p>
-<h2 id="pcre"><a href="#pcre" class="headerlink" title="pcre"></a>pcre</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd /tmp</span><br><span class="line">wget github.com/PCRE2Project/pcre2/releases/download/pcre2-10.42/pcre2-10.42.tar.gz</span><br><span class="line">tar -zxf pcre2-10.42.tar.gz</span><br><span class="line">cd pcre2-10.42</span><br><span class="line">./configure</span><br><span class="line">make</span><br><span class="line">sudo make install</span><br></pre></td></tr></table></figure>
-
-<h2 id="zlib"><a href="#zlib" class="headerlink" title="zlib"></a>zlib</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd /tmp</span><br><span class="line">wget http://zlib.net/zlib-1.2.13.tar.gz</span><br><span class="line">tar -zxf zlib-1.2.13.tar.gz</span><br><span class="line">cd zlib-1.2.13</span><br><span class="line">./configure</span><br><span class="line">make</span><br><span class="line">sudo make install</span><br></pre></td></tr></table></figure>
-<h2 id="openssl"><a href="#openssl" class="headerlink" title="openssl"></a>openssl</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd /tmp</span><br><span class="line">wget --no-check-certificate http://www.openssl.org/source/openssl-1.1.1t.tar.gz</span><br><span class="line">tar -zxf openssl-1.1.1t.tar.gz</span><br><span class="line">cd openssl-1.1.1t</span><br><span class="line">./config shared zlib</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
-<h2 id="编译安装-Nginx-1"><a href="#编译安装-Nginx-1" class="headerlink" title="编译安装 Nginx"></a>编译安装 Nginx</h2><p>下载 Nginx stable 版本编译安装</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://nginx.org/download/nginx-1.24.0.tar.gz</span><br><span class="line">tar zxf nginx-1.24.0.tar.gz</span><br><span class="line">cd nginx-1.24.0</span><br></pre></td></tr></table></figure>
-<p>要启用或者停用指定的 Nginx 自带模块，<a href="https://nginx.org/en/docs/configure.html">参考 Nginx 编译配置选项说明</a></p>
-<p>此处编译配置添加第三方模块 <code>nginx-module-vts</code> 以支持 Prometheus。执行以下命令编译 Nginx 并添加第三方模块 <code>nginx-module-vts</code>。<a href="https://github.com/vozlt/nginx-module-vts/#compatibility">Nginx 和 nginx-module-vts 版本兼容列表</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/vozlt/nginx-module-vts/archive/refs/tags/v0.2.2.tar.gz</span><br><span class="line">tar -xf v0.2.2.tar.gz</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/nginx-1.24.0 \</span><br><span class="line">            --with-http_stub_status_module \</span><br><span class="line">            --with-http_ssl_module \</span><br><span class="line">            --with-stream --with-stream_ssl_module \</span><br><span class="line">            --with-openssl=/tmp/openssl-1.1.1t \</span><br><span class="line">            --with-http_v2_module \</span><br><span class="line">            --add-module=nginx-module-vts-0.2.2/</span><br><span class="line"></span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
-<p>编译安装后的软件包，只需要安装好依赖，便可以迁移到其他机器上面使用，<a href="https://s.csms.tech/file/nginx-1.24.0.tar">本文档编译安装后的软件包下载链接</a></p>
-<h2 id="为-Nginx-配置-systemd-管理配置文件"><a href="#为-Nginx-配置-systemd-管理配置文件" class="headerlink" title="为 Nginx 配置 systemd 管理配置文件"></a>为 Nginx 配置 systemd 管理配置文件</h2><p>为了能使用 <code>systemctl</code> 管理源码编译安装的 nginx，可以为其使用以下配置文件将其托管到 <code>systemd</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/nginx.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=The nginx HTTP and reverse proxy server</span><br><span class="line">After=network-online.target remote-fs.target nss-lookup.target</span><br><span class="line">Wants=network-online.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=forking</span><br><span class="line">PIDFile=/run/nginx.pid</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Nginx will fail to start <span class="keyword">if</span> /run/nginx.pid already exists but has the wrong</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">SELinux context. This might happen when running `nginx -t` from the cmdline.</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">https://bugzilla.redhat.com/show_bug.cgi?<span class="built_in">id</span>=1268621</span></span><br><span class="line">ExecStartPre=/usr/bin/rm -f /run/nginx.pid</span><br><span class="line">ExecStartPre=/usr/local/nginx-1.24.0/sbin/nginx -t</span><br><span class="line">ExecStart=/usr/local/nginx-1.24.0/sbin/nginx</span><br><span class="line">ExecReload=/usr/local/nginx-1.24.0/sbin/nginx -s reload</span><br><span class="line">KillSignal=SIGQUIT</span><br><span class="line">TimeoutStopSec=5</span><br><span class="line">KillMode=process</span><br><span class="line">PrivateTmp=true</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="Prometheus-采集-Nginx-监控数据"><a href="#Prometheus-采集-Nginx-监控数据" class="headerlink" title="Prometheus 采集 Nginx 监控数据"></a>Prometheus 采集 Nginx 监控数据</h1><p><a href="#%E7%BC%96%E8%AF%91%E5%AE%89%E8%A3%85-Nginx">参考步骤安装 <code>nginx-module-vts</code> 模块</a>，以支持 Prometheus 采集 Nginx 统计数据。</p>
-<p>如果要统计 Nginx 所有的 vhost 数据，则将 <code>nginx-module-vts</code> 模块相关配置放置于 <code>http</code> 模块内，否则可以在只想要监控（统计）的 vhost (<code>server</code> 配置段) 中添加配置。</p>
-<p><code>nginx-module-vts</code> 模块相关配置命令说明：</p>
-<table>
-<thead>
-<tr>
-<th>命令</th>
-<th>说明</th>
-<th>用法示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>vhost_traffic_status_zone</code></td>
-<td>定义 <code>vhost_traffic_status</code> 模块使用的共享内存区域。用于存储虚拟主机的流量统计信息</td>
-<td><code>vhost_traffic_status_zone shared_memory_name size;</code><br/><code>shared_memory_name</code> 是共享内存区域的名称，<code>size</code> 是共享内存区域的大小。</td>
-</tr>
-<tr>
-<td><code>vhost_traffic_status_filter_by_host</code></td>
-<td>按主机名过滤虚拟主机状态信息<br/>默认会将流量全部计算到第一个 server_name 上；启用后，只会显示与请求的主机名匹配的虚拟主机状态信息。</td>
-<td><code>vhost_traffic_status_filter_by_host on;</code></td>
-</tr>
-<tr>
-<td><code>vhost_traffic_status_filter_by_set_key</code></td>
-<td>根据自定义键值对来过滤虚拟主机的状态信息</td>
-<td><code>vhost_traffic_status_filter_by_set_key $host$request_uri;</code></td>
-</tr>
-<tr>
-<td><code>vhost_traffic_status_filter_by_set_zone</code></td>
-<td>过滤器使用的共享内存区域</td>
-<td></td>
-</tr>
-<tr>
-<td><code>vhost_traffic_status_display</code></td>
-<td>用于显示虚拟主机状态信息的格式<br/>支持 <code>json</code>、<code>CSV</code> 和 <code>html</code></td>
-<td><code>vhost_traffic_status_display_format html;</code></td>
-</tr>
-<tr>
-<td><code>vhost_traffic_status_display_format</code></td>
-<td>用于显示虚拟主机状态信息的字段格式。<br/>可以选择显示的字段有：request、status、request_time、request_length、request_method、request_uri、request_length、request_time、request_time_counter、request_time_counter_overflows、request_time_min、request_time_max、request_time_avg、request_time_median、request_time_percentile。</td>
-<td><code>vhost_traffic_status_display_format field1 field2 ...;</code></td>
-</tr>
-</tbody></table>
-<p>为了获取所有域名的统计信息，在 Nginx 的 <code>http</code> 模块内添加以下配置：</p>
-<figure class="highlight shell"><figcaption><span>nginx.con</span></figcaption><table><tr><td class="code"><pre><span class="line">http &#123;</span><br><span class="line">    ...   </span><br><span class="line">    vhost_traffic_status_zone;</span><br><span class="line"></span><br><span class="line">    vhost_traffic_status_filter_by_host on;</span><br><span class="line"></span><br><span class="line">    server &#123;</span><br><span class="line">        listen 8888;</span><br><span class="line">        server_name localhost;</span><br><span class="line">        location /status &#123;</span><br><span class="line">            vhost_traffic_status_display;</span><br><span class="line">            vhost_traffic_status_display_format json;</span><br><span class="line">        &#125;</span><br><span class="line"> </span><br><span class="line">    &#125;                                                                                                                                                        </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>重载配置后查看请求内容：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl localhost:8888/status</span></span><br><span class="line">&#123;&quot;hostName&quot;:&quot;testhost&quot;,&quot;moduleVersion&quot;:&quot;v0.2.2&quot;,&quot;nginxVersion&quot;:&quot;1.24.0&quot;,&quot;loadMsec&quot;:1713418497362,&quot;nowMsec&quot;:1713418504352,&quot;connections&quot;:&#123;&quot;active&quot;:7,&quot;reading&quot;:0,&quot;writing&quot;:1,&quot;waiting&quot;:6,&quot;accepted&quot;:7,&quot;handled&quot;:7,&quot;requests&quot;:14&#125;,&quot;sharedZones&quot;:&#123;&quot;name&quot;:&quot;ngx_http_vhost_traffic_status&quot;,&quot;maxSize&quot;:1048575,&quot;usedSize&quot;:10587,&quot;usedNode&quot;:3&#125;,&quot;serverZones&quot;:&#123;&quot;api.testdomain.com&quot;:&#123;&quot;requestCounter&quot;:12,&quot;inBytes&quot;:9330,&quot;outBytes&quot;:6249,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:12,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0&#125;,&quot;requestMsecCounter&quot;:11,&quot;requestMsec&quot;:0,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418503612,1713418503612,1713418503612,1713418503612,1713418503612,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966,1713418504330,1713418504331],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3,0,0]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0,&quot;requestMsecCounter&quot;:0&#125;&#125;,&quot;src.testdomain.ph&quot;:&#123;&quot;requestCounter&quot;:1,&quot;inBytes&quot;:393,&quot;outBytes&quot;:309,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:1,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0&#125;,&quot;requestMsecCounter&quot;:0,&quot;requestMsec&quot;:0,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418500180],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0,&quot;requestMsecCounter&quot;:0&#125;&#125;,&quot;*&quot;:&#123;&quot;requestCounter&quot;:13,&quot;inBytes&quot;:9723,&quot;outBytes&quot;:6558,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:12,&quot;3xx&quot;:1,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0&#125;,&quot;requestMsecCounter&quot;:11,&quot;requestMsec&quot;:0,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418500180,1713418503612,1713418503612,1713418503612,1713418503612,1713418503612,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966,1713418504330,1713418504331],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3,0,0]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;miss&quot;:0,&quot;bypass&quot;:0,&quot;expired&quot;:0,&quot;stale&quot;:0,&quot;updating&quot;:0,&quot;revalidated&quot;:0,&quot;hit&quot;:0,&quot;scarce&quot;:0,&quot;requestMsecCounter&quot;:0&#125;&#125;&#125;,&quot;upstreamZones&quot;:&#123;&quot;::nogroups&quot;:[&#123;&quot;server&quot;:&quot;127.0.0.1:12000&quot;,&quot;requestCounter&quot;:5,&quot;inBytes&quot;:4154,&quot;outBytes&quot;:3351,&quot;responses&quot;:&#123;&quot;1xx&quot;:0,&quot;2xx&quot;:5,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0&#125;,&quot;requestMsecCounter&quot;:11,&quot;requestMsec&quot;:2,&quot;requestMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3]&#125;,&quot;requestBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;responseMsecCounter&quot;:11,&quot;responseMsec&quot;:2,&quot;responseMsecs&quot;:&#123;&quot;times&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1713418503962,1713418503965,1713418503965,1713418503966,1713418503966],&quot;msecs&quot;:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,3,1,3,3]&#125;,&quot;responseBuckets&quot;:&#123;&quot;msecs&quot;:[],&quot;counters&quot;:[]&#125;,&quot;weight&quot;:0,&quot;maxFails&quot;:0,&quot;failTimeout&quot;:0,&quot;backup&quot;:false,&quot;down&quot;:false,&quot;overCounts&quot;:&#123;&quot;maxIntegerSize&quot;:18446744073709551615,&quot;requestCounter&quot;:0,&quot;inBytes&quot;:0,&quot;outBytes&quot;:0,&quot;1xx&quot;:0,&quot;2xx&quot;:0,&quot;3xx&quot;:0,&quot;4xx&quot;:0,&quot;5xx&quot;:0,&quot;requestMsecCounter&quot;:0,&quot;responseMsecCounter&quot;:0&#125;&#125;]&#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>统计信息输出结果支持多种格式：</p>
-<ul>
-<li><code>localhost:8888/status/format/json</code> - Json</li>
-<li><code>localhost:8888/status/format/html</code> - Html</li>
-<li><code>localhost:8888/status/format/jsonp</code> - Jsonp</li>
-<li><code>localhost:8888/status/format/prometheus</code> - Prometheus</li>
-<li><code>localhost:8888/status/format/control</code> - control</li>
-</ul>
-<p>在 Prometheus 中添加以下 Targets 配置抓取 <code>nginx-module-vts</code> 模块暴露出的统计信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &quot;Nginx&quot;</span><br><span class="line">    metrics_path: &#x27;/status/format/prometheus&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">    - targets: [&#x27;IPADDRESS:8888&#x27;]</span><br><span class="line">      labels:</span><br><span class="line">        Department : &#x27;OP&#x27;</span><br></pre></td></tr></table></figure>
-
-<p>在 Prometheus 中检查抓取到的数据<br><img src="https://i.csms.tech/img_229.png"></p>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="error-while-loading-shared-libraries"><a href="#error-while-loading-shared-libraries" class="headerlink" title="error while loading shared libraries"></a>error while loading shared libraries</h2><p>Nginx 编译安装成功后，启动报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/usr/local/nginx-1.24.0/sbin/nginx -t</span></span><br><span class="line">/usr/local/nginx-1.24.0/sbin/nginx: error while loading shared libraries: libpcre2-8.so.0: cannot open shared object file: No such file or directory</span><br></pre></td></tr></table></figure>
-<p><strong>问题原因</strong> 为 Nginx 在系统的库文件路径中未找到已经安装的 <code>libpcre2-8.so.0</code> 库文件。可以通过以下方式验证</p>
-<ol>
-<li>搜索 <code>libpcre2-8.so.0</code>，可以看到系统上已经存在此库文件 <code>/usr/local/lib/libpcre2-8.so.0</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">find / -name libpcre2-8.so.0</span></span><br><span class="line">/usr/local/lib/libpcre2-8.so.0</span><br></pre></td></tr></table></figure></li>
-<li>检查此库文件是否在系统已加载的库文件中。执行以下命令搜索系统已经加载的库文件，发现没有 <code>/usr/local/lib/libpcre2-8.so.0</code> <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ldconfig -p | grep libpcre</span></span><br><span class="line">    libpcre32.so.0 (libc6,x86-64) =&gt; /lib64/libpcre32.so.0</span><br><span class="line">    libpcre16.so.0 (libc6,x86-64) =&gt; /lib64/libpcre16.so.0</span><br><span class="line">    libpcreposix.so.0 (libc6,x86-64) =&gt; /lib64/libpcreposix.so.0</span><br><span class="line">    libpcrecpp.so.0 (libc6,x86-64) =&gt; /lib64/libpcrecpp.so.0</span><br><span class="line">    libpcre.so.1 (libc6,x86-64) =&gt; /lib64/libpcre.so.1</span><br></pre></td></tr></table></figure></li>
-<li>检查系统共享库文件的查找路径的配置文件 <code>/etc/ld.so.conf</code>，发现其中不包括路径 <code>/usr/local/lib/</code>，因此位于此路径下的共享库文件无法被搜索到 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /etc/ld.so.conf</span></span><br><span class="line">include ld.so.conf.d/*.conf</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ol>
-<p>要解决此问题，可以使用以下方法之一：</p>
-<ul>
-<li><p>添加 <code>/usr/local/lib/</code> 到系统共享库查找路径配置文件 <code>/etc/ld.so.conf</code></p>
-  <figure class="highlight shell"><figcaption><span>/etc/ld.so.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">include ld.so.conf.d/*.conf</span><br><span class="line">/usr/local/lib/</span><br></pre></td></tr></table></figure>
-<p> 执行以下命令，使配置生效</p>
-  <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">ldconfig</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>设置系统环境变量 <code>LD_LIBRARY_PATH</code>，这个变量定义了系统共享库的查找目录。将 <code>/usr/local/lib</code> 添加到此变量的值中，要永久生效需要将其写入配置文件，如 <code>~/.bash_profile</code> 等</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">export LD_LIBRARY_PATH=&quot;/usr/local/lib:$LD_LIBRARY_PATH&quot;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建符号链接</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">ln -s /usr/local/lib/libpcre2-8.so.0 /usr/local/nginx-1.24.0/sbin/libpcre2-8.so.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>或者</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">ln -s /usr/local/lib/libpcre2-8.so.0 /lib64/libpcre2-8.so.0</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ul>
-<h2 id="SSL-modules-require-the-OpenSSL-library"><a href="#SSL-modules-require-the-OpenSSL-library" class="headerlink" title="SSL modules require the OpenSSL library"></a>SSL modules require the OpenSSL library</h2><p>执行以下命令执行编译前配置时报错 <code>./configure: error: SSL modules require the OpenSSL library.</code>：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">./configure --prefix=/usr/local/nginx-1.24.0 \</span></span><br><span class="line"><span class="language-bash">            --with-http_stub_status_module \</span></span><br><span class="line"><span class="language-bash">            --with-http_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-stream --with-stream_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-http_v2_module \</span></span><br><span class="line"><span class="language-bash">            --add-module=nginx-module-vts-0.2.2/</span></span><br><span class="line"></span><br><span class="line">checking for PCRE2 library ... found</span><br><span class="line">checking for OpenSSL library ... not found</span><br><span class="line">checking for OpenSSL library in /usr/local/ ... not found</span><br><span class="line">checking for OpenSSL library in /usr/pkg/ ... not found</span><br><span class="line">checking for OpenSSL library in /opt/local/ ... not found</span><br><span class="line"></span><br><span class="line">./configure: error: SSL modules require the OpenSSL library.</span><br><span class="line">You can either do not enable the modules, or install the OpenSSL library</span><br><span class="line">into the system, or build the OpenSSL library statically from the source</span><br><span class="line">with nginx by using --with-openssl=&lt;path&gt; option.</span><br></pre></td></tr></table></figure>
-<p>此报错原因为未找到 OpenSSL 的库文件。</p>
-<p>针对此场景，可以通过在编译配置时指定 OpenSSL 的源码中库文件的具体位置(<code>--with-openssl=/tmp/openssl-1.1.1t</code>)，参考以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./configure --prefix=/usr/local/nginx-1.24.0 \</span><br><span class="line">            --with-http_stub_status_module \</span><br><span class="line">            --with-http_ssl_module \</span><br><span class="line">            --with-stream --with-stream_ssl_module \</span><br><span class="line">            --with-openssl=/tmp/openssl-1.1.1t \</span><br><span class="line">            --with-http_v2_module \</span><br><span class="line">            --add-module=nginx-module-vts-0.2.2/</span><br></pre></td></tr></table></figure>
-
-
-<h2 id="Error-127"><a href="#Error-127" class="headerlink" title="Error 127"></a>Error 127</h2><p>Nginx 执行 <code>make</code> 命令时报错： <code>/bin/sh: line 2: ./config: No such file or directory</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">./configure --prefix=/usr/local/nginx-1.24.0 \</span></span><br><span class="line"><span class="language-bash">            --with-http_stub_status_module \</span></span><br><span class="line"><span class="language-bash">            --with-http_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-stream --with-stream_ssl_module \</span></span><br><span class="line"><span class="language-bash">            --with-openssl=/usr/local/lib64/ \</span></span><br><span class="line"><span class="language-bash">            --with-http_v2_module \</span></span><br><span class="line"><span class="language-bash">            --add-module=nginx-module-vts-0.2.2/</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">make</span></span><br><span class="line">make -f objs/Makefile</span><br><span class="line">make[1]: Entering directory `/root/nginx-1.24.0&#x27;</span><br><span class="line">cd /usr/local/lib64/ \</span><br><span class="line">&amp;&amp; if [ -f Makefile ]; then make clean; fi \</span><br><span class="line">&amp;&amp; ./config --prefix=/usr/local/lib64//.openssl no-shared no-threads  \</span><br><span class="line">&amp;&amp; make \</span><br><span class="line">&amp;&amp; make install_sw LIBDIR=lib</span><br><span class="line">/bin/sh: line 2: ./config: No such file or directory</span><br><span class="line">make[1]: *** [/usr/local/lib64//.openssl/include/openssl/ssl.h] Error 127</span><br><span class="line">make[1]: Leaving directory `/root/nginx-1.24.0&#x27;</span><br><span class="line">make: *** [build] Error 2</span><br></pre></td></tr></table></figure>
-
-<p>错误信息表明在编译 nginx 时，<code>make</code> 命令无法找到 OpenSSL 的配置脚本 <code>config</code>。此脚本位于 OpenSSL 的源码目录中。可以通过 <code>--with-openssl=/tmp/openssl-1.1.1t</code> 指定。<br>修改编译前的配置命令如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./configure --prefix=/usr/local/nginx-1.24.0 \</span><br><span class="line">            --with-http_stub_status_module \</span><br><span class="line">            --with-http_ssl_module \</span><br><span class="line">            --with-stream --with-stream_ssl_module \</span><br><span class="line">            --with-openssl=/tmp/openssl-1.1.1t \</span><br><span class="line">            --with-http_v2_module \</span><br><span class="line">            --add-module=nginx-module-vts-0.2.2/</span><br><span class="line"></span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
-<h2 id="getpwnam-“nginx”-failed"><a href="#getpwnam-“nginx”-failed" class="headerlink" title="getpwnam(“nginx”) failed"></a>getpwnam(“nginx”) failed</h2><p>nginx 报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">nginx: the configuration file /usr/local/nginx-1.24.0/conf/nginx.conf syntax is ok</span><br><span class="line">nginx: [emerg] getpwnam(&quot;nginx&quot;) failed</span><br><span class="line">nginx: configuration file /usr/local/nginx-1.24.0/conf/nginx.conf test failed</span><br></pre></td></tr></table></figure>
-
-<p><strong>问题原因</strong> 为 <code>nginx</code> 用户不存在，创建 <code>nginx</code> 用户或者修改配置文件，使用已有的用户运行 <code>nginx</code></p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://nginx.org/en/docs/">Nginx 官网文档</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.nginx.com/nginx/admin-guide/installing-nginx/installing-nginx-open-source/">Compiling and Installing from Source</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
