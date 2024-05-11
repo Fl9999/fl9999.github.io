@@ -3909,6 +3909,64 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>docker compose 配置 django mysql 站点</title>
+    <url>/202209051137/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>本文主要记录使用 <code>docker compose</code> 配置 Django + Mysql 的 web 站点的过程。</p>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos7</li>
+<li>Docker version 20.10.17</li>
+</ul>
+<h3 id="目录结构及说明"><a href="#目录结构及说明" class="headerlink" title="目录结构及说明"></a>目录结构及说明</h3><p>项目目录结构及简要说明如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">.</span><br><span class="line">├── compose</span><br><span class="line">│   └── mysql</span><br><span class="line">│       └── my.cnf</span><br><span class="line">├── django_project</span><br><span class="line">│   ├── db.sqlite3</span><br><span class="line">│   ├── django_app</span><br><span class="line">│   │   ├── admin.py</span><br><span class="line">│   │   ├── apps.py</span><br><span class="line">│   │   ├── __init__.py</span><br><span class="line">│   │   ├── migrations</span><br><span class="line">│   │   ├── models.py</span><br><span class="line">│   │   ├── tests.py</span><br><span class="line">│   │   └── views.py</span><br><span class="line">│   ├── django_project</span><br><span class="line">│   │   ├── asgi.py</span><br><span class="line">│   │   ├── __init__.py</span><br><span class="line">│   │   ├── __pycache__</span><br><span class="line">│   │   ├── settings.py</span><br><span class="line">│   │   ├── urls.py</span><br><span class="line">│   │   └── wsgi.py</span><br><span class="line">│   ├── Dockerfile</span><br><span class="line">│   ├── manage.py</span><br><span class="line">│   └── requirements.txt</span><br><span class="line">├── docker-compose.yml</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<ul>
+<li><code>compose</code> : 存放应用配置文件，如 mysql 配置文件 <code>compose/mysql/my.cnf</code></li>
+<li><code>django_project</code> : Django project 项目目录， <code>django-admin startproject django_project</code> 生成</li>
+<li><code>django_project/django_app</code> : Django project 项目下的 app 目录，<code>django-admin startapp django_app</code> 生成</li>
+<li><code>docker-compose.yml</code> : 项目的 compose 文件</li>
+</ul>
+<span id="more"></span>
+
+<h3 id="编写-django-运行镜像的-Dockerfile"><a href="#编写-django-运行镜像的-Dockerfile" class="headerlink" title="编写 django 运行镜像的 Dockerfile"></a>编写 django 运行镜像的 Dockerfile</h3><p>编写构建 django 镜像的 Dockerfile，文件位置 <code>django_project/Dockerfile</code></p>
+<figure class="highlight shell"><figcaption><span>django_project/Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM python:3.10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将上下文环境中(django_project/)的 requirements.txt 拷贝到镜像的 /code 目录</span></span><br><span class="line">COPY requirements.txt /code/</span><br><span class="line"></span><br><span class="line">WORKDIR /code/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 python 项目依赖</span></span><br><span class="line">RUN pip install -r requirements.txt &amp;&amp; rm -rf requirements.txt</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">解决 django 无法加载 MySQLdb 模块的问题</span></span><br><span class="line">RUN echo &quot;import pymysql&quot; &gt; /usr/local/lib/python3.10/site-packages/django/db/backends/mysql/__init__.py &amp;&amp; \</span><br><span class="line">    echo &quot;pymysql.install_as_MySQLdb()&quot; &gt;&gt; /usr/local/lib/python3.10/site-packages/django/db/backends/mysql/__init__.py</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装常用工具，方便容器启动后的调试</span></span><br><span class="line">RUN apt-get update &amp;&amp; apt install -y netcat &amp;&amp; apt install -y vim &amp;&amp; \</span><br><span class="line">    apt-get install -y iputils-ping &amp;&amp; \</span><br><span class="line">    apt-get install -y net-tools</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">健康检查，环境变量 <span class="variable">$&#123;DJANGO_SERVER_PORT&#125;</span> 来自 docker-compose.yml 文件</span></span><br><span class="line">HEALTHCHECK CMD curl -fs http://localhost:$&#123;DJANGO_SERVER_PORT&#125;/ || exit 1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>构建镜像时，只将构建镜像所需的文件（<code>requirements.txt</code>）拷贝进镜像，使用完成后删除，容器运行时需要的代码文件，通过 <code>docker-compose.yml</code> 中的 <code>volumes</code> 命令进行挂载，这样更新代码时，只需要在宿主机上面更新代码，不用再对镜像进行变更，只有需要更新运行环境时才需要更新镜像  </p>
+<p>django 镜像构建文件的 <code>Dockerfile</code> 中先不写 <code>CMD</code> 或者 <code>ENTRYPOINT</code> 启动 web 服务器，因为数据库还没启动，配置 <code>CMD</code> 启动 django 服务会报错（无法连接数据库）</p>
+<p>修改 django 工程配置文件 <code>django_project/django_project/settings.py</code>，提前配置好 mysql 配置：</p>
+<figure class="highlight shell"><figcaption><span>django_project/django_project/settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">DATABASES = &#123;</span><br><span class="line">    &#x27;default&#x27;: &#123;</span><br><span class="line">        &#x27;ENGINE&#x27;: &#x27;django.db.backends.mysql&#x27;,</span><br><span class="line">        # 此处 &#x27;HOST&#x27; 配置的主机地址，要和 docker-compose.yml 中配置的 mysql 服务名称一致</span><br><span class="line">        &#x27;HOST&#x27;: &quot;db&quot;,</span><br><span class="line">        &#x27;NAME&#x27;: &quot;ops&quot;,</span><br><span class="line">        &#x27;USER&#x27;: &quot;root&quot;,</span><br><span class="line">        &quot;PASSWORD&quot;: &quot;123456&quot;,</span><br><span class="line">        &quot;PORT&quot;: &#x27;3306&#x27;,</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="编写项目的-docker-compose-yml"><a href="#编写项目的-docker-compose-yml" class="headerlink" title="编写项目的 docker-compose.yml"></a>编写项目的 docker-compose.yml</h3><p>项目的 <code>docker-compose.yml</code> 文件内容及说明如下</p>
+<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  mysql_data_vol:   # mysql datadir 需要挂载的数据卷</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  django_network:    # 本项目使用的 network ，方便项目中的服务容器之间互相通信，直接使用服务名</span><br><span class="line">    </span><br><span class="line">services:</span><br><span class="line">  db:   #  mysql 服务名</span><br><span class="line">    image: mysql:5.7</span><br><span class="line">    env_file:</span><br><span class="line">      - .env   # 服务要加载的环境变量文件，路径为相对于 docker-compose.yml 的路径</span><br><span class="line">    networks:</span><br><span class="line">      - django_network</span><br><span class="line">    volumes:</span><br><span class="line">      - mysql_data_vol:/var/lib/mysql:rw</span><br><span class="line">      - ./compose/mysql/my.cnf:/etc/my.cnf</span><br><span class="line"></span><br><span class="line">    ports:</span><br><span class="line">        - &quot;3307:3306&quot;</span><br><span class="line">    restart: always</span><br><span class="line"></span><br><span class="line">  django_server:</span><br><span class="line">    build: ./django_project/      # 使用 ./django_project/Dockerfile 构建镜像</span><br><span class="line">    env_file:</span><br><span class="line">      - .env  # 加载环境变量，其中的变量可以在 docker-compose.yml 和 Dockerfile 中使用</span><br><span class="line">      </span><br><span class="line">    volumes:</span><br><span class="line">      - ./django_project/：/code/</span><br><span class="line">    # command ： 容器要运行的命令</span><br><span class="line">    command: python manage.py runserver 0.0.0.0:$&#123;DJANGO_SERVER_PORT&#125;</span><br><span class="line">    networks:</span><br><span class="line">      - django_network</span><br><span class="line">    ports:</span><br><span class="line">      - &#x27;$&#123;DJANGO_SERVER_PORT&#125;:$&#123;DJANGO_SERVER_PORT&#125;&#x27;</span><br><span class="line">    depends_on:</span><br><span class="line">      - db</span><br><span class="line">    restart: always</span><br></pre></td></tr></table></figure>
+
+<p>其中使用的 <code>.env</code> 文件内容如下：</p>
+<figure class="highlight shell"><figcaption><span>.env</span></figcaption><table><tr><td class="code"><pre><span class="line">MYSQL_ROOT_PASSWORD=123456</span><br><span class="line"></span><br><span class="line">DJANGO_SERVER_PORT=8081</span><br></pre></td></tr></table></figure>
+
+<h3 id="启动-docker-compose-项目"><a href="#启动-docker-compose-项目" class="headerlink" title="启动 docker compose 项目"></a>启动 docker compose 项目</h3><p>使用 <code>docker compose build</code> 之前，可以先检查一下配置，确保配置无误：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose config</span></span><br><span class="line">name: dockerproject</span><br><span class="line">services:</span><br><span class="line">  db:</span><br><span class="line">    environment:</span><br><span class="line">      DJANGO_SERVER_PORT: &quot;8081&quot;</span><br><span class="line">      MYSQL_ROOT_PASSWORD: 123456</span><br><span class="line">    image: mysql:5.7</span><br><span class="line">    networks:</span><br><span class="line">      django_network: null</span><br><span class="line">    ports:</span><br><span class="line">    - mode: ingress</span><br><span class="line">      target: 3306</span><br><span class="line">      published: &quot;3307&quot;</span><br><span class="line">      protocol: tcp</span><br><span class="line">    restart: always</span><br><span class="line">    volumes:</span><br><span class="line">    - type: volume</span><br><span class="line">      source: mysql_data_vol</span><br><span class="line">      target: /var/lib/mysql</span><br><span class="line">      volume: &#123;&#125;</span><br><span class="line">    - type: bind</span><br><span class="line">      source: /root/dockerProject/compose/mysql/my.cnf</span><br><span class="line">      target: /etc/my.cnf</span><br><span class="line">      bind:</span><br><span class="line">        create_host_path: true</span><br><span class="line">  django_server:</span><br><span class="line">    build:</span><br><span class="line">      context: /root/dockerProject/django_project</span><br><span class="line">      dockerfile: Dockerfile</span><br><span class="line">    command:</span><br><span class="line">    - python</span><br><span class="line">    - manage.py</span><br><span class="line">    - runserver</span><br><span class="line">    - 0.0.0.0:8081</span><br><span class="line">    depends_on:</span><br><span class="line">      db:</span><br><span class="line">        condition: service_started</span><br><span class="line">    environment:</span><br><span class="line">      DJANGO_SERVER_PORT: &quot;8081&quot;</span><br><span class="line">      MYSQL_ROOT_PASSWORD: 123456</span><br><span class="line">    networks:</span><br><span class="line">      django_network: null</span><br><span class="line">    ports:</span><br><span class="line">    - mode: ingress</span><br><span class="line">      target: 8081</span><br><span class="line">      published: &quot;8081&quot;</span><br><span class="line">      protocol: tcp</span><br><span class="line">    restart: always</span><br><span class="line">networks:</span><br><span class="line">  django_network:</span><br><span class="line">    name: dockerproject_django_network</span><br><span class="line">volumes:</span><br><span class="line">  mysql_data_vol:</span><br><span class="line">    name: dockerproject_mysql_data_vol</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>配置无误，<code>docker compose config</code> 命令会输出配置，有错误会显示错误，<a href="/202208311004/" title="docker compose 其他常用命令参考">docker compose 其他常用命令参考</a></p>
+<p>使用 <code>docker compose build</code> 命令构建镜像</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose build</span></span><br><span class="line">[+] Building 0.1s (11/11) FINISHED                                                                                   </span><br><span class="line"> =&gt; [internal] load build definition from Dockerfile                                                            0.0s</span><br><span class="line"> =&gt; =&gt; transferring dockerfile: 32B                                                                             0.0s</span><br><span class="line"> =&gt; [internal] load .dockerignore                                                                               0.0s</span><br><span class="line"> =&gt; =&gt; transferring context: 2B                                                                                 0.0s</span><br><span class="line"> =&gt; [internal] load metadata for docker.io/library/python:3.10                                                  0.0s</span><br><span class="line"> =&gt; [internal] load build context                                                                               0.0s</span><br><span class="line"> =&gt; =&gt; transferring context: 982B                                                                               0.0s</span><br><span class="line"> =&gt; [1/6] FROM docker.io/library/python:3.10                                                                    0.0s</span><br><span class="line"> =&gt; CACHED [2/6] COPY . /code                                                                                   0.0s</span><br><span class="line"> =&gt; CACHED [3/6] WORKDIR /code                                                                                  0.0s</span><br><span class="line"> =&gt; CACHED [4/6] RUN pip install -r requirements.txt                                                            0.0s</span><br><span class="line"> =&gt; CACHED [5/6] RUN echo &quot;import pymysql&quot; &gt; /usr/local/lib/python3.10/site-packages/django/db/backends/mysql/  0.0s</span><br><span class="line"> =&gt; CACHED [6/6] RUN apt-get update &amp;&amp; apt install -y netcat &amp;&amp; apt install -y vim                              0.0s</span><br><span class="line"> =&gt; exporting to image                                                                                          0.0s</span><br><span class="line"> =&gt; =&gt; exporting layers                                                                                         0.0s</span><br><span class="line"> =&gt; =&gt; writing image sha256:9da868de3de9538931f9d60a7fd40d6197c332f4aadc03c8b8ca8446df7cee23                    0.0s</span><br><span class="line"> =&gt; =&gt; naming to docker.io/library/dockerproject_django_server                                                  0.0s</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>也可以直接使用 <code>docker compose up</code>（会先构建镜像，然后启动项目中的所有服务）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose up</span></span><br><span class="line">[+] Running 3/2</span><br><span class="line"> ⠿ Network dockerproject_django_network     Created                                                             0.1s</span><br><span class="line"> ⠿ Container dockerproject-db-1             Created                                                             0.0s</span><br><span class="line"> ⠿ Container dockerproject-django_server-1  Created                                                             0.0s</span><br><span class="line">Attaching to dockerproject-db-1, dockerproject-django_server-1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>查看 compose 项目的状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose <span class="built_in">ls</span></span></span><br><span class="line">NAME                STATUS              CONFIG FILES</span><br><span class="line">dockerproject       running(2)          /root/dockerProject/docker-compose.yml</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>查看 compose 项目中的容器情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose ps</span></span><br><span class="line">NAME                            COMMAND                  SERVICE             STATUS              PORTS</span><br><span class="line">dockerproject-db-1              &quot;docker-entrypoint.s…&quot;   db                  running             0.0.0.0:3307-&gt;3306/tcp, :::3307-&gt;3306/tcp</span><br><span class="line">dockerproject-django_server-1   &quot;python manage.py ru…&quot;   django_server       running (healthy)   0.0.0.0:8081-&gt;8081/tcp, :::8081-&gt;8081/tcp</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>查看 compose 项目中的镜像</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose images</span></span><br><span class="line">Container                       Repository                    Tag                 Image Id            Size</span><br><span class="line">dockerproject-db-1              mysql                         5.7                 daff57b7d2d1        430MB</span><br><span class="line">dockerproject-django_server-1   dockerproject_django_server   latest              9da868de3de9        1.02GB</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://csms.tech/categories/Docker/">docker compose 说明</a><br><a href="https://csms.tech/202208311004/">docker compose 常用命令</a></p>
+]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+        <tag>compose</tag>
+        <tag>django</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Docker 私有镜像仓库 Harbor 安装及使用</title>
     <url>/202210191515/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
@@ -4037,64 +4095,6 @@ width: 20%;
       <tags>
         <tag>Docker</tag>
         <tag>Harbor</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>docker compose 配置 django mysql 站点</title>
-    <url>/202209051137/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>本文主要记录使用 <code>docker compose</code> 配置 Django + Mysql 的 web 站点的过程。</p>
-<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos7</li>
-<li>Docker version 20.10.17</li>
-</ul>
-<h3 id="目录结构及说明"><a href="#目录结构及说明" class="headerlink" title="目录结构及说明"></a>目录结构及说明</h3><p>项目目录结构及简要说明如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">.</span><br><span class="line">├── compose</span><br><span class="line">│   └── mysql</span><br><span class="line">│       └── my.cnf</span><br><span class="line">├── django_project</span><br><span class="line">│   ├── db.sqlite3</span><br><span class="line">│   ├── django_app</span><br><span class="line">│   │   ├── admin.py</span><br><span class="line">│   │   ├── apps.py</span><br><span class="line">│   │   ├── __init__.py</span><br><span class="line">│   │   ├── migrations</span><br><span class="line">│   │   ├── models.py</span><br><span class="line">│   │   ├── tests.py</span><br><span class="line">│   │   └── views.py</span><br><span class="line">│   ├── django_project</span><br><span class="line">│   │   ├── asgi.py</span><br><span class="line">│   │   ├── __init__.py</span><br><span class="line">│   │   ├── __pycache__</span><br><span class="line">│   │   ├── settings.py</span><br><span class="line">│   │   ├── urls.py</span><br><span class="line">│   │   └── wsgi.py</span><br><span class="line">│   ├── Dockerfile</span><br><span class="line">│   ├── manage.py</span><br><span class="line">│   └── requirements.txt</span><br><span class="line">├── docker-compose.yml</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<ul>
-<li><code>compose</code> : 存放应用配置文件，如 mysql 配置文件 <code>compose/mysql/my.cnf</code></li>
-<li><code>django_project</code> : Django project 项目目录， <code>django-admin startproject django_project</code> 生成</li>
-<li><code>django_project/django_app</code> : Django project 项目下的 app 目录，<code>django-admin startapp django_app</code> 生成</li>
-<li><code>docker-compose.yml</code> : 项目的 compose 文件</li>
-</ul>
-<span id="more"></span>
-
-<h3 id="编写-django-运行镜像的-Dockerfile"><a href="#编写-django-运行镜像的-Dockerfile" class="headerlink" title="编写 django 运行镜像的 Dockerfile"></a>编写 django 运行镜像的 Dockerfile</h3><p>编写构建 django 镜像的 Dockerfile，文件位置 <code>django_project/Dockerfile</code></p>
-<figure class="highlight shell"><figcaption><span>django_project/Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM python:3.10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将上下文环境中(django_project/)的 requirements.txt 拷贝到镜像的 /code 目录</span></span><br><span class="line">COPY requirements.txt /code/</span><br><span class="line"></span><br><span class="line">WORKDIR /code/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 python 项目依赖</span></span><br><span class="line">RUN pip install -r requirements.txt &amp;&amp; rm -rf requirements.txt</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">解决 django 无法加载 MySQLdb 模块的问题</span></span><br><span class="line">RUN echo &quot;import pymysql&quot; &gt; /usr/local/lib/python3.10/site-packages/django/db/backends/mysql/__init__.py &amp;&amp; \</span><br><span class="line">    echo &quot;pymysql.install_as_MySQLdb()&quot; &gt;&gt; /usr/local/lib/python3.10/site-packages/django/db/backends/mysql/__init__.py</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装常用工具，方便容器启动后的调试</span></span><br><span class="line">RUN apt-get update &amp;&amp; apt install -y netcat &amp;&amp; apt install -y vim &amp;&amp; \</span><br><span class="line">    apt-get install -y iputils-ping &amp;&amp; \</span><br><span class="line">    apt-get install -y net-tools</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">健康检查，环境变量 <span class="variable">$&#123;DJANGO_SERVER_PORT&#125;</span> 来自 docker-compose.yml 文件</span></span><br><span class="line">HEALTHCHECK CMD curl -fs http://localhost:$&#123;DJANGO_SERVER_PORT&#125;/ || exit 1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>构建镜像时，只将构建镜像所需的文件（<code>requirements.txt</code>）拷贝进镜像，使用完成后删除，容器运行时需要的代码文件，通过 <code>docker-compose.yml</code> 中的 <code>volumes</code> 命令进行挂载，这样更新代码时，只需要在宿主机上面更新代码，不用再对镜像进行变更，只有需要更新运行环境时才需要更新镜像  </p>
-<p>django 镜像构建文件的 <code>Dockerfile</code> 中先不写 <code>CMD</code> 或者 <code>ENTRYPOINT</code> 启动 web 服务器，因为数据库还没启动，配置 <code>CMD</code> 启动 django 服务会报错（无法连接数据库）</p>
-<p>修改 django 工程配置文件 <code>django_project/django_project/settings.py</code>，提前配置好 mysql 配置：</p>
-<figure class="highlight shell"><figcaption><span>django_project/django_project/settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">DATABASES = &#123;</span><br><span class="line">    &#x27;default&#x27;: &#123;</span><br><span class="line">        &#x27;ENGINE&#x27;: &#x27;django.db.backends.mysql&#x27;,</span><br><span class="line">        # 此处 &#x27;HOST&#x27; 配置的主机地址，要和 docker-compose.yml 中配置的 mysql 服务名称一致</span><br><span class="line">        &#x27;HOST&#x27;: &quot;db&quot;,</span><br><span class="line">        &#x27;NAME&#x27;: &quot;ops&quot;,</span><br><span class="line">        &#x27;USER&#x27;: &quot;root&quot;,</span><br><span class="line">        &quot;PASSWORD&quot;: &quot;123456&quot;,</span><br><span class="line">        &quot;PORT&quot;: &#x27;3306&#x27;,</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<h3 id="编写项目的-docker-compose-yml"><a href="#编写项目的-docker-compose-yml" class="headerlink" title="编写项目的 docker-compose.yml"></a>编写项目的 docker-compose.yml</h3><p>项目的 <code>docker-compose.yml</code> 文件内容及说明如下</p>
-<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  mysql_data_vol:   # mysql datadir 需要挂载的数据卷</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  django_network:    # 本项目使用的 network ，方便项目中的服务容器之间互相通信，直接使用服务名</span><br><span class="line">    </span><br><span class="line">services:</span><br><span class="line">  db:   #  mysql 服务名</span><br><span class="line">    image: mysql:5.7</span><br><span class="line">    env_file:</span><br><span class="line">      - .env   # 服务要加载的环境变量文件，路径为相对于 docker-compose.yml 的路径</span><br><span class="line">    networks:</span><br><span class="line">      - django_network</span><br><span class="line">    volumes:</span><br><span class="line">      - mysql_data_vol:/var/lib/mysql:rw</span><br><span class="line">      - ./compose/mysql/my.cnf:/etc/my.cnf</span><br><span class="line"></span><br><span class="line">    ports:</span><br><span class="line">        - &quot;3307:3306&quot;</span><br><span class="line">    restart: always</span><br><span class="line"></span><br><span class="line">  django_server:</span><br><span class="line">    build: ./django_project/      # 使用 ./django_project/Dockerfile 构建镜像</span><br><span class="line">    env_file:</span><br><span class="line">      - .env  # 加载环境变量，其中的变量可以在 docker-compose.yml 和 Dockerfile 中使用</span><br><span class="line">      </span><br><span class="line">    volumes:</span><br><span class="line">      - ./django_project/：/code/</span><br><span class="line">    # command ： 容器要运行的命令</span><br><span class="line">    command: python manage.py runserver 0.0.0.0:$&#123;DJANGO_SERVER_PORT&#125;</span><br><span class="line">    networks:</span><br><span class="line">      - django_network</span><br><span class="line">    ports:</span><br><span class="line">      - &#x27;$&#123;DJANGO_SERVER_PORT&#125;:$&#123;DJANGO_SERVER_PORT&#125;&#x27;</span><br><span class="line">    depends_on:</span><br><span class="line">      - db</span><br><span class="line">    restart: always</span><br></pre></td></tr></table></figure>
-
-<p>其中使用的 <code>.env</code> 文件内容如下：</p>
-<figure class="highlight shell"><figcaption><span>.env</span></figcaption><table><tr><td class="code"><pre><span class="line">MYSQL_ROOT_PASSWORD=123456</span><br><span class="line"></span><br><span class="line">DJANGO_SERVER_PORT=8081</span><br></pre></td></tr></table></figure>
-
-<h3 id="启动-docker-compose-项目"><a href="#启动-docker-compose-项目" class="headerlink" title="启动 docker compose 项目"></a>启动 docker compose 项目</h3><p>使用 <code>docker compose build</code> 之前，可以先检查一下配置，确保配置无误：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose config</span></span><br><span class="line">name: dockerproject</span><br><span class="line">services:</span><br><span class="line">  db:</span><br><span class="line">    environment:</span><br><span class="line">      DJANGO_SERVER_PORT: &quot;8081&quot;</span><br><span class="line">      MYSQL_ROOT_PASSWORD: 123456</span><br><span class="line">    image: mysql:5.7</span><br><span class="line">    networks:</span><br><span class="line">      django_network: null</span><br><span class="line">    ports:</span><br><span class="line">    - mode: ingress</span><br><span class="line">      target: 3306</span><br><span class="line">      published: &quot;3307&quot;</span><br><span class="line">      protocol: tcp</span><br><span class="line">    restart: always</span><br><span class="line">    volumes:</span><br><span class="line">    - type: volume</span><br><span class="line">      source: mysql_data_vol</span><br><span class="line">      target: /var/lib/mysql</span><br><span class="line">      volume: &#123;&#125;</span><br><span class="line">    - type: bind</span><br><span class="line">      source: /root/dockerProject/compose/mysql/my.cnf</span><br><span class="line">      target: /etc/my.cnf</span><br><span class="line">      bind:</span><br><span class="line">        create_host_path: true</span><br><span class="line">  django_server:</span><br><span class="line">    build:</span><br><span class="line">      context: /root/dockerProject/django_project</span><br><span class="line">      dockerfile: Dockerfile</span><br><span class="line">    command:</span><br><span class="line">    - python</span><br><span class="line">    - manage.py</span><br><span class="line">    - runserver</span><br><span class="line">    - 0.0.0.0:8081</span><br><span class="line">    depends_on:</span><br><span class="line">      db:</span><br><span class="line">        condition: service_started</span><br><span class="line">    environment:</span><br><span class="line">      DJANGO_SERVER_PORT: &quot;8081&quot;</span><br><span class="line">      MYSQL_ROOT_PASSWORD: 123456</span><br><span class="line">    networks:</span><br><span class="line">      django_network: null</span><br><span class="line">    ports:</span><br><span class="line">    - mode: ingress</span><br><span class="line">      target: 8081</span><br><span class="line">      published: &quot;8081&quot;</span><br><span class="line">      protocol: tcp</span><br><span class="line">    restart: always</span><br><span class="line">networks:</span><br><span class="line">  django_network:</span><br><span class="line">    name: dockerproject_django_network</span><br><span class="line">volumes:</span><br><span class="line">  mysql_data_vol:</span><br><span class="line">    name: dockerproject_mysql_data_vol</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>配置无误，<code>docker compose config</code> 命令会输出配置，有错误会显示错误，<a href="/202208311004/" title="docker compose 其他常用命令参考">docker compose 其他常用命令参考</a></p>
-<p>使用 <code>docker compose build</code> 命令构建镜像</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose build</span></span><br><span class="line">[+] Building 0.1s (11/11) FINISHED                                                                                   </span><br><span class="line"> =&gt; [internal] load build definition from Dockerfile                                                            0.0s</span><br><span class="line"> =&gt; =&gt; transferring dockerfile: 32B                                                                             0.0s</span><br><span class="line"> =&gt; [internal] load .dockerignore                                                                               0.0s</span><br><span class="line"> =&gt; =&gt; transferring context: 2B                                                                                 0.0s</span><br><span class="line"> =&gt; [internal] load metadata for docker.io/library/python:3.10                                                  0.0s</span><br><span class="line"> =&gt; [internal] load build context                                                                               0.0s</span><br><span class="line"> =&gt; =&gt; transferring context: 982B                                                                               0.0s</span><br><span class="line"> =&gt; [1/6] FROM docker.io/library/python:3.10                                                                    0.0s</span><br><span class="line"> =&gt; CACHED [2/6] COPY . /code                                                                                   0.0s</span><br><span class="line"> =&gt; CACHED [3/6] WORKDIR /code                                                                                  0.0s</span><br><span class="line"> =&gt; CACHED [4/6] RUN pip install -r requirements.txt                                                            0.0s</span><br><span class="line"> =&gt; CACHED [5/6] RUN echo &quot;import pymysql&quot; &gt; /usr/local/lib/python3.10/site-packages/django/db/backends/mysql/  0.0s</span><br><span class="line"> =&gt; CACHED [6/6] RUN apt-get update &amp;&amp; apt install -y netcat &amp;&amp; apt install -y vim                              0.0s</span><br><span class="line"> =&gt; exporting to image                                                                                          0.0s</span><br><span class="line"> =&gt; =&gt; exporting layers                                                                                         0.0s</span><br><span class="line"> =&gt; =&gt; writing image sha256:9da868de3de9538931f9d60a7fd40d6197c332f4aadc03c8b8ca8446df7cee23                    0.0s</span><br><span class="line"> =&gt; =&gt; naming to docker.io/library/dockerproject_django_server                                                  0.0s</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>也可以直接使用 <code>docker compose up</code>（会先构建镜像，然后启动项目中的所有服务）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose up</span></span><br><span class="line">[+] Running 3/2</span><br><span class="line"> ⠿ Network dockerproject_django_network     Created                                                             0.1s</span><br><span class="line"> ⠿ Container dockerproject-db-1             Created                                                             0.0s</span><br><span class="line"> ⠿ Container dockerproject-django_server-1  Created                                                             0.0s</span><br><span class="line">Attaching to dockerproject-db-1, dockerproject-django_server-1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>查看 compose 项目的状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose <span class="built_in">ls</span></span></span><br><span class="line">NAME                STATUS              CONFIG FILES</span><br><span class="line">dockerproject       running(2)          /root/dockerProject/docker-compose.yml</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看 compose 项目中的容器情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose ps</span></span><br><span class="line">NAME                            COMMAND                  SERVICE             STATUS              PORTS</span><br><span class="line">dockerproject-db-1              &quot;docker-entrypoint.s…&quot;   db                  running             0.0.0.0:3307-&gt;3306/tcp, :::3307-&gt;3306/tcp</span><br><span class="line">dockerproject-django_server-1   &quot;python manage.py ru…&quot;   django_server       running (healthy)   0.0.0.0:8081-&gt;8081/tcp, :::8081-&gt;8081/tcp</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看 compose 项目中的镜像</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker compose images</span></span><br><span class="line">Container                       Repository                    Tag                 Image Id            Size</span><br><span class="line">dockerproject-db-1              mysql                         5.7                 daff57b7d2d1        430MB</span><br><span class="line">dockerproject-django_server-1   dockerproject_django_server   latest              9da868de3de9        1.02GB</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://csms.tech/categories/Docker/">docker compose 说明</a><br><a href="https://csms.tech/202208311004/">docker compose 常用命令</a></p>
-]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-        <tag>compose</tag>
-        <tag>django</tag>
       </tags>
   </entry>
   <entry>
@@ -6868,6 +6868,25 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Modular Admin HTML 模板使用注意事项</title>
+    <url>/202308071022/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Django 4.4</li>
+<li>Modular Admin v1.4.0</li>
+</ul>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type"><a href="#because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type" class="headerlink" title="because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type"></a>because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type</h2><p>使用 Django 模板语法加载 <code>index.html</code> 中的静态文件后，有个 <code>app.css</code> 文件请求 404，Console 中报错： <code>because its MIME type (&#39;text/html&#39;) is not a supported stylesheet MIME type</code></p>
+<p><em><strong>问题原因</strong></em> 在 Modular Admin 代码中搜索 <code>app.css</code>，除了 <code>index.html</code> 引用了此文件，<code>js/app.js</code> 也引用了此文件。在 Django 中使用次模板，需要修改此处的路径正确。<br><img src="https://i.csms.tech/img_213.png"></p>
+<h1 id="常用修改事项说明"><a href="#常用修改事项说明" class="headerlink" title="常用修改事项说明"></a>常用修改事项说明</h1><h2 id="菜单项的展开标签"><a href="#菜单项的展开标签" class="headerlink" title="菜单项的展开标签"></a>菜单项的展开标签</h2><p>要在页面中让菜单处于展开状态，需要给菜单应用 <code>active open</code> 的 class<br><img src="https://i.csms.tech/img_214.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-area-chart&quot;&gt;&lt;/i&gt; Charts &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-flot.html&quot;&gt; Flot Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-morris.html&quot;&gt; Morris Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li class=&quot;active open&quot;&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-table&quot;&gt;&lt;/i&gt; Tables &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li class=&quot;active&quot;&gt;</span><br><span class="line">            &lt;a href=&quot;static-tables.html&quot;&gt; Static Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;responsive-tables.html&quot;&gt; Responsive Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;forms.html&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-pencil-square-o&quot;&gt;&lt;/i&gt; Forms &lt;/a&gt;</span><br><span class="line">&lt;/li&gt;</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>HTML</category>
+      </categories>
+      <tags>
+        <tag>HTML</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Huawei 云 SDK 使用</title>
     <url>/202301270909/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6914,43 +6933,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Modular Admin HTML 模板使用注意事项</title>
-    <url>/202308071022/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Django 4.4</li>
-<li>Modular Admin v1.4.0</li>
-</ul>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type"><a href="#because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type" class="headerlink" title="because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type"></a>because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type</h2><p>使用 Django 模板语法加载 <code>index.html</code> 中的静态文件后，有个 <code>app.css</code> 文件请求 404，Console 中报错： <code>because its MIME type (&#39;text/html&#39;) is not a supported stylesheet MIME type</code></p>
-<p><em><strong>问题原因</strong></em> 在 Modular Admin 代码中搜索 <code>app.css</code>，除了 <code>index.html</code> 引用了此文件，<code>js/app.js</code> 也引用了此文件。在 Django 中使用次模板，需要修改此处的路径正确。<br><img src="https://i.csms.tech/img_213.png"></p>
-<h1 id="常用修改事项说明"><a href="#常用修改事项说明" class="headerlink" title="常用修改事项说明"></a>常用修改事项说明</h1><h2 id="菜单项的展开标签"><a href="#菜单项的展开标签" class="headerlink" title="菜单项的展开标签"></a>菜单项的展开标签</h2><p>要在页面中让菜单处于展开状态，需要给菜单应用 <code>active open</code> 的 class<br><img src="https://i.csms.tech/img_214.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-area-chart&quot;&gt;&lt;/i&gt; Charts &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-flot.html&quot;&gt; Flot Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-morris.html&quot;&gt; Morris Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li class=&quot;active open&quot;&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-table&quot;&gt;&lt;/i&gt; Tables &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li class=&quot;active&quot;&gt;</span><br><span class="line">            &lt;a href=&quot;static-tables.html&quot;&gt; Static Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;responsive-tables.html&quot;&gt; Responsive Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;forms.html&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-pencil-square-o&quot;&gt;&lt;/i&gt; Forms &lt;/a&gt;</span><br><span class="line">&lt;/li&gt;</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>HTML</category>
-      </categories>
-      <tags>
-        <tag>HTML</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>internetbs API 使用</title>
-    <url>/202303071425/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://internetbs.net/internet-bs-api.pdf">internetbs 域名注册平台 API 接口稳定</a></p>
-<p>调用 API 接口需要使用 API key 及账号密码。API 接口申请 key 时需要添加 IP 白名单，只允许从添加的白名单 IP 请求 API。</p>
-<h1 id="常见操作"><a href="#常见操作" class="headerlink" title="常见操作"></a>常见操作</h1><h2 id="获取域名数量"><a href="#获取域名数量" class="headerlink" title="获取域名数量"></a>获取域名数量</h2><p>API 默认返回的数据格式为 <code>TEXT</code>，建议指定数据返回格式为 <code>JSON</code>，通过 <code>eval(response.content)</code> 将返回的字节类型数据转换为字典类型。</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>params = &#123;<span class="string">&#x27;ApiKey&#x27;</span>: <span class="string">&#x27;key&#x27;</span>, <span class="string">&#x27;Password&#x27;</span>: <span class="string">&#x27;pswd&#x27;</span>, <span class="string">&#x27;ResponseFormat&#x27;</span>: <span class="string">&#x27;JSON&#x27;</span>&#125;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>response = requests.get(<span class="string">&#x27;https://api.internet.bs/Domain/Count&#x27;</span>, params=params, )</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>response.content</span><br><span class="line"><span class="string">b&#x27;&#123;&quot;transactid&quot;:&quot;3b3df8bfdfcc215ea7e6575a97adcea3&quot;,&quot;status&quot;:&quot;SUCCESS&quot;,&quot;app&quot;:9,&quot;com&quot;:6,&quot;de&quot;:1,&quot;in&quot;:1,&quot;live&quot;:1,&quot;tv&quot;:2,&quot;vip&quot;:1,&quot;world&quot;:1,&quot;totaldomains&quot;:22&#125;&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">eval</span>(response.content)</span><br><span class="line">&#123;<span class="string">&#x27;transactid&#x27;</span>: <span class="string">&#x27;3b3df8bfdfcc215ea7e6575a97adcea3&#x27;</span>, <span class="string">&#x27;status&#x27;</span>: <span class="string">&#x27;SUCCESS&#x27;</span>, <span class="string">&#x27;app&#x27;</span>: <span class="number">9</span>, <span class="string">&#x27;com&#x27;</span>: <span class="number">6</span>, <span class="string">&#x27;de&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;in&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;live&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;tv&#x27;</span>: <span class="number">2</span>, <span class="string">&#x27;vip&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;world&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;totaldomains&#x27;</span>: <span class="number">22</span>&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="获取所有域名"><a href="#获取所有域名" class="headerlink" title="获取所有域名"></a>获取所有域名</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>params = &#123;<span class="string">&#x27;ApiKey&#x27;</span>: <span class="string">&#x27;key&#x27;</span>, <span class="string">&#x27;Password&#x27;</span>: <span class="string">&#x27;pswd&#x27;</span>, <span class="string">&#x27;ResponseFormat&#x27;</span>: <span class="string">&#x27;JSON&#x27;</span>&#125;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>response = requests.get(<span class="string">&#x27;https://api.internet.bs/Domain/List&#x27;</span>, params=params, )</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>internetbs</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>inotify 安装使用</title>
     <url>/512c7c5/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -6989,6 +6971,24 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>internetbs API 使用</title>
+    <url>/202303071425/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://internetbs.net/internet-bs-api.pdf">internetbs 域名注册平台 API 接口稳定</a></p>
+<p>调用 API 接口需要使用 API key 及账号密码。API 接口申请 key 时需要添加 IP 白名单，只允许从添加的白名单 IP 请求 API。</p>
+<h1 id="常见操作"><a href="#常见操作" class="headerlink" title="常见操作"></a>常见操作</h1><h2 id="获取域名数量"><a href="#获取域名数量" class="headerlink" title="获取域名数量"></a>获取域名数量</h2><p>API 默认返回的数据格式为 <code>TEXT</code>，建议指定数据返回格式为 <code>JSON</code>，通过 <code>eval(response.content)</code> 将返回的字节类型数据转换为字典类型。</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>params = &#123;<span class="string">&#x27;ApiKey&#x27;</span>: <span class="string">&#x27;key&#x27;</span>, <span class="string">&#x27;Password&#x27;</span>: <span class="string">&#x27;pswd&#x27;</span>, <span class="string">&#x27;ResponseFormat&#x27;</span>: <span class="string">&#x27;JSON&#x27;</span>&#125;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>response = requests.get(<span class="string">&#x27;https://api.internet.bs/Domain/Count&#x27;</span>, params=params, )</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>response.content</span><br><span class="line"><span class="string">b&#x27;&#123;&quot;transactid&quot;:&quot;3b3df8bfdfcc215ea7e6575a97adcea3&quot;,&quot;status&quot;:&quot;SUCCESS&quot;,&quot;app&quot;:9,&quot;com&quot;:6,&quot;de&quot;:1,&quot;in&quot;:1,&quot;live&quot;:1,&quot;tv&quot;:2,&quot;vip&quot;:1,&quot;world&quot;:1,&quot;totaldomains&quot;:22&#125;&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">eval</span>(response.content)</span><br><span class="line">&#123;<span class="string">&#x27;transactid&#x27;</span>: <span class="string">&#x27;3b3df8bfdfcc215ea7e6575a97adcea3&#x27;</span>, <span class="string">&#x27;status&#x27;</span>: <span class="string">&#x27;SUCCESS&#x27;</span>, <span class="string">&#x27;app&#x27;</span>: <span class="number">9</span>, <span class="string">&#x27;com&#x27;</span>: <span class="number">6</span>, <span class="string">&#x27;de&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;in&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;live&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;tv&#x27;</span>: <span class="number">2</span>, <span class="string">&#x27;vip&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;world&#x27;</span>: <span class="number">1</span>, <span class="string">&#x27;totaldomains&#x27;</span>: <span class="number">22</span>&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="获取所有域名"><a href="#获取所有域名" class="headerlink" title="获取所有域名"></a>获取所有域名</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>params = &#123;<span class="string">&#x27;ApiKey&#x27;</span>: <span class="string">&#x27;key&#x27;</span>, <span class="string">&#x27;Password&#x27;</span>: <span class="string">&#x27;pswd&#x27;</span>, <span class="string">&#x27;ResponseFormat&#x27;</span>: <span class="string">&#x27;JSON&#x27;</span>&#125;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>response = requests.get(<span class="string">&#x27;https://api.internet.bs/Domain/List&#x27;</span>, params=params, )</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>internetbs</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
       </tags>
   </entry>
   <entry>
@@ -13020,6 +13020,30 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>namesilo api 使用</title>
+    <url>/202303031036/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.namesilo.com/api-reference">Namesilo api 官方文档</a></p>
+<p>Python SDK 为 <a href="https://pypi.org/project/python-namesilo/">python-namesilo</a>，安装方法</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">pip install python-namesilo</span><br></pre></td></tr></table></figure>
+
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11.2</li>
+<li>python-namesilo&#x3D;&#x3D;1.1.3</li>
+</ul>
+<h1 id="python-namesilo-常见用法示例"><a href="#python-namesilo-常见用法示例" class="headerlink" title="python-namesilo 常见用法示例"></a>python-namesilo 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><p>使用 SDK 之前需要先登陆账号创建 API Token，详细使用方法可以查看帮助信息，获取所有域名使用方法 <code>list_domains</code></p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">from</span> namesilo.core <span class="keyword">import</span> NameSilo</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>key = <span class="string">&#x27;KKKKKKKKKKKKKKKKKK&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = NameSilo(token=key, sandbox=<span class="literal">False</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(client)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.list_domains()</span><br></pre></td></tr></table></figure>
+
+<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><p>获取指定域名的详细信息使用 <code>get_domain_info</code>，此方法返回一个 <code>DomainInfo</code> 对象，里面包括域名创建时间，过期时间，nameserver等信息</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br><span class="line">&lt;namesilo.common.models.DomainInfo <span class="built_in">object</span> at <span class="number">0x7f71a0530a50</span>&gt;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">dir</span>(client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>))</span><br><span class="line">[<span class="string">&#x27;auto_renew&#x27;</span>, <span class="string">&#x27;contacts&#x27;</span>, <span class="string">&#x27;created&#x27;</span>, <span class="string">&#x27;expires&#x27;</span>, <span class="string">&#x27;locked&#x27;</span>, <span class="string">&#x27;name_servers&#x27;</span>, <span class="string">&#x27;private&#x27;</span>, <span class="string">&#x27;status&#x27;</span>, <span class="string">&#x27;traffic_type&#x27;</span>]</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Namesilo</category>
+      </categories>
+      <tags>
+        <tag>Namesilo</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Nextcloud 安装配置</title>
     <url>/202405081010/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Nextcloud-All-in-One"><a href="#Nextcloud-All-in-One" class="headerlink" title="Nextcloud All-in-One"></a>Nextcloud All-in-One</h1><p>Nextcloud All-in-One 在一个 Docker 容器中提供了方便部署和维护的 Nextcloud 方式。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Nextcloud All-in-One](https://github.com/nextcloud/all-in-one#nextcloud-all-in-one)">[1]</span></a></sup></p>
@@ -13046,30 +13070,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Nextcloud</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>namesilo api 使用</title>
-    <url>/202303031036/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.namesilo.com/api-reference">Namesilo api 官方文档</a></p>
-<p>Python SDK 为 <a href="https://pypi.org/project/python-namesilo/">python-namesilo</a>，安装方法</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">pip install python-namesilo</span><br></pre></td></tr></table></figure>
-
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.11.2</li>
-<li>python-namesilo&#x3D;&#x3D;1.1.3</li>
-</ul>
-<h1 id="python-namesilo-常见用法示例"><a href="#python-namesilo-常见用法示例" class="headerlink" title="python-namesilo 常见用法示例"></a>python-namesilo 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><p>使用 SDK 之前需要先登陆账号创建 API Token，详细使用方法可以查看帮助信息，获取所有域名使用方法 <code>list_domains</code></p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">from</span> namesilo.core <span class="keyword">import</span> NameSilo</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>key = <span class="string">&#x27;KKKKKKKKKKKKKKKKKK&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = NameSilo(token=key, sandbox=<span class="literal">False</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(client)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.list_domains()</span><br></pre></td></tr></table></figure>
-
-<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><p>获取指定域名的详细信息使用 <code>get_domain_info</code>，此方法返回一个 <code>DomainInfo</code> 对象，里面包括域名创建时间，过期时间，nameserver等信息</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br><span class="line">&lt;namesilo.common.models.DomainInfo <span class="built_in">object</span> at <span class="number">0x7f71a0530a50</span>&gt;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">dir</span>(client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>))</span><br><span class="line">[<span class="string">&#x27;auto_renew&#x27;</span>, <span class="string">&#x27;contacts&#x27;</span>, <span class="string">&#x27;created&#x27;</span>, <span class="string">&#x27;expires&#x27;</span>, <span class="string">&#x27;locked&#x27;</span>, <span class="string">&#x27;name_servers&#x27;</span>, <span class="string">&#x27;private&#x27;</span>, <span class="string">&#x27;status&#x27;</span>, <span class="string">&#x27;traffic_type&#x27;</span>]</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Namesilo</category>
-      </categories>
-      <tags>
-        <tag>Namesilo</tag>
       </tags>
   </entry>
   <entry>
@@ -13568,6 +13568,63 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Docker 部署 OpenVPN</title>
+    <url>/202302171657/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 3.10.0-1160</li>
+<li>Docker 20.10.9</li>
+<li>iptables</li>
+</ul>
+<h1 id="前提条件"><a href="#前提条件" class="headerlink" title="前提条件"></a>前提条件</h1><p>宿主机操作系统内核配置允许数据转发，<a href="https://csms.tech/202302161539/#开启系统-IPv4-转发功能">开启系统 IPv4 转发功能</a></p>
+<h1 id="Docker-部署-OpenVPN-服务端步骤"><a href="#Docker-部署-OpenVPN-服务端步骤" class="headerlink" title="Docker 部署 OpenVPN 服务端步骤"></a>Docker 部署 OpenVPN 服务端步骤</h1><h2 id="创建本地配置目录"><a href="#创建本地配置目录" class="headerlink" title="创建本地配置目录"></a>创建本地配置目录</h2><p>用了在启动容器时挂载以持久化 OpenVPN 配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkdir /opt/openvpn1/</span><br></pre></td></tr></table></figure>
+
+<h2 id="初始化配置文件"><a href="#初始化配置文件" class="headerlink" title="初始化配置文件"></a>初始化配置文件</h2><p>执行以下命令初始化 OpenVPN 服务端配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_genconfig -u udp://$&#123;PUB_IP&#125;:1194</span><br></pre></td></tr></table></figure>
+<p>参数说明：</p>
+<ul>
+<li><code>udp://$&#123;PUB_IP&#125;:1194</code> - 指定 VPN 服务器配置，使用 <code>1194/udp</code> 端口。${PUB_IP} 为服务器公网 IP。</li>
+</ul>
+<h2 id="生成密钥-证书-文件"><a href="#生成密钥-证书-文件" class="headerlink" title="生成密钥(证书)文件"></a>生成密钥(证书)文件</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_initpki</span><br></pre></td></tr></table></figure>
+<p>根据提示，输入 CA 根证书密码及名称</p>
+<h2 id="创建带有密码的客户端证书"><a href="#创建带有密码的客户端证书" class="headerlink" title="创建带有密码的客户端证书"></a>创建带有密码的客户端证书</h2><p>执行以下命令，根据提示输入客户端证书密码及 CA 密码，生成客户端证书。如果客户端证书无需密码，最后加选项 <code>nopass</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 easyrsa build-client-full vpn1</span><br></pre></td></tr></table></figure>
+
+<h2 id="导出客户端证书"><a href="#导出客户端证书" class="headerlink" title="导出客户端证书"></a>导出客户端证书</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_getclient vpn1 &gt; /opt/openvpn/client/vpn1.ovpn</span><br></pre></td></tr></table></figure>
+
+<h2 id="启动-OpenVPN"><a href="#启动-OpenVPN" class="headerlink" title="启动 OpenVPN"></a>启动 OpenVPN</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -it --name OpenVPN1 \</span><br><span class="line">           -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">           -d -p 1194:1194/udp --cap-add=NET_ADMIN \</span><br><span class="line">           kylemanna/openvpn:2.4</span><br><span class="line">           </span><br></pre></td></tr></table></figure>
+<p>防火墙放通 <code>1194/udp</code> 端口</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -p udp --dport 1194 -j ACCEPT -m comment --comment &quot;openvpn&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>OpenVPN 启动后，docker 会在宿主机操作系统的 iptables 中添加对应的 <code>MASQUERADE</code> 规则，负责转发和 NAT 数据，具体规则可通过以下方法查看</p>
+<p>查看 NAT 表添加的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers | more</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 127 packets, 9255 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       54  2490 DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 1 packets, 70 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       75  6875 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">2      610 36387 MASQUERADE  all  --  *      *       10.8.0.0/24          0.0.0.0/0           </span><br><span class="line">3        0     0 MASQUERADE  udp  --  *      *       172.17.0.2           172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        1    70 DNAT       udp  --  !docker0 *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 to:172.17.0.2:1194</span><br></pre></td></tr></table></figure>
+<p>查看 FILTER 表添加的规则</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ iptables -L -v -n --line-numbers | more</span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      641 51489 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 /* openvpn */</span><br><span class="line">...</span><br><span class="line">13       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">14       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">15     230 14788 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3     8465 2439K ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        1    70 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5     8425 2421K ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7     4177 1774K ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">8      202 13030 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 343 packets, 61383 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        1    70 ACCEPT     udp  --  !docker0 docker0  0.0.0.0/0            172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     8425 2421K DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2     8425 2421K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
+
+<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>将 <a href="#%E5%AF%BC%E5%87%BA%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%AF%81%E4%B9%A6">导出客户端证书</a> 中生成的客户端证书发送到客户端，测试连接。</p>
+<p>客户端连接失败，可以检查以下内容：</p>
+<ul>
+<li><p>客户端日志及服务端日志，服务端日志可以通过以下方法查看</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker logs -f OpenVPN</span><br></pre></td></tr></table></figure>
+
+</li>
+<li><p>检查是否是因为 <a href="#%E5%90%AF%E5%8A%A8-OpenVPN">iptables 防火墙规则</a> 问题导致无法连接，如果防火墙相关规则丢失，可以通过重启 docker 和 OpenVPN 容器的方式恢复。</p>
+</li>
+<li><p>检查容器中启动的端口和 docker 映射的端口是否一致。</p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>OpenVPN 安装及使用</title>
     <url>/202302161539/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -13680,63 +13737,6 @@ width: 20%;
         <category>VPN</category>
       </categories>
       <tags>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Docker 部署 OpenVPN</title>
-    <url>/202302171657/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 3.10.0-1160</li>
-<li>Docker 20.10.9</li>
-<li>iptables</li>
-</ul>
-<h1 id="前提条件"><a href="#前提条件" class="headerlink" title="前提条件"></a>前提条件</h1><p>宿主机操作系统内核配置允许数据转发，<a href="https://csms.tech/202302161539/#开启系统-IPv4-转发功能">开启系统 IPv4 转发功能</a></p>
-<h1 id="Docker-部署-OpenVPN-服务端步骤"><a href="#Docker-部署-OpenVPN-服务端步骤" class="headerlink" title="Docker 部署 OpenVPN 服务端步骤"></a>Docker 部署 OpenVPN 服务端步骤</h1><h2 id="创建本地配置目录"><a href="#创建本地配置目录" class="headerlink" title="创建本地配置目录"></a>创建本地配置目录</h2><p>用了在启动容器时挂载以持久化 OpenVPN 配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkdir /opt/openvpn1/</span><br></pre></td></tr></table></figure>
-
-<h2 id="初始化配置文件"><a href="#初始化配置文件" class="headerlink" title="初始化配置文件"></a>初始化配置文件</h2><p>执行以下命令初始化 OpenVPN 服务端配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_genconfig -u udp://$&#123;PUB_IP&#125;:1194</span><br></pre></td></tr></table></figure>
-<p>参数说明：</p>
-<ul>
-<li><code>udp://$&#123;PUB_IP&#125;:1194</code> - 指定 VPN 服务器配置，使用 <code>1194/udp</code> 端口。${PUB_IP} 为服务器公网 IP。</li>
-</ul>
-<h2 id="生成密钥-证书-文件"><a href="#生成密钥-证书-文件" class="headerlink" title="生成密钥(证书)文件"></a>生成密钥(证书)文件</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_initpki</span><br></pre></td></tr></table></figure>
-<p>根据提示，输入 CA 根证书密码及名称</p>
-<h2 id="创建带有密码的客户端证书"><a href="#创建带有密码的客户端证书" class="headerlink" title="创建带有密码的客户端证书"></a>创建带有密码的客户端证书</h2><p>执行以下命令，根据提示输入客户端证书密码及 CA 密码，生成客户端证书。如果客户端证书无需密码，最后加选项 <code>nopass</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 easyrsa build-client-full vpn1</span><br></pre></td></tr></table></figure>
-
-<h2 id="导出客户端证书"><a href="#导出客户端证书" class="headerlink" title="导出客户端证书"></a>导出客户端证书</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_getclient vpn1 &gt; /opt/openvpn/client/vpn1.ovpn</span><br></pre></td></tr></table></figure>
-
-<h2 id="启动-OpenVPN"><a href="#启动-OpenVPN" class="headerlink" title="启动 OpenVPN"></a>启动 OpenVPN</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -it --name OpenVPN1 \</span><br><span class="line">           -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">           -d -p 1194:1194/udp --cap-add=NET_ADMIN \</span><br><span class="line">           kylemanna/openvpn:2.4</span><br><span class="line">           </span><br></pre></td></tr></table></figure>
-<p>防火墙放通 <code>1194/udp</code> 端口</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -p udp --dport 1194 -j ACCEPT -m comment --comment &quot;openvpn&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>OpenVPN 启动后，docker 会在宿主机操作系统的 iptables 中添加对应的 <code>MASQUERADE</code> 规则，负责转发和 NAT 数据，具体规则可通过以下方法查看</p>
-<p>查看 NAT 表添加的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers | more</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 127 packets, 9255 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       54  2490 DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 1 packets, 70 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       75  6875 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">2      610 36387 MASQUERADE  all  --  *      *       10.8.0.0/24          0.0.0.0/0           </span><br><span class="line">3        0     0 MASQUERADE  udp  --  *      *       172.17.0.2           172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        1    70 DNAT       udp  --  !docker0 *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 to:172.17.0.2:1194</span><br></pre></td></tr></table></figure>
-<p>查看 FILTER 表添加的规则</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ iptables -L -v -n --line-numbers | more</span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      641 51489 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 /* openvpn */</span><br><span class="line">...</span><br><span class="line">13       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">14       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">15     230 14788 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3     8465 2439K ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        1    70 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5     8425 2421K ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7     4177 1774K ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">8      202 13030 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 343 packets, 61383 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        1    70 ACCEPT     udp  --  !docker0 docker0  0.0.0.0/0            172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     8425 2421K DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2     8425 2421K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
-
-<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>将 <a href="#%E5%AF%BC%E5%87%BA%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%AF%81%E4%B9%A6">导出客户端证书</a> 中生成的客户端证书发送到客户端，测试连接。</p>
-<p>客户端连接失败，可以检查以下内容：</p>
-<ul>
-<li><p>客户端日志及服务端日志，服务端日志可以通过以下方法查看</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker logs -f OpenVPN</span><br></pre></td></tr></table></figure>
-
-</li>
-<li><p>检查是否是因为 <a href="#%E5%90%AF%E5%8A%A8-OpenVPN">iptables 防火墙规则</a> 问题导致无法连接，如果防火墙相关规则丢失，可以通过重启 docker 和 OpenVPN 容器的方式恢复。</p>
-</li>
-<li><p>检查容器中启动的端口和 docker 映射的端口是否一致。</p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
         <tag>VPN</tag>
       </tags>
   </entry>
@@ -14705,41 +14705,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Prometheus Redis exporter 使用</title>
-    <url>/202404301039/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
-<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
-<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启动  <code>redis_exporter</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
-
-<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
-<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
-<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
-
-<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
-
-<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
-<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Prometheus Node exporter 使用</title>
     <url>/202306071109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15115,37 +15080,38 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Pycharm 常用配置</title>
-    <url>/202208041319/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>PyCharm 2022.1 (Professional Edition)</li>
-</ul>
-<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="快速插入时间"><a href="#快速插入时间" class="headerlink" title="快速插入时间"></a>快速插入时间</h2><p>通过配置 <code>Live Template</code> 实现快速插入时间  </p>
-<ol>
-<li><p>打开 File &gt; Setting &gt; Editor: Live Templates</p>
-</li>
-<li><p>选中常用的语言，比如 <code>Python</code>，点击右上角的 <code>+</code>，添加 <code>Live Template</code><br> <code>Abbreviation</code> 输入快捷输入的名称，比如 <code>currentTime</code><br> <code>Description</code> 输入描述信息<br> <code>Template Text</code> 输入 <code>$time$</code><br> <img src="https://i.csms.tech/img_32.png"></p>
-</li>
-<li><p>点击 <code>Edit Variables</code> 配置命令及格式<br> <img src="https://i.csms.tech/img_33.png"></p>
-</li>
-<li><p><code>Define</code> 选择 <code>Everywhere</code>，<code>Apply</code>让配置生效</p>
-</li>
-<li><p>编辑时输入 <code>currentTime</code>,可以直接插入当前时间<br> <img src="https://i.csms.tech/img_34.png"></p>
-</li>
-</ol>
-<h2 id="配置-git-仓库"><a href="#配置-git-仓库" class="headerlink" title="配置 git 仓库"></a>配置 git 仓库</h2><ol>
-<li><p>打开 <code>File</code> -&gt; <code>Settings</code> -&gt; <code>Version Control</code> -&gt; <code>Git</code>，在 <code>Path to Git executable</code> 处选择 git 的安装位置。配置完成之后，点击<code>【Test】</code>按钮，如果成功，则会显示 Git 版本信息<br><img src="https://i.csms.tech/img_114.png"></p>
-</li>
-<li><p>点击 <code>VCS</code> -&gt; <code>Get from Version Control</code>，输入 Git 仓库的地址和本地目录。<br><img src="https://i.csms.tech/img_115.png"></p>
-</li>
-</ol>
-]]></content>
+    <title>Prometheus Redis exporter 使用</title>
+    <url>/202404301039/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
+<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
+<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启动  <code>redis_exporter</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
+
+<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
+<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
+<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
+
+<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
+
+<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
+<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>]]></content>
       <categories>
         <category>Tools</category>
-        <category>PyCharm</category>
+        <category>Prometheus</category>
       </categories>
       <tags>
-        <tag>PyCharm</tag>
+        <tag>Prometheus</tag>
       </tags>
   </entry>
   <entry>
@@ -15230,6 +15196,40 @@ width: 20%;
       </categories>
       <tags>
         <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Pycharm 常用配置</title>
+    <url>/202208041319/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>PyCharm 2022.1 (Professional Edition)</li>
+</ul>
+<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="快速插入时间"><a href="#快速插入时间" class="headerlink" title="快速插入时间"></a>快速插入时间</h2><p>通过配置 <code>Live Template</code> 实现快速插入时间  </p>
+<ol>
+<li><p>打开 File &gt; Setting &gt; Editor: Live Templates</p>
+</li>
+<li><p>选中常用的语言，比如 <code>Python</code>，点击右上角的 <code>+</code>，添加 <code>Live Template</code><br> <code>Abbreviation</code> 输入快捷输入的名称，比如 <code>currentTime</code><br> <code>Description</code> 输入描述信息<br> <code>Template Text</code> 输入 <code>$time$</code><br> <img src="https://i.csms.tech/img_32.png"></p>
+</li>
+<li><p>点击 <code>Edit Variables</code> 配置命令及格式<br> <img src="https://i.csms.tech/img_33.png"></p>
+</li>
+<li><p><code>Define</code> 选择 <code>Everywhere</code>，<code>Apply</code>让配置生效</p>
+</li>
+<li><p>编辑时输入 <code>currentTime</code>,可以直接插入当前时间<br> <img src="https://i.csms.tech/img_34.png"></p>
+</li>
+</ol>
+<h2 id="配置-git-仓库"><a href="#配置-git-仓库" class="headerlink" title="配置 git 仓库"></a>配置 git 仓库</h2><ol>
+<li><p>打开 <code>File</code> -&gt; <code>Settings</code> -&gt; <code>Version Control</code> -&gt; <code>Git</code>，在 <code>Path to Git executable</code> 处选择 git 的安装位置。配置完成之后，点击<code>【Test】</code>按钮，如果成功，则会显示 Git 版本信息<br><img src="https://i.csms.tech/img_114.png"></p>
+</li>
+<li><p>点击 <code>VCS</code> -&gt; <code>Get from Version Control</code>，输入 Git 仓库的地址和本地目录。<br><img src="https://i.csms.tech/img_115.png"></p>
+</li>
+</ol>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>PyCharm</category>
+      </categories>
+      <tags>
+        <tag>PyCharm</tag>
       </tags>
   </entry>
   <entry>
@@ -17382,6 +17382,40 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>vsftpd 服务常见错误</title>
+    <url>/202207261304/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="530-Login-incorrect"><a href="#530-Login-incorrect" class="headerlink" title="530 Login incorrect"></a>530 Login incorrect</h3><p><strong>报错信息</strong>： 登录时报错 <code>530 Login incorrect</code><br><strong>错误原因</strong>：</p>
+<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth  required pam_listfile.so item=user sense=deny file=/etc/vsftpd/ftpusers onerr=succeed </span><br></pre></td></tr></table></figure>
+<p>默认情况下，&#x2F;etc&#x2F;vsftpd&#x2F;ftpusers里面的用户是被拒绝登录的，确保要登录的用户不在此文件中</p>
+<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth       required    pam_shells.so  </span><br></pre></td></tr></table></figure>
+<p>此配置指定，只允许登录shell为<code>/etc/shells</code>中的shell的用户登录<br>如果用户shell为<code>/sbin/nologin</code>，则不允许登录，可改为<code>pam_nologin.so</code></p>
+<span id="more"></span>
+
+<h3 id="500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot"><a href="#500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot" class="headerlink" title="500 OOPS: vsftpd: refusing to run with writable root inside chroot()"></a>500 OOPS: vsftpd: refusing to run with writable root inside chroot()</h3><p><strong>错误原因</strong>: 从2.3.5之后，vsftpd增强了安全检查，如果用户被限定在了其主目录下，则该用户的主目录不能再具有写权限了！如果检查发现还有写权限，就会报该错误。<br><strong>解决方法1</strong>： 用户主目录取消写权限</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod a-w /data/ftpdir</span><br></pre></td></tr></table></figure>
+
+<p><strong>解决方法2</strong>： 配置文件中增加以下配置</p>
+<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">allow_writeable_chroot=YES</span><br></pre></td></tr></table></figure>
+
+<h3 id="500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp"><a href="#500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp" class="headerlink" title="500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp"></a>500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp</h3><p><strong>错误原因</strong>: 配置文件中启用了匿名用户登录，系统中没有ftp的匿名用户ftp<br><strong>解决方法1</strong>：<br>配置文件中禁用匿名用户登录，同时指定用户</p>
+<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">anonymous_enable=NO</span><br><span class="line">ftp_username=nobody</span><br></pre></td></tr></table></figure>
+
+<h3 id="550-Create-directory-operation-failed"><a href="#550-Create-directory-operation-failed" class="headerlink" title="550 Create directory operation failed"></a>550 Create directory operation failed</h3><p><strong>错误原因</strong>: 匿名登录的用户不允许在ftp根目录下面新建对象，可以在根目录下面创建文件夹，如pub，并给ftp为属主，在pub下面新建文件</p>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><ul>
+<li><a href="/202207231311/" title="vsftpd 服务常用配置说明">vsftpd 服务常用配置说明</a>  
+</li>
+<li><a href="/202207251638/" title="vsftpd 虚拟用户配置说明">vsftpd 虚拟用户配置说明</a></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Vsftpd</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>vsftpd 服务常用配置说明</title>
     <url>/202207231311/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -17470,40 +17504,6 @@ width: 20%;
 <figure class="highlight shell"><figcaption><span>user1</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定虚拟用户根目录</span></span><br><span class="line">local_root=/home/ftpsite/user1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户是和本地用户有相同权限;NO：虚拟用户和匿名用户权限相同</span>        </span><br><span class="line">virtual_use_local_privs=YES         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户对应的系统用户</span></span><br><span class="line">guest_username=virtftp   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户将被锁定在自己的宿主目录</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chroot_local_user=YES</span>    </span><br><span class="line">         </span><br><span class="line">write_enable=YES                               </span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">lock_upload_files=NO</span></span><br><span class="line">anon_umask=022</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">download_enable=NO</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_upload_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_mkdir_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_other_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_uploads=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_username=nono</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">allow_anon_ssl=YES</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_logins_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_data_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">cmds_allowed=CWD,LIST,MDTM,MKD,NLST,PASS,PASV,PORT,PWD,QUIT,RMD,RETR,SIZE,STOR,TYPE,USER,ACCT,APPE,CDUP,HELP,MODE,NOOP,REIN,STAT,STOU,STRU,SYST</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
 <h3 id="常用配置说明"><a href="#常用配置说明" class="headerlink" title="常用配置说明"></a>常用配置说明</h3><p>virtual_use_local_privs参数说明<br>当<code>virtual_use_local_privs=YES</code>时，虚拟用户和本地用户有相同的权限；<br>当<code>virtual_use_local_privs=NO</code> 时，虚拟用户和匿名用户有相同的权限，默认是NO。<br>当<code>virtual_use_local_privs=YES</code>，<code>write_enable=YES</code>时，虚拟用户具有写权限（上传、下载、删除、重命名）。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=YES</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户不能浏览目录，只能上传文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=NO</code> 时，虚拟用户只能下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户只能上传和下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_mkdir_write_enable=YES</code> 时，虚拟用户只能下载文件和创建文件夹，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_other_write_enable=YES</code> 时，虚拟用户只能下载、删除和重命名文件，无其他权限。  </p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Vsftpd</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>vsftpd 服务常见错误</title>
-    <url>/202207261304/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="530-Login-incorrect"><a href="#530-Login-incorrect" class="headerlink" title="530 Login incorrect"></a>530 Login incorrect</h3><p><strong>报错信息</strong>： 登录时报错 <code>530 Login incorrect</code><br><strong>错误原因</strong>：</p>
-<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth  required pam_listfile.so item=user sense=deny file=/etc/vsftpd/ftpusers onerr=succeed </span><br></pre></td></tr></table></figure>
-<p>默认情况下，&#x2F;etc&#x2F;vsftpd&#x2F;ftpusers里面的用户是被拒绝登录的，确保要登录的用户不在此文件中</p>
-<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth       required    pam_shells.so  </span><br></pre></td></tr></table></figure>
-<p>此配置指定，只允许登录shell为<code>/etc/shells</code>中的shell的用户登录<br>如果用户shell为<code>/sbin/nologin</code>，则不允许登录，可改为<code>pam_nologin.so</code></p>
-<span id="more"></span>
-
-<h3 id="500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot"><a href="#500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot" class="headerlink" title="500 OOPS: vsftpd: refusing to run with writable root inside chroot()"></a>500 OOPS: vsftpd: refusing to run with writable root inside chroot()</h3><p><strong>错误原因</strong>: 从2.3.5之后，vsftpd增强了安全检查，如果用户被限定在了其主目录下，则该用户的主目录不能再具有写权限了！如果检查发现还有写权限，就会报该错误。<br><strong>解决方法1</strong>： 用户主目录取消写权限</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod a-w /data/ftpdir</span><br></pre></td></tr></table></figure>
-
-<p><strong>解决方法2</strong>： 配置文件中增加以下配置</p>
-<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">allow_writeable_chroot=YES</span><br></pre></td></tr></table></figure>
-
-<h3 id="500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp"><a href="#500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp" class="headerlink" title="500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp"></a>500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp</h3><p><strong>错误原因</strong>: 配置文件中启用了匿名用户登录，系统中没有ftp的匿名用户ftp<br><strong>解决方法1</strong>：<br>配置文件中禁用匿名用户登录，同时指定用户</p>
-<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">anonymous_enable=NO</span><br><span class="line">ftp_username=nobody</span><br></pre></td></tr></table></figure>
-
-<h3 id="550-Create-directory-operation-failed"><a href="#550-Create-directory-operation-failed" class="headerlink" title="550 Create directory operation failed"></a>550 Create directory operation failed</h3><p><strong>错误原因</strong>: 匿名登录的用户不允许在ftp根目录下面新建对象，可以在根目录下面创建文件夹，如pub，并给ftp为属主，在pub下面新建文件</p>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><ul>
-<li><a href="/202207231311/" title="vsftpd 服务常用配置说明">vsftpd 服务常用配置说明</a>  
-</li>
-<li><a href="/202207251638/" title="vsftpd 虚拟用户配置说明">vsftpd 虚拟用户配置说明</a></li>
-</ul>
 ]]></content>
       <categories>
         <category>Linux</category>
