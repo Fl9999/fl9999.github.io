@@ -7100,6 +7100,67 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 上部署 cert-manager 及使用</title>
+    <url>/202301050935/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.24</li>
+<li>cert-manager v1.7.1</li>
+</ul>
+<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
+<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.csms.tech/img_111.png"></p>
+<p>解释下几个关键的资源:</p>
+<ul>
+<li><code>Issuer/ClusterIssuer</code>: 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。<code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书，<code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
+<li><code>Certificate</code>: 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
+<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
+<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
+<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
+<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
+<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
+<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://csms.tech/202210071716/#安装-cert-manager">安装参考文档</a></p>
+<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
+<ol>
+<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.csms.tech/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.csms.tech/img_113.png"></p>
+</li>
+<li><p>将 Token 保存到 Secret 中:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Secret</span><br><span class="line">metadata:</span><br><span class="line">  name: cloudflare-api-token-secret</span><br><span class="line">  namespace: cert-manager</span><br><span class="line">type: Opaque</span><br><span class="line">stringData:</span><br><span class="line">  api-token: &lt;API Token&gt; # 粘贴 Token 到这里，不需要 base64 加密。</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[DNS-01 校验方式签发证书](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6)">[3]</span></a></sup></p>
+</blockquote>
+</li>
+<li><p>创建 ClusterIssuer:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: ClusterIssuer</span><br><span class="line">metadata:</span><br><span class="line">  name: letsencrypt-dns01</span><br><span class="line">spec:</span><br><span class="line">  acme:</span><br><span class="line">    privateKeySecretRef:</span><br><span class="line">      name: letsencrypt-dns01     # 用于储存 ACME Account 私钥的 Secret</span><br><span class="line">    email: my-cloudflare-acc@example.com</span><br><span class="line">    server: https://acme-v02.api.letsencrypt.org/directory</span><br><span class="line">    solvers:</span><br><span class="line">    - dns01:</span><br><span class="line">        cloudflare:</span><br><span class="line">          email: my-cloudflare-acc@example.com # 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span><br><span class="line">          apiTokenSecretRef:</span><br><span class="line">            key: api-token               # 引用 secret 中的配置数据，key 为 secret 中配置的名称</span><br><span class="line">            name: cloudflare-api-token-secret    # 引用保存 cloudflare 认证信息的 Secret</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建 Certificate:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: Certificate</span><br><span class="line">metadata:</span><br><span class="line">  name: test-mydomain-com</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  dnsNames:</span><br><span class="line">  - test.mydomain.com # 要签发证书的域名</span><br><span class="line">  - &quot;*.mydomain.com&quot; </span><br><span class="line">  issuerRef:</span><br><span class="line">    kind: ClusterIssuer</span><br><span class="line">    name: letsencrypt-dns01 # 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span><br><span class="line">  secretName: test-mydomain-com-tls # 最终签发出来的证书会保存在这个 Secret 里面</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>获取和使用证书</p>
+<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get certificate -n prod</span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
+<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl describe certificate test-mydomain-com -n prod</span><br></pre></td></tr></table></figure>
+<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code>)，可以通过 <code>kubectl</code> 查看:</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get secret test-mydomain-com-tls -n default</span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
+<p> 其中 <code>tls.crt</code> 就是证书，<code>tls.key</code> 是密钥。</p>
+<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code>，示例:</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">apiVersion: networking.k8s.io/v1beta1</span><br><span class="line">kind: Ingress</span><br><span class="line">metadata:</span><br><span class="line">  name: test-ingress</span><br><span class="line">  annotations:</span><br><span class="line">    kubernetes.io/Ingress.class: nginx</span><br><span class="line">spec:</span><br><span class="line">  rules:</span><br><span class="line">  - host: test.mydomain.com</span><br><span class="line">    http:</span><br><span class="line">      paths:</span><br><span class="line">      - path: /web</span><br><span class="line">        backend:</span><br><span class="line">          serviceName: web</span><br><span class="line">          servicePort: 80</span><br><span class="line">  tls:</span><br><span class="line">    hosts:</span><br><span class="line">    - test.mydomain.com</span><br><span class="line">    secretName: test-mydomain-com-tls</span><br></pre></td></tr></table></figure>
+<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
+<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
+</li>
+</ol>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>kubernetes 常用命令示例</title>
     <url>/202209131536/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -7283,67 +7344,6 @@ width: 20%;
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#join-nodes">使用 kubeadm 创建集群</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 上部署 cert-manager 及使用</title>
-    <url>/202301050935/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kubernetes 1.24</li>
-<li>cert-manager v1.7.1</li>
-</ul>
-<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
-<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.csms.tech/img_111.png"></p>
-<p>解释下几个关键的资源:</p>
-<ul>
-<li><code>Issuer/ClusterIssuer</code>: 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。<code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书，<code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
-<li><code>Certificate</code>: 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
-</ul>
-<span id="more"></span>
-
-<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
-<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
-<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
-<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
-<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
-<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
-<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://csms.tech/202210071716/#安装-cert-manager">安装参考文档</a></p>
-<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
-<ol>
-<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.csms.tech/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.csms.tech/img_113.png"></p>
-</li>
-<li><p>将 Token 保存到 Secret 中:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Secret</span><br><span class="line">metadata:</span><br><span class="line">  name: cloudflare-api-token-secret</span><br><span class="line">  namespace: cert-manager</span><br><span class="line">type: Opaque</span><br><span class="line">stringData:</span><br><span class="line">  api-token: &lt;API Token&gt; # 粘贴 Token 到这里，不需要 base64 加密。</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[DNS-01 校验方式签发证书](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6)">[3]</span></a></sup></p>
-</blockquote>
-</li>
-<li><p>创建 ClusterIssuer:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: ClusterIssuer</span><br><span class="line">metadata:</span><br><span class="line">  name: letsencrypt-dns01</span><br><span class="line">spec:</span><br><span class="line">  acme:</span><br><span class="line">    privateKeySecretRef:</span><br><span class="line">      name: letsencrypt-dns01     # 用于储存 ACME Account 私钥的 Secret</span><br><span class="line">    email: my-cloudflare-acc@example.com</span><br><span class="line">    server: https://acme-v02.api.letsencrypt.org/directory</span><br><span class="line">    solvers:</span><br><span class="line">    - dns01:</span><br><span class="line">        cloudflare:</span><br><span class="line">          email: my-cloudflare-acc@example.com # 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span><br><span class="line">          apiTokenSecretRef:</span><br><span class="line">            key: api-token               # 引用 secret 中的配置数据，key 为 secret 中配置的名称</span><br><span class="line">            name: cloudflare-api-token-secret    # 引用保存 cloudflare 认证信息的 Secret</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建 Certificate:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: Certificate</span><br><span class="line">metadata:</span><br><span class="line">  name: test-mydomain-com</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  dnsNames:</span><br><span class="line">  - test.mydomain.com # 要签发证书的域名</span><br><span class="line">  - &quot;*.mydomain.com&quot; </span><br><span class="line">  issuerRef:</span><br><span class="line">    kind: ClusterIssuer</span><br><span class="line">    name: letsencrypt-dns01 # 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span><br><span class="line">  secretName: test-mydomain-com-tls # 最终签发出来的证书会保存在这个 Secret 里面</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>获取和使用证书</p>
-<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get certificate -n prod</span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
-<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl describe certificate test-mydomain-com -n prod</span><br></pre></td></tr></table></figure>
-<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code>)，可以通过 <code>kubectl</code> 查看:</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get secret test-mydomain-com-tls -n default</span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
-<p> 其中 <code>tls.crt</code> 就是证书，<code>tls.key</code> 是密钥。</p>
-<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code>，示例:</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">apiVersion: networking.k8s.io/v1beta1</span><br><span class="line">kind: Ingress</span><br><span class="line">metadata:</span><br><span class="line">  name: test-ingress</span><br><span class="line">  annotations:</span><br><span class="line">    kubernetes.io/Ingress.class: nginx</span><br><span class="line">spec:</span><br><span class="line">  rules:</span><br><span class="line">  - host: test.mydomain.com</span><br><span class="line">    http:</span><br><span class="line">      paths:</span><br><span class="line">      - path: /web</span><br><span class="line">        backend:</span><br><span class="line">          serviceName: web</span><br><span class="line">          servicePort: 80</span><br><span class="line">  tls:</span><br><span class="line">    hosts:</span><br><span class="line">    - test.mydomain.com</span><br><span class="line">    secretName: test-mydomain-com-tls</span><br></pre></td></tr></table></figure>
-<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
-<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
-</li>
-</ol>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
       </categories>
       <tags>
         <tag>Kubernetes</tag>
@@ -8190,6 +8190,95 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 网络</title>
     <url>/202212020941/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8335,95 +8424,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
@@ -13791,54 +13791,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>predixy 安装配置</title>
-    <url>/202207271506/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
-<ul>
-<li>Centos 7</li>
-<li>predixy-1.0.5</li>
-</ul>
-<blockquote>
-<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3></blockquote>
-<p><a href="https://github.com/joyieldInc/predixy">下载地址</a>, clone或下载最新的版本或指定版本下载后解压</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install libstdc++-static -y</span><br><span class="line">cd predixy-1.0.5</span><br><span class="line">make</span><br><span class="line">cp src/predixy /usr/local/bin/</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>需要依赖 <code>libstdc++-static</code>, 否则make会报错：<br>&#x2F;bin&#x2F;ld: cannot find -lstdc++<br>collect2: error: ld returned 1 exit status<br>make[1]: *** [predixy] Error 1<br>make[1]: Leaving directory &#96;&#x2F;root&#x2F;predixy-1.0.5&#x2F;src’<br>make: *** [default] Error 2</p>
-</blockquote>
-<blockquote>
-<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3></blockquote>
-<ul>
-<li><p>predixy.conf，整体配置文件，会引用下面的配置文件</p>
-</li>
-<li><p>cluster.conf，用于Redis Cluster时，配置后端redis信息</p>
-</li>
-<li><p>sentinel.conf，用于Redis Sentinel时，配置后端redis信息</p>
-</li>
-<li><p>auth.conf，访问权限控制配置，可以定义多个验证密码，可每个密码指定读、写、管理权限，以及定义可访问的健空间</p>
-</li>
-<li><p>dc.conf，多数据中心支持，可以定义读写分离规则，读流量权重分配</p>
-</li>
-<li><p>latency.conf， 延迟监控规则定义，可以指定需要监控的命令以及延时时间间隔</p>
-</li>
-</ul>
-<blockquote>
-<h3 id="启动"><a href="#启动" class="headerlink" title="启动"></a>启动</h3></blockquote>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">predixy /predixy/conf/predixy.conf</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>使用默认的配置文件predixy.conf， predixy将监听地址0.0.0.0:7617，后端的redis是Redis Cluster 127.0.0.1:6379  </p>
-</blockquote>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Redis</tag>
-        <tag>Predixy</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>php 编译安装配置</title>
     <url>/202207301722/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -13909,6 +13861,54 @@ width: 20%;
       </categories>
       <tags>
         <tag>php</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>predixy 安装配置</title>
+    <url>/202207271506/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
+<ul>
+<li>Centos 7</li>
+<li>predixy-1.0.5</li>
+</ul>
+<blockquote>
+<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3></blockquote>
+<p><a href="https://github.com/joyieldInc/predixy">下载地址</a>, clone或下载最新的版本或指定版本下载后解压</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install libstdc++-static -y</span><br><span class="line">cd predixy-1.0.5</span><br><span class="line">make</span><br><span class="line">cp src/predixy /usr/local/bin/</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>需要依赖 <code>libstdc++-static</code>, 否则make会报错：<br>&#x2F;bin&#x2F;ld: cannot find -lstdc++<br>collect2: error: ld returned 1 exit status<br>make[1]: *** [predixy] Error 1<br>make[1]: Leaving directory &#96;&#x2F;root&#x2F;predixy-1.0.5&#x2F;src’<br>make: *** [default] Error 2</p>
+</blockquote>
+<blockquote>
+<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3></blockquote>
+<ul>
+<li><p>predixy.conf，整体配置文件，会引用下面的配置文件</p>
+</li>
+<li><p>cluster.conf，用于Redis Cluster时，配置后端redis信息</p>
+</li>
+<li><p>sentinel.conf，用于Redis Sentinel时，配置后端redis信息</p>
+</li>
+<li><p>auth.conf，访问权限控制配置，可以定义多个验证密码，可每个密码指定读、写、管理权限，以及定义可访问的健空间</p>
+</li>
+<li><p>dc.conf，多数据中心支持，可以定义读写分离规则，读流量权重分配</p>
+</li>
+<li><p>latency.conf， 延迟监控规则定义，可以指定需要监控的命令以及延时时间间隔</p>
+</li>
+</ul>
+<blockquote>
+<h3 id="启动"><a href="#启动" class="headerlink" title="启动"></a>启动</h3></blockquote>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">predixy /predixy/conf/predixy.conf</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>使用默认的配置文件predixy.conf， predixy将监听地址0.0.0.0:7617，后端的redis是Redis Cluster 127.0.0.1:6379  </p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Redis</tag>
+        <tag>Predixy</tag>
       </tags>
   </entry>
   <entry>
@@ -14755,41 +14755,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Prometheus Redis exporter 使用</title>
-    <url>/202404301039/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
-<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
-<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启动  <code>redis_exporter</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
-
-<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
-<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
-<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
-
-<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
-
-<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
-<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Prometheus Node exporter 使用</title>
     <url>/202306071109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15156,6 +15121,41 @@ width: 20%;
 <p>重启 Pod 后，重新观察日志，<code>node_exporter</code> 启动正常。</p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://github.com/prometheus/node_exporter">Node Exporter</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/prometheus/node_exporter">node_exporter 官网 github</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Prometheus Redis exporter 使用</title>
+    <url>/202404301039/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
+<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
+<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启动  <code>redis_exporter</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
+
+<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
+<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
+<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
+
+<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
+
+<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
+<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>]]></content>
       <categories>
         <category>Tools</category>
         <category>Prometheus</category>
@@ -17925,6 +17925,32 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>xshell 常用配置</title>
+    <url>/202208101059/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>xshell7</li>
+</ul>
+<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="字体配置"><a href="#字体配置" class="headerlink" title="字体配置"></a>字体配置</h2><p>(菜单栏)查看 &gt; 工具栏 &gt; 标准按钮  </p>
+<p><img src="https://i.csms.tech/img_36.png"></p>
+<p>中文字体和英文字体需要单独配置，建议配置默认会话属性</p>
+<p>(菜单栏)文件 &gt; 默认会话属性，找到 <code>外观</code> 分别配置 <code>字体</code> 以及 <code>亚洲字体</code>:</p>
+<p><img src="https://i.csms.tech/img_225.png"></p>
+<span id="more"></span>
+
+<h2 id="Meta-键配置"><a href="#Meta-键配置" class="headerlink" title="Meta 键配置"></a>Meta 键配置</h2><p>(菜单栏)文件 &gt; 当前会话属性:<br><img src="https://i.csms.tech/img_37.png"></p>
+<p>终端中使用 <code>Alt .</code> 可自动补齐上一条命令的最后一个参数  </p>
+<h2 id="配置-选中即复制"><a href="#配置-选中即复制" class="headerlink" title="配置 选中即复制"></a>配置 选中即复制</h2><p>工具-&gt;选项<br><img src="https://i.csms.tech/img_38.png"></p>
+<p>选择 <code>键盘和鼠标</code><br><img src="https://i.csms.tech/img_39.png"></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>xshell</category>
+      </categories>
+      <tags>
+        <tag>xshell</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>YAML 语法格式</title>
     <url>/202405171109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>YAML（YAML Ain’t Markup Language）是一种专门用于数据序列化的格式，常用于配置文件、数据交换等场景。它以其可读性和简洁性而受到开发者的青睐。YAML设计的目标是易于人类阅读和编写，并且易于与其他编程语言进行交互。下面是YAML语法的详细介绍</p>
@@ -17965,32 +17991,6 @@ width: 20%;
       <categories>
         <category>Tools</category>
       </categories>
-  </entry>
-  <entry>
-    <title>xshell 常用配置</title>
-    <url>/202208101059/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>xshell7</li>
-</ul>
-<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="字体配置"><a href="#字体配置" class="headerlink" title="字体配置"></a>字体配置</h2><p>(菜单栏)查看 &gt; 工具栏 &gt; 标准按钮  </p>
-<p><img src="https://i.csms.tech/img_36.png"></p>
-<p>中文字体和英文字体需要单独配置，建议配置默认会话属性</p>
-<p>(菜单栏)文件 &gt; 默认会话属性，找到 <code>外观</code> 分别配置 <code>字体</code> 以及 <code>亚洲字体</code>:</p>
-<p><img src="https://i.csms.tech/img_225.png"></p>
-<span id="more"></span>
-
-<h2 id="Meta-键配置"><a href="#Meta-键配置" class="headerlink" title="Meta 键配置"></a>Meta 键配置</h2><p>(菜单栏)文件 &gt; 当前会话属性:<br><img src="https://i.csms.tech/img_37.png"></p>
-<p>终端中使用 <code>Alt .</code> 可自动补齐上一条命令的最后一个参数  </p>
-<h2 id="配置-选中即复制"><a href="#配置-选中即复制" class="headerlink" title="配置 选中即复制"></a>配置 选中即复制</h2><p>工具-&gt;选项<br><img src="https://i.csms.tech/img_38.png"></p>
-<p>选择 <code>键盘和鼠标</code><br><img src="https://i.csms.tech/img_39.png"></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>xshell</category>
-      </categories>
-      <tags>
-        <tag>xshell</tag>
-      </tags>
   </entry>
   <entry>
     <title>yum</title>
