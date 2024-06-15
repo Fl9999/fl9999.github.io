@@ -8827,6 +8827,154 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络</title>
+    <url>/202212020941/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 3.10.0-1160</li>
+<li>Docker Engine - Community 23.0.3</li>
+<li>kubernetes 1.21.2-0</li>
+<li>kubernetes-cni-0.8.7-0</li>
+</ul>
+<p>Kubernetes 对任何网络实现都规定了以下要求： <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[万字长文，带你搞懂 Kubernetes 网络模型](https://www.51cto.com/article/714336.html)">[1]</span></a></sup></p>
+<ul>
+<li><p><strong>所有 Pod 都可以在不使用网络地址转换 (NAT) 的情况下与所有其他 Pod 通信。</strong></p>
+<p>  容器之间直接通信，不需要额外的 NAT，不存在源地址伪装的情况</p>
+</li>
+<li><p><strong>所有节点都可以在没有 NAT 的情况下与所有 Pod 通信。</strong></p>
+<p>  Node 与容器直接通信，不需要额外的 NAT</p>
+</li>
+<li><p><strong>Pod 认为自己的 IP 与其他人认为的 IP 相同。</strong></p>
+</li>
+</ul>
+<h1 id="CNI"><a href="#CNI" class="headerlink" title="CNI"></a>CNI</h1><p>CNI 是 Kubernetes 容器网络的标准，CNI 是 Kubernetes 和底层网络插件之间的一个抽象层，为 Kubernetes 屏蔽了底层网络实现的负责度，同时解耦了 Kubernetes 和具体的网络插件实现。</p>
+<h2 id="安装-CNI"><a href="#安装-CNI" class="headerlink" title="安装 CNI"></a>安装 CNI</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum install kubernetes-cni</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep kube</span></span><br><span class="line">kubeadm-1.21.2-0.x86_64</span><br><span class="line">kubectl-1.21.2-0.x86_64</span><br><span class="line">kubelet-1.21.2-0.x86_64</span><br><span class="line">kubernetes-cni-0.8.7-0.x86_64</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -ql kubernetes-cni-0.8.7-0</span></span><br><span class="line">/opt/cni</span><br><span class="line">/opt/cni/bin</span><br><span class="line">/opt/cni/bin/bandwidth</span><br><span class="line">/opt/cni/bin/bridge</span><br><span class="line">/opt/cni/bin/dhcp</span><br><span class="line">/opt/cni/bin/firewall</span><br><span class="line">/opt/cni/bin/flannel</span><br><span class="line">/opt/cni/bin/host-device</span><br><span class="line">/opt/cni/bin/host-local</span><br><span class="line">/opt/cni/bin/ipvlan</span><br><span class="line">/opt/cni/bin/loopback</span><br><span class="line">/opt/cni/bin/macvlan</span><br><span class="line">/opt/cni/bin/portmap</span><br><span class="line">/opt/cni/bin/ptp</span><br><span class="line">/opt/cni/bin/sbr</span><br><span class="line">/opt/cni/bin/static</span><br><span class="line">/opt/cni/bin/tuning</span><br><span class="line">/opt/cni/bin/vlan</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>Kubernetes 要使用 CNI，需要在 kubelet 启动时配置启动参数 <code>--network-plugin=cni</code>（默认配置，可使用 <code>systemctl status kubelet -l</code> 查看启动参数）。</p>
+<p>kubelet 从 <code>--cni-config-dir</code> （默认为 <code>/etc/cni/net.d/</code>）中读取网络插件的配置文件，并使用该文件中的 CNI 配置来配置每个 Pod 网络。如果该目录 （<code>/etc/cni/net.d/</code>）中有多个配置文件，则使用文件名字典序列中的第一个文件。</p>
+<p>CNI 插件的二进制文件放置的目录是通过 kubelet 的 <code>--cni-bin-dir</code> 参数指定，默认为 <code>/opt/cni/bin/</code></p>
+<span id="more"></span>
+
+<h1 id="flannel"><a href="#flannel" class="headerlink" title="flannel"></a>flannel</h1><p>flannel 最早由 CoreOS 开发，它是容器编排系统中最成熟的网络插件之一。随着 CNI 概念的兴起，flannel 也是最早实现 CNI 标准的网络插件，CNI 标准也是由 CoreOS 提出的。flannel 的功能非常明确，主要解决以下容器跨接点访问的问题</p>
+<ul>
+<li><strong>容器 IP 地址的重复问题</strong>。由于 Docker 等容器管理工具只是利用 Linux 内核的 network namespace 实现了网络隔离，各个节点上的容器 IP 由各个节点自动分配，可能出现重复。为了解决这个问题，flannel 设计了一种全局的 IP 地址分配机制，即使用 etcd 存储网段和节点 IP 之间的映射关系，然后配置 docker 只在当前节点对应的网段里面为容器分配 IP。</li>
+<li><strong>容器 IP 地址的路由问题</strong>。flannel 使用多种后端（底层）技术（如 overlay 网络、Host-Gateway 网络等）解决了容器跨节点的直接通信问题。</li>
+</ul>
+<p>flannel 在架构上分为<strong>管理面</strong>和<strong>数据面</strong>。</p>
+<ul>
+<li><strong>管理面</strong>主要是 <code>etcd</code>。用于存储各个节点的 IP 及其上容器应该分配的网段</li>
+<li><strong>数据面</strong>是每个节点上运行一个 <code>flanneld</code> 进程，负责从管理面读取节点 IP 及对应的网段信息，并根据这些信息对容器跨接点通信的数据包进行路由转发。</li>
+</ul>
+<p>集群内所有的 flannel 节点共享一个大网段，比如 <code>10.0.0.0/16</code>，flanneld 启动后便会读取 etcd 中的信息，得知其他节点的 IP 及其使用的子网段，然后向 etcd 申请本节点可使用的子网段（在大网段中划分一个子网段），比如 10.0.0.1&#x2F;24，并将该信息上报记录到 etcd。</p>
+<p>flannel 目前已经支持的底层网络实现（backend）包括：</p>
+<ul>
+<li><code>UDP</code></li>
+<li><code>VXLAN</code></li>
+<li><code>Host-Gateway</code></li>
+<li><code>Alloc</code></li>
+<li><code>AWS VPC</code></li>
+<li><code>GCE 路由</code></li>
+</ul>
+<p>其中，性能最好的是 <code>Host-Gateway</code>。<code>AWS VPC</code> 和 <code>GCE 路由</code>都需要 L2 网络支持，并且最好是接入云服务。<code>Alloc</code> 只为本机创建子网，多个节点上的子网之间不能通信。</p>
+<h2 id="flannel-backend-详解"><a href="#flannel-backend-详解" class="headerlink" title="flannel backend 详解"></a>flannel backend 详解</h2><p>flannel 通过在每个节点上启动 <code>flanneld</code> 进程，负责每个节点上的子网划分，并将相关配置（如节点的 IP，划分的子网网段等）上报保存到 etcd，而具体的网络报文转发交给具体的 backend 实现。</p>
+<p><code>flanneld</code> 可以在启动时通过配置文件指定不同的 backend 进行跨节点的容器之间的网络报文的路由转发，目前比较成熟的 backend 有  <code>UDP</code>、 <code>VXLAN</code> 、<code>Host-Gateway</code>，也有 <code>AWS VPC</code>、<code>GCE 路由</code> 等专门针对云服务的 backend。目前 <code>VXLAN</code> 是官方最推崇的 backend 实现，<code>Host-Gateway</code> 是网络性能最好的 backend 实现，但是需要所有节点在同一个二层网络中互通。<code>UDP</code> 性能相对较差，建议用于测试及比较老的不支持 VXLAN 的 Linux 内核。</p>
+<h3 id="UDP"><a href="#UDP" class="headerlink" title="UDP"></a>UDP</h3><p>UDP 模式基于 <a href="/202304241633/" title="Linux tun 设备">Linux tun 设备</a>。</p>
+<p>当采用 UDP 模式时，<code>flanneld</code> 启动时会通过打开 <code>/dev/net/tun</code> 的方式生成一个 tun 设备。当 <code>flanneld</code> 进程运行之后，查看系统上的网卡信息，可以看到多了 <code>flannel0</code> 的网卡，通过命令 <code>ip -d link show flannel0</code>，可以看到其类型为 <code>tun</code> 设备。此模式下 <code>flanneld</code> 进程监听 8285 端口。</p>
+<h4 id="flannel-UDP-模式跨主机通信流程详解"><a href="#flannel-UDP-模式跨主机通信流程详解" class="headerlink" title="flannel UDP 模式跨主机通信流程详解"></a>flannel UDP 模式跨主机通信流程详解</h4><p>本说明使用架构图形如下<br><img src="https://i.csms.tech/img_140.png"></p>
+<p>以 ICMP 报文为例，<code>container A</code> 和 <code>container B</code> 的通信过程如下</p>
+<ol>
+<li><p><code>container A</code> 发起 ICMP 请求报文，根据 <code>container A</code> 中的路由信息，报文被发送到网关 <code>10.244.1.1</code>，对应设备为 <code>Host A</code> 主机上面的 <code>cni0</code> 网卡。此时报文内容如下<br>  <img src="https://i.csms.tech/img_141.png"></p>
+</li>
+<li><p>到达 cni0 的报文，目的 IP 为 <code>10.244.2.149</code>，内核根据 <code>host A</code> 上的路由信息（<code>10.244.0.0 0.0.0.0 255.255.0.0 U 0 0 0 flannel0</code>），应该将报文发送到 <code>flannel0</code> 网卡。</p>
+</li>
+<li><p><code>flannel0</code> 是个 tun  设备，数据会被 <code>flanneld</code> 接受，<code>flanneld</code> 会对数据包进行 UDP 封装。</p>
+<ul>
+<li>报文会被添加上 UDP 头部，其源端口为 <code>host A</code> 上的随机端口，目标端口为 8285</li>
+<li>添加 IP 头部，源 IP 为本节点出口 IP （eth0：172.16.130.140），目标 IP 为目标容器所在节点的 IP（eth0：172.16.130.146）。<blockquote>
+<p><code>flanneld</code> 进程是如何知道目标容器所在节点的 IP 地址？<strong>是通过 etcd 中的记录，<code>flanneld</code> 进程很容易根据目标容器的 IP 子网段，获取到对应节点的 IP</strong><br>  <img src="https://i.csms.tech/img_142.png"></p>
+</blockquote>
+</li>
+</ul>
+</li>
+<li><p><code>flanneld</code> 进程封装后的报文重新进入内核协议栈，内核根据主机上的路由信息，从主机 eth0 网卡发送出去，到达了目标主机 <code>host B</code></p>
+</li>
+<li><p><code>host B</code> 主机内核接收到此网络数据报文，通过 UDP 端口号 8285 将数据包交给监听在此端口上的 <code>flanneld</code> 进程。</p>
+</li>
+<li><p><code>host B</code> 主机上的 <code>flanneld</code> 进程对数据报文解封，获取到下图所示的报文，在网络层，源 IP 为容器 A 的 IP：10.244.1.96，目标 IP 为容器 B 的 IP：10.244.2.194。解封后的数据报文重新进入内核路由，根据主机 B 的主机路由表（<code>10.244.2.0 0.0.0.0 255.255.255.0 U 0 0 0 cni0</code>），报文被路由到 cni0<br> <img src="https://i.csms.tech/img_143.png"></p>
+</li>
+<li><p>cni0 网桥将数据包根据 MAC 地址（可以 ARP 寻址得到）将报文转发到容 B。</p>
+</li>
+<li><p>回程报文将按照上面的数据流原路返回。</p>
+</li>
+</ol>
+<p>纵观以上整个过程，<code>flanneld</code> 进程在其中主要有以下作用</p>
+<ul>
+<li>UDP 封包解封包，根据目标容器的 IP，将其转发到正确的主机节点（IP）</li>
+<li>主机节点上动态更新路由表，根据 etcd 的数据刷新本节点路由表</li>
+</ul>
+<p>容器 A 和容器 B 虽然物理上网络未相连，但是逻辑上确是在一个三层网络，这种在物理网络之上构建的上层网络称之为 <strong>overlay 网络或者隧道网络</strong></p>
+<p><strong>flannel UDP 模式的缺点</strong></p>
+<ul>
+<li>数据报文先通过 tun 设备从内核态复制到了用户态 <code>flanneld</code> 进行封装，然后再传输到了内核，仅一次网络传输就进行了 2 次用户态到内核态的切换，效率不高。</li>
+<li>因为报文封装的关系，flannel0 网卡的 MTU 要比主机 eth0 网卡小 28 个字节。</li>
+</ul>
+<h3 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h3><p><code>flanneld</code> 进程配置为 <code>vxlan</code> 类型的 backend ，<code>flanneld</code> 进程启动时会在主机上创建名为 <code>flannel.1</code> 的网卡（VTEP），网卡命名格式遵循 <code>flannel.[VNI]</code>，VNI 默认为 1。</p>
+<p>通过以下命令查看 VTEP 设备 <code>flannel.1</code> 的信息。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN mode DEFAULT group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.244.4.0/32 scope global flannel.1</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::8832:fcff:fe1d:b888/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    </span><br></pre></td></tr></table></figure>
+<p>从以上信息可以看到，<code>flannel.1</code> 类型为 <code>vxlan</code>，local IP 为 172.31.16.124，使用的是 UDP 端口 8472</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span> </span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">udp        0      0 0.0.0.0:8472            0.0.0.0:*                           -</span><br></pre></td></tr></table></figure>
+<p>以上使用 <code>netstat -anutp</code> 命令的输出中，<code>PID/Program name</code> 显示的是 <code>-</code>，说明 8472 这个 UDP 端口不是由用户态的程序监听，而是 <strong>flannel 的 VXLAN 模式工作在内核态</strong>。</p>
+<p>Kubernetes 中，VXLAN 模式的 <code>flanneld</code> 的工作流程：</p>
+<ol>
+<li><p><code>flanneld</code> 启动时，先确保 <code>flannel.1</code> 存在，若已存在则跳过，并将 VTEP 设备的相关信息（ip，节点 IP，MAC 地址等）上报到 etcd 中</p>
+</li>
+<li><p>当 flannel 网络中的其他节点加入集群并向 etcd 上报注册时，各个节点的 <code>flanneld</code> 会从 etcd 得到通知，并依次执行下面的步骤</p>
+</li>
+<li><p>在本节点添加一条新网段的路由信息，主要是让 Pod 中的流量能路由到 <code>flannel.1</code></p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ route -n</span><br><span class="line"> Kernel IP routing table</span><br><span class="line"> Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line"> 0.0.0.0         172.31.16.1     0.0.0.0         UG    100    0        0 eth0</span><br><span class="line"> 10.244.0.0      10.244.0.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.1.0      10.244.1.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.2.0      10.244.2.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.3.0      10.244.3.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.4.0      0.0.0.0         255.255.255.0   U     0      0        0 cni0</span><br><span class="line"> 172.17.0.0      0.0.0.0         255.255.0.0     U     0      0        0 docker0</span><br><span class="line"> 172.31.16.0     0.0.0.0         255.255.240.0   U     100    0        0 eth0</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在本节点添加一条新增节点的 VTEP 设备的静态 ARP 缓存</p>
+</li>
+</ol>
+<h4 id="flannel-VXLAN-模式跨主机通信流程详解"><a href="#flannel-VXLAN-模式跨主机通信流程详解" class="headerlink" title="flannel VXLAN 模式跨主机通信流程详解"></a>flannel VXLAN 模式跨主机通信流程详解</h4><p>flannel VXLAN 模式时容器跨节点网络通信实现流程<br><img src="https://i.csms.tech/img_144.png"></p>
+<ol>
+<li>同 UDP Backend 模式，容器 A 当中的 IP 包通过容器 A 内的路由表被发送到 cni0</li>
+<li>到达 cni0 当中的 IP 包通过匹配 host A 当中的路由表发现通往 10.244.2.194 的 IP 包应该交给 flannel.1 接口</li>
+<li>flannel.1 作为一个 VTEP 设备，收到报文后将按照 VTEP 的配置进行封包，首先通过 etcd 得知 10.244.2.194 属于节点 B，并得到节点 B 的 IP，通过节点 A 当中的转发表得到节点 B 对应的 VTEP 的 MAC，根据 flannel.1 设备创建时的设置的参数（VNI、local IP、Port）进行 VXLAN 封包</li>
+<li>通过 host A 跟 host B 之间的网络连接，VXLAN 包到达 host B 的 eth1 接口</li>
+<li>通过端口 8472，VXLAN 包被转发给 VTEP 设备 flannel.1 进行解包</li>
+<li>解封装后的 IP 包匹配 host B 当中的路由表（10.244.2.0），内核将 IP 包转发给 cni0</li>
+<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
+</ol>
+<p>在 VXLAN 模式下，数据包的封装解封装及路由转发都是由内核完成，<code>flanneld</code> 不再进行数据包的封装和路由转发，仅动态设置主机的路由表项、ARP 表及 FDB 表项。其效率相比 UDP 模式高效。</p>
+<h3 id="host-gw"><a href="#host-gw" class="headerlink" title="host-gw"></a>host-gw</h3><p>要配置使用 <code>host-gw</code> 模式，将 Backend 中的 <code>type</code> 改为 <code>host-gw</code> 即可。</p>
+<p>使用 <code>host-gw</code> Backend 的 Flannel 网络的网络包传输过程如下图所示：<br><img src="https://i.csms.tech/img_145.png"></p>
+<ol>
+<li>同 UDP、VXLAN 模式一致，通过容器 A 的路由表， IP 包到达 cni0</li>
+<li>到达 cni0 的 IP 包匹配到 host A 当中的路由规则（10.244.2.0），并且网关为 172.16.130.164，即 host B，所以内核将 IP 包发送给 host B（172.16.130.164）</li>
+<li>IP 包通过物理网络到达 host B 的 eth1</li>
+<li>到达 host B eth1 的 IP 包匹配到 host B 当中的路由表（10.244.2.0），IP 包被转发给 cni0</li>
+<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
+</ol>
+<p><code>host-gw</code> 模式其中一个局限性就是，由于是通过节点上的路由表来实现各个节点之间的跨节点网络通信，那么就得保证两个节点是可以直接路由过去的。按照内核当中的路由规则，网关必须在跟主机当中至少一个 IP 处于同一网段，故造成的结果就是采用 <code>host-gw</code> 这种 Backend 方式时集群中所有的节点必须处于同一个网络当中，这对于集群规模比较大时需要对节点进行网段划分的话会存在一定的局限性。另外一个则是随着集群当中节点规模的增大，<code>flanneld</code> 需要维护主机上成千上万条路由表的动态更新也是一个不小的压力。</p>
+<p>采用 <code>host-gw</code> 模式后 <code>flanneld</code> 的唯一作用就是负责主机上路由表的动态更新。</p>
+<h2 id="Kubernetes-中-flannel-相关配置"><a href="#Kubernetes-中-flannel-相关配置" class="headerlink" title="Kubernetes 中 flannel 相关配置"></a>Kubernetes 中 flannel 相关配置</h2><p>CNI 调用 flannel 插件是通过其配置文件 <code>/etc/cni/net.d/10-flannel.conflist</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /etc/cni/net.d/10-flannel.conflist</span> </span><br><span class="line">&#123;</span><br><span class="line">  &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">  &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">  &quot;plugins&quot;: [</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">      &quot;delegate&quot;: &#123;</span><br><span class="line">        &quot;hairpinMode&quot;: true,</span><br><span class="line">        &quot;isDefaultGateway&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;,</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">      &quot;capabilities&quot;: &#123;</span><br><span class="line">        &quot;portMappings&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  ]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>flannel 安装好启动之后，查看 flannel 的配置，可以看到配置的网段信息。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /run/flannel/subnet.env</span> </span><br><span class="line">FLANNEL_NETWORK=10.244.0.0/16</span><br><span class="line">FLANNEL_SUBNET=10.244.0.1/24</span><br><span class="line">FLANNEL_MTU=8951</span><br><span class="line">FLANNEL_IPMASQ=true</span><br></pre></td></tr></table></figure>
+
+<p>在 Kubernetes 中，要查看 flannel 详细的配置，可以查看以下 configmap</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit configmap -n kube-flannel kube-flannel-cfg</span></span><br><span class="line">data:</span><br><span class="line">  cni-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">      &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">      &quot;plugins&quot;: [</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">          &quot;delegate&quot;: &#123;</span><br><span class="line">            &quot;hairpinMode&quot;: true,</span><br><span class="line">            &quot;isDefaultGateway&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;,</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">          &quot;capabilities&quot;: &#123;</span><br><span class="line">            &quot;portMappings&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;</span><br><span class="line">      ]</span><br><span class="line">    &#125;</span><br><span class="line">  net-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">      &quot;Backend&quot;: &#123;</span><br><span class="line">        &quot;Type&quot;: &quot;vxlan&quot;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>从中可以看到 flannel 使用的大网段 <code>10.244.0.0/16</code>，以及其使用的底层（后端）网络通信的实现技术（<code>Backend</code>）</p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.51cto.com/article/714336.html">万字长文，带你搞懂 Kubernetes 网络模型</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.infoq.cn/article/qduqfhrisblob7textxe">Kubernetes 网络模型进阶</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes Volume 使用方法</title>
     <url>/202211291450/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常用-Volume-类型"><a href="#常用-Volume-类型" class="headerlink" title="常用 Volume 类型"></a>常用 Volume 类型</h1><p>以下是几种可用卷类型：</p>
@@ -9753,154 +9901,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络</title>
-    <url>/202212020941/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 3.10.0-1160</li>
-<li>Docker Engine - Community 23.0.3</li>
-<li>kubernetes 1.21.2-0</li>
-<li>kubernetes-cni-0.8.7-0</li>
-</ul>
-<p>Kubernetes 对任何网络实现都规定了以下要求： <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[万字长文，带你搞懂 Kubernetes 网络模型](https://www.51cto.com/article/714336.html)">[1]</span></a></sup></p>
-<ul>
-<li><p><strong>所有 Pod 都可以在不使用网络地址转换 (NAT) 的情况下与所有其他 Pod 通信。</strong></p>
-<p>  容器之间直接通信，不需要额外的 NAT，不存在源地址伪装的情况</p>
-</li>
-<li><p><strong>所有节点都可以在没有 NAT 的情况下与所有 Pod 通信。</strong></p>
-<p>  Node 与容器直接通信，不需要额外的 NAT</p>
-</li>
-<li><p><strong>Pod 认为自己的 IP 与其他人认为的 IP 相同。</strong></p>
-</li>
-</ul>
-<h1 id="CNI"><a href="#CNI" class="headerlink" title="CNI"></a>CNI</h1><p>CNI 是 Kubernetes 容器网络的标准，CNI 是 Kubernetes 和底层网络插件之间的一个抽象层，为 Kubernetes 屏蔽了底层网络实现的负责度，同时解耦了 Kubernetes 和具体的网络插件实现。</p>
-<h2 id="安装-CNI"><a href="#安装-CNI" class="headerlink" title="安装 CNI"></a>安装 CNI</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum install kubernetes-cni</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep kube</span></span><br><span class="line">kubeadm-1.21.2-0.x86_64</span><br><span class="line">kubectl-1.21.2-0.x86_64</span><br><span class="line">kubelet-1.21.2-0.x86_64</span><br><span class="line">kubernetes-cni-0.8.7-0.x86_64</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -ql kubernetes-cni-0.8.7-0</span></span><br><span class="line">/opt/cni</span><br><span class="line">/opt/cni/bin</span><br><span class="line">/opt/cni/bin/bandwidth</span><br><span class="line">/opt/cni/bin/bridge</span><br><span class="line">/opt/cni/bin/dhcp</span><br><span class="line">/opt/cni/bin/firewall</span><br><span class="line">/opt/cni/bin/flannel</span><br><span class="line">/opt/cni/bin/host-device</span><br><span class="line">/opt/cni/bin/host-local</span><br><span class="line">/opt/cni/bin/ipvlan</span><br><span class="line">/opt/cni/bin/loopback</span><br><span class="line">/opt/cni/bin/macvlan</span><br><span class="line">/opt/cni/bin/portmap</span><br><span class="line">/opt/cni/bin/ptp</span><br><span class="line">/opt/cni/bin/sbr</span><br><span class="line">/opt/cni/bin/static</span><br><span class="line">/opt/cni/bin/tuning</span><br><span class="line">/opt/cni/bin/vlan</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>Kubernetes 要使用 CNI，需要在 kubelet 启动时配置启动参数 <code>--network-plugin=cni</code>（默认配置，可使用 <code>systemctl status kubelet -l</code> 查看启动参数）。</p>
-<p>kubelet 从 <code>--cni-config-dir</code> （默认为 <code>/etc/cni/net.d/</code>）中读取网络插件的配置文件，并使用该文件中的 CNI 配置来配置每个 Pod 网络。如果该目录 （<code>/etc/cni/net.d/</code>）中有多个配置文件，则使用文件名字典序列中的第一个文件。</p>
-<p>CNI 插件的二进制文件放置的目录是通过 kubelet 的 <code>--cni-bin-dir</code> 参数指定，默认为 <code>/opt/cni/bin/</code></p>
-<span id="more"></span>
-
-<h1 id="flannel"><a href="#flannel" class="headerlink" title="flannel"></a>flannel</h1><p>flannel 最早由 CoreOS 开发，它是容器编排系统中最成熟的网络插件之一。随着 CNI 概念的兴起，flannel 也是最早实现 CNI 标准的网络插件，CNI 标准也是由 CoreOS 提出的。flannel 的功能非常明确，主要解决以下容器跨接点访问的问题</p>
-<ul>
-<li><strong>容器 IP 地址的重复问题</strong>。由于 Docker 等容器管理工具只是利用 Linux 内核的 network namespace 实现了网络隔离，各个节点上的容器 IP 由各个节点自动分配，可能出现重复。为了解决这个问题，flannel 设计了一种全局的 IP 地址分配机制，即使用 etcd 存储网段和节点 IP 之间的映射关系，然后配置 docker 只在当前节点对应的网段里面为容器分配 IP。</li>
-<li><strong>容器 IP 地址的路由问题</strong>。flannel 使用多种后端（底层）技术（如 overlay 网络、Host-Gateway 网络等）解决了容器跨节点的直接通信问题。</li>
-</ul>
-<p>flannel 在架构上分为<strong>管理面</strong>和<strong>数据面</strong>。</p>
-<ul>
-<li><strong>管理面</strong>主要是 <code>etcd</code>。用于存储各个节点的 IP 及其上容器应该分配的网段</li>
-<li><strong>数据面</strong>是每个节点上运行一个 <code>flanneld</code> 进程，负责从管理面读取节点 IP 及对应的网段信息，并根据这些信息对容器跨接点通信的数据包进行路由转发。</li>
-</ul>
-<p>集群内所有的 flannel 节点共享一个大网段，比如 <code>10.0.0.0/16</code>，flanneld 启动后便会读取 etcd 中的信息，得知其他节点的 IP 及其使用的子网段，然后向 etcd 申请本节点可使用的子网段（在大网段中划分一个子网段），比如 10.0.0.1&#x2F;24，并将该信息上报记录到 etcd。</p>
-<p>flannel 目前已经支持的底层网络实现（backend）包括：</p>
-<ul>
-<li><code>UDP</code></li>
-<li><code>VXLAN</code></li>
-<li><code>Host-Gateway</code></li>
-<li><code>Alloc</code></li>
-<li><code>AWS VPC</code></li>
-<li><code>GCE 路由</code></li>
-</ul>
-<p>其中，性能最好的是 <code>Host-Gateway</code>。<code>AWS VPC</code> 和 <code>GCE 路由</code>都需要 L2 网络支持，并且最好是接入云服务。<code>Alloc</code> 只为本机创建子网，多个节点上的子网之间不能通信。</p>
-<h2 id="flannel-backend-详解"><a href="#flannel-backend-详解" class="headerlink" title="flannel backend 详解"></a>flannel backend 详解</h2><p>flannel 通过在每个节点上启动 <code>flanneld</code> 进程，负责每个节点上的子网划分，并将相关配置（如节点的 IP，划分的子网网段等）上报保存到 etcd，而具体的网络报文转发交给具体的 backend 实现。</p>
-<p><code>flanneld</code> 可以在启动时通过配置文件指定不同的 backend 进行跨节点的容器之间的网络报文的路由转发，目前比较成熟的 backend 有  <code>UDP</code>、 <code>VXLAN</code> 、<code>Host-Gateway</code>，也有 <code>AWS VPC</code>、<code>GCE 路由</code> 等专门针对云服务的 backend。目前 <code>VXLAN</code> 是官方最推崇的 backend 实现，<code>Host-Gateway</code> 是网络性能最好的 backend 实现，但是需要所有节点在同一个二层网络中互通。<code>UDP</code> 性能相对较差，建议用于测试及比较老的不支持 VXLAN 的 Linux 内核。</p>
-<h3 id="UDP"><a href="#UDP" class="headerlink" title="UDP"></a>UDP</h3><p>UDP 模式基于 <a href="/202304241633/" title="Linux tun 设备">Linux tun 设备</a>。</p>
-<p>当采用 UDP 模式时，<code>flanneld</code> 启动时会通过打开 <code>/dev/net/tun</code> 的方式生成一个 tun 设备。当 <code>flanneld</code> 进程运行之后，查看系统上的网卡信息，可以看到多了 <code>flannel0</code> 的网卡，通过命令 <code>ip -d link show flannel0</code>，可以看到其类型为 <code>tun</code> 设备。此模式下 <code>flanneld</code> 进程监听 8285 端口。</p>
-<h4 id="flannel-UDP-模式跨主机通信流程详解"><a href="#flannel-UDP-模式跨主机通信流程详解" class="headerlink" title="flannel UDP 模式跨主机通信流程详解"></a>flannel UDP 模式跨主机通信流程详解</h4><p>本说明使用架构图形如下<br><img src="https://i.csms.tech/img_140.png"></p>
-<p>以 ICMP 报文为例，<code>container A</code> 和 <code>container B</code> 的通信过程如下</p>
-<ol>
-<li><p><code>container A</code> 发起 ICMP 请求报文，根据 <code>container A</code> 中的路由信息，报文被发送到网关 <code>10.244.1.1</code>，对应设备为 <code>Host A</code> 主机上面的 <code>cni0</code> 网卡。此时报文内容如下<br>  <img src="https://i.csms.tech/img_141.png"></p>
-</li>
-<li><p>到达 cni0 的报文，目的 IP 为 <code>10.244.2.149</code>，内核根据 <code>host A</code> 上的路由信息（<code>10.244.0.0 0.0.0.0 255.255.0.0 U 0 0 0 flannel0</code>），应该将报文发送到 <code>flannel0</code> 网卡。</p>
-</li>
-<li><p><code>flannel0</code> 是个 tun  设备，数据会被 <code>flanneld</code> 接受，<code>flanneld</code> 会对数据包进行 UDP 封装。</p>
-<ul>
-<li>报文会被添加上 UDP 头部，其源端口为 <code>host A</code> 上的随机端口，目标端口为 8285</li>
-<li>添加 IP 头部，源 IP 为本节点出口 IP （eth0：172.16.130.140），目标 IP 为目标容器所在节点的 IP（eth0：172.16.130.146）。<blockquote>
-<p><code>flanneld</code> 进程是如何知道目标容器所在节点的 IP 地址？<strong>是通过 etcd 中的记录，<code>flanneld</code> 进程很容易根据目标容器的 IP 子网段，获取到对应节点的 IP</strong><br>  <img src="https://i.csms.tech/img_142.png"></p>
-</blockquote>
-</li>
-</ul>
-</li>
-<li><p><code>flanneld</code> 进程封装后的报文重新进入内核协议栈，内核根据主机上的路由信息，从主机 eth0 网卡发送出去，到达了目标主机 <code>host B</code></p>
-</li>
-<li><p><code>host B</code> 主机内核接收到此网络数据报文，通过 UDP 端口号 8285 将数据包交给监听在此端口上的 <code>flanneld</code> 进程。</p>
-</li>
-<li><p><code>host B</code> 主机上的 <code>flanneld</code> 进程对数据报文解封，获取到下图所示的报文，在网络层，源 IP 为容器 A 的 IP：10.244.1.96，目标 IP 为容器 B 的 IP：10.244.2.194。解封后的数据报文重新进入内核路由，根据主机 B 的主机路由表（<code>10.244.2.0 0.0.0.0 255.255.255.0 U 0 0 0 cni0</code>），报文被路由到 cni0<br> <img src="https://i.csms.tech/img_143.png"></p>
-</li>
-<li><p>cni0 网桥将数据包根据 MAC 地址（可以 ARP 寻址得到）将报文转发到容 B。</p>
-</li>
-<li><p>回程报文将按照上面的数据流原路返回。</p>
-</li>
-</ol>
-<p>纵观以上整个过程，<code>flanneld</code> 进程在其中主要有以下作用</p>
-<ul>
-<li>UDP 封包解封包，根据目标容器的 IP，将其转发到正确的主机节点（IP）</li>
-<li>主机节点上动态更新路由表，根据 etcd 的数据刷新本节点路由表</li>
-</ul>
-<p>容器 A 和容器 B 虽然物理上网络未相连，但是逻辑上确是在一个三层网络，这种在物理网络之上构建的上层网络称之为 <strong>overlay 网络或者隧道网络</strong></p>
-<p><strong>flannel UDP 模式的缺点</strong></p>
-<ul>
-<li>数据报文先通过 tun 设备从内核态复制到了用户态 <code>flanneld</code> 进行封装，然后再传输到了内核，仅一次网络传输就进行了 2 次用户态到内核态的切换，效率不高。</li>
-<li>因为报文封装的关系，flannel0 网卡的 MTU 要比主机 eth0 网卡小 28 个字节。</li>
-</ul>
-<h3 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h3><p><code>flanneld</code> 进程配置为 <code>vxlan</code> 类型的 backend ，<code>flanneld</code> 进程启动时会在主机上创建名为 <code>flannel.1</code> 的网卡（VTEP），网卡命名格式遵循 <code>flannel.[VNI]</code>，VNI 默认为 1。</p>
-<p>通过以下命令查看 VTEP 设备 <code>flannel.1</code> 的信息。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN mode DEFAULT group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.244.4.0/32 scope global flannel.1</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::8832:fcff:fe1d:b888/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    </span><br></pre></td></tr></table></figure>
-<p>从以上信息可以看到，<code>flannel.1</code> 类型为 <code>vxlan</code>，local IP 为 172.31.16.124，使用的是 UDP 端口 8472</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span> </span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">udp        0      0 0.0.0.0:8472            0.0.0.0:*                           -</span><br></pre></td></tr></table></figure>
-<p>以上使用 <code>netstat -anutp</code> 命令的输出中，<code>PID/Program name</code> 显示的是 <code>-</code>，说明 8472 这个 UDP 端口不是由用户态的程序监听，而是 <strong>flannel 的 VXLAN 模式工作在内核态</strong>。</p>
-<p>Kubernetes 中，VXLAN 模式的 <code>flanneld</code> 的工作流程：</p>
-<ol>
-<li><p><code>flanneld</code> 启动时，先确保 <code>flannel.1</code> 存在，若已存在则跳过，并将 VTEP 设备的相关信息（ip，节点 IP，MAC 地址等）上报到 etcd 中</p>
-</li>
-<li><p>当 flannel 网络中的其他节点加入集群并向 etcd 上报注册时，各个节点的 <code>flanneld</code> 会从 etcd 得到通知，并依次执行下面的步骤</p>
-</li>
-<li><p>在本节点添加一条新网段的路由信息，主要是让 Pod 中的流量能路由到 <code>flannel.1</code></p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ route -n</span><br><span class="line"> Kernel IP routing table</span><br><span class="line"> Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line"> 0.0.0.0         172.31.16.1     0.0.0.0         UG    100    0        0 eth0</span><br><span class="line"> 10.244.0.0      10.244.0.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.1.0      10.244.1.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.2.0      10.244.2.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.3.0      10.244.3.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.4.0      0.0.0.0         255.255.255.0   U     0      0        0 cni0</span><br><span class="line"> 172.17.0.0      0.0.0.0         255.255.0.0     U     0      0        0 docker0</span><br><span class="line"> 172.31.16.0     0.0.0.0         255.255.240.0   U     100    0        0 eth0</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>在本节点添加一条新增节点的 VTEP 设备的静态 ARP 缓存</p>
-</li>
-</ol>
-<h4 id="flannel-VXLAN-模式跨主机通信流程详解"><a href="#flannel-VXLAN-模式跨主机通信流程详解" class="headerlink" title="flannel VXLAN 模式跨主机通信流程详解"></a>flannel VXLAN 模式跨主机通信流程详解</h4><p>flannel VXLAN 模式时容器跨节点网络通信实现流程<br><img src="https://i.csms.tech/img_144.png"></p>
-<ol>
-<li>同 UDP Backend 模式，容器 A 当中的 IP 包通过容器 A 内的路由表被发送到 cni0</li>
-<li>到达 cni0 当中的 IP 包通过匹配 host A 当中的路由表发现通往 10.244.2.194 的 IP 包应该交给 flannel.1 接口</li>
-<li>flannel.1 作为一个 VTEP 设备，收到报文后将按照 VTEP 的配置进行封包，首先通过 etcd 得知 10.244.2.194 属于节点 B，并得到节点 B 的 IP，通过节点 A 当中的转发表得到节点 B 对应的 VTEP 的 MAC，根据 flannel.1 设备创建时的设置的参数（VNI、local IP、Port）进行 VXLAN 封包</li>
-<li>通过 host A 跟 host B 之间的网络连接，VXLAN 包到达 host B 的 eth1 接口</li>
-<li>通过端口 8472，VXLAN 包被转发给 VTEP 设备 flannel.1 进行解包</li>
-<li>解封装后的 IP 包匹配 host B 当中的路由表（10.244.2.0），内核将 IP 包转发给 cni0</li>
-<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
-</ol>
-<p>在 VXLAN 模式下，数据包的封装解封装及路由转发都是由内核完成，<code>flanneld</code> 不再进行数据包的封装和路由转发，仅动态设置主机的路由表项、ARP 表及 FDB 表项。其效率相比 UDP 模式高效。</p>
-<h3 id="host-gw"><a href="#host-gw" class="headerlink" title="host-gw"></a>host-gw</h3><p>要配置使用 <code>host-gw</code> 模式，将 Backend 中的 <code>type</code> 改为 <code>host-gw</code> 即可。</p>
-<p>使用 <code>host-gw</code> Backend 的 Flannel 网络的网络包传输过程如下图所示：<br><img src="https://i.csms.tech/img_145.png"></p>
-<ol>
-<li>同 UDP、VXLAN 模式一致，通过容器 A 的路由表， IP 包到达 cni0</li>
-<li>到达 cni0 的 IP 包匹配到 host A 当中的路由规则（10.244.2.0），并且网关为 172.16.130.164，即 host B，所以内核将 IP 包发送给 host B（172.16.130.164）</li>
-<li>IP 包通过物理网络到达 host B 的 eth1</li>
-<li>到达 host B eth1 的 IP 包匹配到 host B 当中的路由表（10.244.2.0），IP 包被转发给 cni0</li>
-<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
-</ol>
-<p><code>host-gw</code> 模式其中一个局限性就是，由于是通过节点上的路由表来实现各个节点之间的跨节点网络通信，那么就得保证两个节点是可以直接路由过去的。按照内核当中的路由规则，网关必须在跟主机当中至少一个 IP 处于同一网段，故造成的结果就是采用 <code>host-gw</code> 这种 Backend 方式时集群中所有的节点必须处于同一个网络当中，这对于集群规模比较大时需要对节点进行网段划分的话会存在一定的局限性。另外一个则是随着集群当中节点规模的增大，<code>flanneld</code> 需要维护主机上成千上万条路由表的动态更新也是一个不小的压力。</p>
-<p>采用 <code>host-gw</code> 模式后 <code>flanneld</code> 的唯一作用就是负责主机上路由表的动态更新。</p>
-<h2 id="Kubernetes-中-flannel-相关配置"><a href="#Kubernetes-中-flannel-相关配置" class="headerlink" title="Kubernetes 中 flannel 相关配置"></a>Kubernetes 中 flannel 相关配置</h2><p>CNI 调用 flannel 插件是通过其配置文件 <code>/etc/cni/net.d/10-flannel.conflist</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /etc/cni/net.d/10-flannel.conflist</span> </span><br><span class="line">&#123;</span><br><span class="line">  &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">  &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">  &quot;plugins&quot;: [</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">      &quot;delegate&quot;: &#123;</span><br><span class="line">        &quot;hairpinMode&quot;: true,</span><br><span class="line">        &quot;isDefaultGateway&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;,</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">      &quot;capabilities&quot;: &#123;</span><br><span class="line">        &quot;portMappings&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  ]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>flannel 安装好启动之后，查看 flannel 的配置，可以看到配置的网段信息。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /run/flannel/subnet.env</span> </span><br><span class="line">FLANNEL_NETWORK=10.244.0.0/16</span><br><span class="line">FLANNEL_SUBNET=10.244.0.1/24</span><br><span class="line">FLANNEL_MTU=8951</span><br><span class="line">FLANNEL_IPMASQ=true</span><br></pre></td></tr></table></figure>
-
-<p>在 Kubernetes 中，要查看 flannel 详细的配置，可以查看以下 configmap</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit configmap -n kube-flannel kube-flannel-cfg</span></span><br><span class="line">data:</span><br><span class="line">  cni-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">      &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">      &quot;plugins&quot;: [</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">          &quot;delegate&quot;: &#123;</span><br><span class="line">            &quot;hairpinMode&quot;: true,</span><br><span class="line">            &quot;isDefaultGateway&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;,</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">          &quot;capabilities&quot;: &#123;</span><br><span class="line">            &quot;portMappings&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;</span><br><span class="line">      ]</span><br><span class="line">    &#125;</span><br><span class="line">  net-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">      &quot;Backend&quot;: &#123;</span><br><span class="line">        &quot;Type&quot;: &quot;vxlan&quot;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>从中可以看到 flannel 使用的大网段 <code>10.244.0.0/16</code>，以及其使用的底层（后端）网络通信的实现技术（<code>Backend</code>）</p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.51cto.com/article/714336.html">万字长文，带你搞懂 Kubernetes 网络模型</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.infoq.cn/article/qduqfhrisblob7textxe">Kubernetes 网络模型进阶</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
       </tags>
   </entry>
   <entry>
@@ -15873,6 +15873,37 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>python 操作日期及时间</title>
+    <url>/202301231137/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.10</li>
+</ul>
+<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="获取前一天所属月份"><a href="#获取前一天所属月份" class="headerlink" title="获取前一天所属月份"></a>获取前一天所属月份</h2><h3 id="arrow-模块获取"><a href="#arrow-模块获取" class="headerlink" title="arrow 模块获取"></a>arrow 模块获取</h3><p>以下示例使用 <code>arrow</code> 模块获取前一天所属月份 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[时间日期相关操作](https://developer.aliyun.com/article/673245)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install arrow</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a = arrow.now() <span class="comment"># 当前本地时间</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a.shift(months=-1).format(<span class="string">&quot;YYYYMM&quot;</span>)</span></span><br><span class="line">&#x27;202212&#x27;</span><br></pre></td></tr></table></figure>
+
+<p>指定参数 <code>months = -1</code> 就可以计算前一个月的时间。往后一个月就是 <code>month=+1</code>，<code>format</code> 指定时间格式。</p>
+<h2 id="获取前一个月的天数"><a href="#获取前一个月的天数" class="headerlink" title="获取前一个月的天数"></a>获取前一个月的天数</h2><p>通过模块 <code>calendar</code> 获取 </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import calendar</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">获取 2022-1 月份的天数，输出 tuple ，由此月的第一天是星期几和此月的天数构成。</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; calendar.monthrange(2022,1)</span></span><br><span class="line">(5, 31)</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+
+<h2 id="时间转换为时间戳"><a href="#时间转换为时间戳" class="headerlink" title="时间转换为时间戳"></a>时间转换为时间戳</h2><h3 id="time-模块"><a href="#time-模块" class="headerlink" title="time 模块"></a>time 模块</h3><p>使用 <code>time</code> 模块将指定格式的时间，转为时间戳</p>
+<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import time</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; t = <span class="string">&quot;2022-12-01 00:00:00&quot;</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">## 使用 time.strptime 将指定的时间 t 转换为时间数组</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray = time.strptime(t, <span class="string">&quot;%Y-%m-%d %H:%M:%S&quot;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray</span></span><br><span class="line">time.struct_time(tm_year=2022, tm_mon=12, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=335, tm_isdst=-1)</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp = time.mktime(timeArray)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp</span></span><br><span class="line">1669852800.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="datetime-模块使用"><a href="#datetime-模块使用" class="headerlink" title="datetime 模块使用"></a>datetime 模块使用</h1><h2 id="获取日期和时间"><a href="#获取日期和时间" class="headerlink" title="获取日期和时间"></a>获取日期和时间</h2><h3 id="获取今天的日期"><a href="#获取今天的日期" class="headerlink" title="获取今天的日期"></a>获取今天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime)</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today()</span><br><span class="line">datetime.date(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().year</span><br><span class="line"><span class="number">2023</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().day</span><br><span class="line"><span class="number">28</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="获取当前的日期和时间"><a href="#获取当前的日期和时间" class="headerlink" title="获取当前的日期和时间"></a>获取当前的日期和时间</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>, <span class="number">5</span>, <span class="number">2</span>, <span class="number">48</span>, <span class="number">996356</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h3 id="获取明天的日期"><a href="#获取明天的日期" class="headerlink" title="获取明天的日期"></a>获取明天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime.timedelta)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today() + datetime.timedelta(<span class="number">1</span>)</span><br></pre></td></tr></table></figure>
+
+<h2 id="比较时间"><a href="#比较时间" class="headerlink" title="比较时间"></a>比较时间</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">12</span>, <span class="number">23</span>, <span class="number">6</span>, <span class="number">26</span>, <span class="number">2</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期比较</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire.date() &gt; datetime.date.today()</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期和时间比较，tz=datetime.timezone.utc 可以解决时区不同的问题： TypeError: can&#x27;t compare offset-naive and offset-aware datetimes</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire &gt; datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.aliyun.com/article/673245">时间日期相关操作</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Pycharm 常用配置</title>
     <url>/202208041319/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15904,37 +15935,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>PyCharm</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>python 操作日期及时间</title>
-    <url>/202301231137/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.10</li>
-</ul>
-<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><h2 id="获取前一天所属月份"><a href="#获取前一天所属月份" class="headerlink" title="获取前一天所属月份"></a>获取前一天所属月份</h2><h3 id="arrow-模块获取"><a href="#arrow-模块获取" class="headerlink" title="arrow 模块获取"></a>arrow 模块获取</h3><p>以下示例使用 <code>arrow</code> 模块获取前一天所属月份 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[时间日期相关操作](https://developer.aliyun.com/article/673245)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install arrow</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a = arrow.now() <span class="comment"># 当前本地时间</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; a.shift(months=-1).format(<span class="string">&quot;YYYYMM&quot;</span>)</span></span><br><span class="line">&#x27;202212&#x27;</span><br></pre></td></tr></table></figure>
-
-<p>指定参数 <code>months = -1</code> 就可以计算前一个月的时间。往后一个月就是 <code>month=+1</code>，<code>format</code> 指定时间格式。</p>
-<h2 id="获取前一个月的天数"><a href="#获取前一个月的天数" class="headerlink" title="获取前一个月的天数"></a>获取前一个月的天数</h2><p>通过模块 <code>calendar</code> 获取 </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import calendar</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">获取 2022-1 月份的天数，输出 tuple ，由此月的第一天是星期几和此月的天数构成。</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; calendar.monthrange(2022,1)</span></span><br><span class="line">(5, 31)</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-
-<h2 id="时间转换为时间戳"><a href="#时间转换为时间戳" class="headerlink" title="时间转换为时间戳"></a>时间转换为时间戳</h2><h3 id="time-模块"><a href="#time-模块" class="headerlink" title="time 模块"></a>time 模块</h3><p>使用 <code>time</code> 模块将指定格式的时间，转为时间戳</p>
-<figure class="highlight shell"><figcaption><span>python</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import time</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; t = <span class="string">&quot;2022-12-01 00:00:00&quot;</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">## 使用 time.strptime 将指定的时间 t 转换为时间数组</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray = time.strptime(t, <span class="string">&quot;%Y-%m-%d %H:%M:%S&quot;</span>)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timeArray</span></span><br><span class="line">time.struct_time(tm_year=2022, tm_mon=12, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=335, tm_isdst=-1)</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp = time.mktime(timeArray)</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; timestamp</span></span><br><span class="line">1669852800.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="datetime-模块使用"><a href="#datetime-模块使用" class="headerlink" title="datetime 模块使用"></a>datetime 模块使用</h1><h2 id="获取日期和时间"><a href="#获取日期和时间" class="headerlink" title="获取日期和时间"></a>获取日期和时间</h2><h3 id="获取今天的日期"><a href="#获取今天的日期" class="headerlink" title="获取今天的日期"></a>获取今天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime)</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today()</span><br><span class="line">datetime.date(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().year</span><br><span class="line"><span class="number">2023</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today().day</span><br><span class="line"><span class="number">28</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="获取当前的日期和时间"><a href="#获取当前的日期和时间" class="headerlink" title="获取当前的日期和时间"></a>获取当前的日期和时间</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">2</span>, <span class="number">28</span>, <span class="number">5</span>, <span class="number">2</span>, <span class="number">48</span>, <span class="number">996356</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h3 id="获取明天的日期"><a href="#获取明天的日期" class="headerlink" title="获取明天的日期"></a>获取明天的日期</h3><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(datetime.timedelta)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>datetime.date.today() + datetime.timedelta(<span class="number">1</span>)</span><br></pre></td></tr></table></figure>
-
-<h2 id="比较时间"><a href="#比较时间" class="headerlink" title="比较时间"></a>比较时间</h2><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire</span><br><span class="line">datetime.datetime(<span class="number">2023</span>, <span class="number">12</span>, <span class="number">23</span>, <span class="number">6</span>, <span class="number">26</span>, <span class="number">2</span>, tzinfo=datetime.timezone.utc)</span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期比较</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire.date() &gt; datetime.date.today()</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 日期和时间比较，tz=datetime.timezone.utc 可以解决时区不同的问题： TypeError: can&#x27;t compare offset-naive and offset-aware datetimes</span></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>expire &gt; datetime.datetime.now(tz=datetime.timezone.utc)</span><br><span class="line"><span class="literal">True</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.aliyun.com/article/673245">时间日期相关操作</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
       </tags>
   </entry>
   <entry>
@@ -16640,130 +16640,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>redis 配置</title>
-    <url>/202307121459/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Redis 6</li>
-</ul>
-<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
-<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
-<p>创建服务启动需要的数据目录及日志目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
-<p>7380 服务使用如下配置文件</p>
-<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
-
-<p>分别启动服务（7380-7385）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<p><strong>创建集群</strong> 命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>redis-cli</code> 命令参数说明：</p>
-<table>
-<thead>
-<tr>
-<th>命令参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--cluster</code></td>
-<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
-<td><code>redis-cli --cluster create</code><br/>创建集群</td>
-</tr>
-<tr>
-<td><code>--cluster-replicas</code></td>
-<td>redis cluster 副本数比例</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-a</code></td>
-<td>redis 密码</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-c</code></td>
-<td>操作 redis cluster</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-p</code></td>
-<td>指定连接的端口</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>查看新建的集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
-<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
-<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
-</ul>
-<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>新增节点的命令示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
-
-<p>再次查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
-<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
-<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
-<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
-<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
-</ul>
-<p>本示例中执行以下命令为新添加的节点分配 slot</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
-
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
-<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
-<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
-<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
-<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
-</ul>
-<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
-<p>执行成功后重新查看集群信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
-
-<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
-<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>rsyncd 服务</title>
     <url>/36f703dc/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="命令格式"><a href="#命令格式" class="headerlink" title="命令格式"></a>命令格式</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">rsync [OPTION]... SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]host:DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST:SRC DEST</span><br><span class="line">rsync [OPTION]... [USER@]HOST::SRC DEST</span><br><span class="line">rsync [OPTION]... SRC [USER@]HOST::DEST</span><br><span class="line">rsync [OPTION]... rsync://[USER@]HOST[:PORT]/SRC [DEST]</span><br></pre></td></tr></table></figure>
@@ -17252,6 +17128,130 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>Rsync</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>redis 配置</title>
+    <url>/202307121459/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Redis 6</li>
+</ul>
+<h1 id="redis-Cluster-部署"><a href="#redis-Cluster-部署" class="headerlink" title="redis Cluster 部署"></a>redis Cluster 部署</h1><p>下载已经编译好的 <a href="https://s.csms.tech/file/redis6-cluster.tar">redis6-cluster 安装文件</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://s.csms.tech/redis6-cluster.tar</span><br><span class="line">tar -xf redis6-cluster.tar -C /usr/local/</span><br></pre></td></tr></table></figure>
+<p>本示例安装 3 master 3 slave 的 redis cluster，假设使用端口为 7380-7385。数据存放路径为 <code>/data/redis/7380</code>，日志路径为 <code>/data/logs/redis-cluster/7380/</code>，其他端口的 redis 服务配置以此类推，主要是修改对应端口。</p>
+<p>创建服务启动需要的数据目录及日志目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/redis/738$&#123;i&#125; ; done</span><br><span class="line"></span><br><span class="line">for i in 1 2 3 4 5 0 ; do mkdir -p /data/logs/redis-cluster/738$&#123;i&#125; ; done</span><br></pre></td></tr></table></figure>
+<p>7380 服务使用如下配置文件</p>
+<figure class="highlight shell"><figcaption><span>7380.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">bind 0.0.0.0</span><br><span class="line">protected-mode no</span><br><span class="line">port 7380</span><br><span class="line">tcp-backlog 511</span><br><span class="line">timeout 600</span><br><span class="line">tcp-keepalive 60</span><br><span class="line">daemonize yes</span><br><span class="line">supervised no</span><br><span class="line">pidfile /var/run/redis_7380.pid</span><br><span class="line">loglevel notice</span><br><span class="line">logfile /data/logs/redis-cluster/7380/redis.log</span><br><span class="line">databases 16</span><br><span class="line">always-show-logo yes</span><br><span class="line">save &quot;&quot;</span><br><span class="line">stop-writes-on-bgsave-error no</span><br><span class="line">rdbcompression yes</span><br><span class="line">rdbchecksum yes</span><br><span class="line">dbfilename dump.rdb</span><br><span class="line">dir /data/redis/7380</span><br><span class="line">replica-serve-stale-data yes</span><br><span class="line">replica-read-only yes</span><br><span class="line">repl-diskless-sync no</span><br><span class="line">repl-diskless-sync-delay 5</span><br><span class="line">repl-disable-tcp-nodelay no</span><br><span class="line">replica-priority 100</span><br><span class="line">requirepass redisPassword</span><br><span class="line">masterauth redisPassword</span><br><span class="line">maxclients 30000</span><br><span class="line">maxmemory-policy volatile-lru</span><br><span class="line">lazyfree-lazy-eviction no</span><br><span class="line">lazyfree-lazy-expire no</span><br><span class="line">lazyfree-lazy-server-del no</span><br><span class="line">replica-lazy-flush no</span><br><span class="line">appendonly no</span><br><span class="line">appendfilename &quot;appendonly.aof&quot;</span><br><span class="line">appendfsync everysec</span><br><span class="line">no-appendfsync-on-rewrite no</span><br><span class="line">auto-aof-rewrite-percentage 100</span><br><span class="line">auto-aof-rewrite-min-size 64mb</span><br><span class="line">aof-load-truncated yes</span><br><span class="line">aof-use-rdb-preamble yes</span><br><span class="line">lua-time-limit 5000</span><br><span class="line">cluster-enabled yes</span><br><span class="line">cluster-node-timeout 5000</span><br><span class="line">cluster-require-full-coverage no</span><br><span class="line">slowlog-log-slower-than 3000</span><br><span class="line">slowlog-max-len 200</span><br><span class="line">latency-monitor-threshold 0</span><br><span class="line">notify-keyspace-events &quot;&quot;</span><br><span class="line">hash-max-ziplist-entries 512</span><br><span class="line">hash-max-ziplist-value 64</span><br><span class="line">list-max-ziplist-size -2</span><br><span class="line">list-compress-depth 0</span><br><span class="line">set-max-intset-entries 512</span><br><span class="line">zset-max-ziplist-entries 128</span><br><span class="line">zset-max-ziplist-value 64</span><br><span class="line">hll-sparse-max-bytes 3000</span><br><span class="line">stream-node-max-bytes 4096</span><br><span class="line">stream-node-max-entries 100</span><br><span class="line">activerehashing yes</span><br><span class="line">client-output-buffer-limit normal 0 0 0</span><br><span class="line">client-output-buffer-limit replica 0 0 0</span><br><span class="line">client-output-buffer-limit pubsub 32mb 8mb 60</span><br><span class="line">hz 10</span><br><span class="line">dynamic-hz yes</span><br><span class="line">aof-rewrite-incremental-fsync yes</span><br><span class="line">rdb-save-incremental-fsync yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>若要根据以上 7380 端口的服务配置文件复制出其他服务端口的配置文件，可以参考以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp 7380.conf 7381.conf</span><br><span class="line">sed -i &#x27;s/7380/7381/g&#x27; 7381.conf</span><br><span class="line"></span><br><span class="line">cp 7380.conf 7382.conf</span><br><span class="line">sed -i &#x27;s/7380/7382/g&#x27; 7382.conf</span><br></pre></td></tr></table></figure>
+
+<p>分别启动服务（7380-7385）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/local/redis6-cluster/src/redis-server /usr/local/redis6-cluster/7380.conf</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<p><strong>创建集群</strong> 命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create host1:port1 ... hostN:portN --cluster-replicas &lt;arg&gt; -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>redis-cli</code> 命令参数说明：</p>
+<table>
+<thead>
+<tr>
+<th>命令参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--cluster</code></td>
+<td>redis cluster 操作<br/>查看 cluster 操作命令的帮助信息<br/><code>redis-cli --cluster help</code></td>
+<td><code>redis-cli --cluster create</code><br/>创建集群</td>
+</tr>
+<tr>
+<td><code>--cluster-replicas</code></td>
+<td>redis cluster 副本数比例</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-a</code></td>
+<td>redis 密码</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-c</code></td>
+<td>操作 redis cluster</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td>指定连接的端口</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>本示例使用以下命令创建集群，副本数为 1，有 6 个 redis 节点，为 3 master 3 slave</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster create 172.31.0.20:7380 172.31.0.20:7381 172.31.0.20:7382 172.31.0.20:7383 172.31.0.20:7384 172.31.0.20:7385 \</span><br><span class="line">          --cluster-replicas 1 \</span><br><span class="line">          -a &#x27;redisPassword&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>查看新建的集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7380 -a <span class="string">&#x27;redisPassword&#x27;</span> cluster nodes</span></span><br><span class="line">Warning: Using a password with &#x27;-a&#x27; or &#x27;-u&#x27; option on the command line interface may not be safe.</span><br><span class="line">aa4d467115b7d7c312fa28cac065d1343ee4af87 172.31.0.20:7383@17383 slave 1286b9783675913064d35edce520cfcb03d5dd61 0 1689148281218 3 connected</span><br><span class="line">78e47bd8cdd7b210219b0789a14b3079ed137648 172.31.0.20:7384@17384 slave 71510816880f0d5cc2299c4ce0fecc99965f2a80 0 1689148282220 1 connected</span><br><span class="line">1286b9783675913064d35edce520cfcb03d5dd61 172.31.0.20:7382@17382 master - 0 1689148281719 3 connected 10923-16383</span><br><span class="line">82533c5ecf0f418e8a134ce188d175e23858fbff 172.31.0.20:7381@17381 master - 0 1689148281000 2 connected 5461-10922</span><br><span class="line">71510816880f0d5cc2299c4ce0fecc99965f2a80 172.31.0.20:7380@17380 myself,master - 0 1689148281000 1 connected 0-5460</span><br><span class="line">f2e45a6fef0c5e24690373166c60c36379514d63 172.31.0.20:7385@17385 slave 82533c5ecf0f418e8a134ce188d175e23858fbff 0 1689148282000 2 connected</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="redis-cluster-常见管理操作"><a href="#redis-cluster-常见管理操作" class="headerlink" title="redis cluster 常见管理操作"></a>redis cluster 常见管理操作</h1><h2 id="添加-master-节点"><a href="#添加-master-节点" class="headerlink" title="添加 master 节点"></a>添加 master 节点</h2><p>给已有的 redis cluster 添加一个新的 master 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port --cluster-master-id node_id</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 为要新加的节点的 IP:PORT 信息</li>
+<li><code>existing_host:existing_port</code> - 当前集群<strong>最后（新）一个</strong>主节点的 IP:PORT 信息，这个可以通过 <code>redis-cli -c cluster nodes</code> 中的 slot 位置查询到</li>
+<li><code>--cluster-master-id</code> - 当前集群<strong>最后（新）一个</strong>主节点的 id，可以通过命令 <code>redis-cli -c cluster nodes</code> 查看</li>
+</ul>
+<p>假设当前集群信息如下，观察 slot 位置，可以看到 <code>127.0.0.1:7003@17003</code> 是最后或者最新的节点。其 id 为 <code>bbe8b7035bfd31c47bec7d612acc112cd2869368</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span> </span><br><span class="line">       </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>新增节点的命令示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7003 \</span><br><span class="line">          --cluster-master-id bbe8b7035bfd31c47bec7d612acc112cd2869368</span><br></pre></td></tr></table></figure>
+
+<p>再次查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>        </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564923261350 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564923263366 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564923260344 0 connected</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564923262000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564923260000 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564923263000 1 connected 0-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564923262358 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p>会发现 7007 端口对应的节点已经加入到集群中，是主节点，但是没有从节点，也没有分配槽数。执行以下命令给新添加的主节点分配 slots 槽数<br>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard host:port \</span><br><span class="line">                            --cluster-from node_id \</span><br><span class="line">                            --cluster-to node_id \</span><br><span class="line">                            --cluster-slots 500 --cluster-yes</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>host:port</code> - 新添加的主节点 IP 和端口，此处表示的是 <code>127.0.0.1:7007</code></li>
+<li><code>--cluster-from node_id</code> - 表示的是集群<strong>第一个主节点</strong>的节点 id，这个可以现有集群的 slots 槽数分配看出，此处表示的是 7001 端口对应的节点</li>
+<li><code>--cluster-to node_id</code> - 表示的是集群<strong>最后一个主节点</strong>的节点 id,也就是<strong>新添加的那个主节点 id</strong>,此处表示的是 7007 端口对应的节点</li>
+<li><code>--cluster-slots 500</code> - 表示的是给<strong>新主节点</strong>分配多少，此处 500 表示是分配从 0-499 个 slots 槽数，若不加会让手动输入</li>
+<li><code>--cluster-yes</code> - 表示的是自动应答为 <code>yes</code>,若不加上这个会让手动输入 <code>yes</code>，表示同意此次分配</li>
+</ul>
+<p>本示例中执行以下命令为新添加的节点分配 slot</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster reshard 127.0.0.1:7007 --cluster-from 4dad696ede24995a57c5fd790faa95c72c187a22 \</span><br><span class="line">                                           --cluster-to 7020c8df9423686727783c60bd2f0e367634ba84 \</span><br><span class="line">                                           --cluster-slots 500 </span><br></pre></td></tr></table></figure>
+
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924042000 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924042157 3 connected 10923-16383</span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924040140 7 connected 0-499</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924040000 5 connected</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924041149 6 connected</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924040000 1 connected 500-5460</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924043166 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+<p><strong>会看到 7007 端口对应的主节点已经有 slots 槽数了，并且是从 0 开始的</strong></p>
+<h2 id="给集群中某个主节点添加一个从节点"><a href="#给集群中某个主节点添加一个从节点" class="headerlink" title="给集群中某个主节点添加一个从节点"></a>给集群中某个主节点添加一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node new_host:new_port existing_host:existing_port \</span><br><span class="line">                    --cluster-slave \</span><br><span class="line">                    --cluster-master-id node_id</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>new_host:new_port</code> - 表示的是要<strong>添加的那个从节点</strong>的 IP 和端口</li>
+<li><code>existing_host:existing_port</code> - 表示的是要给<strong>哪个主节点</strong>添加从节点</li>
+<li><code>--cluster-slave</code> - 表示的是要<strong>添加从节点</strong>，否则则是添加主节点了</li>
+<li><code>--cluster-master-id node_id</code> - 表示要给<strong>哪个主节点</strong>添加从节点，该主节点节点 id</li>
+</ul>
+<p>本示例中执行以下命令为新添加的 master 节点添加 slave 节点</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster add-node 127.0.0.1:7007 127.0.0.1:7008 --cluster-slave \</span><br><span class="line">                    --cluster-master-id 7020c8df9423686727783c60bd2f0e367634ba84</span><br></pre></td></tr></table></figure>
+<p>执行成功后重新查看集群信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">redis-cli -c -p 7001 cluster nodes</span>                                         </span><br><span class="line">7020c8df9423686727783c60bd2f0e367634ba84 127.0.0.1:7007@17007 master - 0 1564924845000 7 connected 0-499</span><br><span class="line">4dad696ede24995a57c5fd790faa95c72c187a22 127.0.0.1:7001@17001 myself,master - 0 1564924843000 1 connected 500-5460</span><br><span class="line">5612ffbb0407dbda50828b505a16b39ede51168b 127.0.0.1:7006@17006 slave 4dad696ede24995a57c5fd790faa95c72c187a22 0 1564924845214 6 connected</span><br><span class="line">7d388cc31df969d3e1715ce9644318bfd48317b1 127.0.0.1:7004@17004 slave 59b6597448b668a355d85dcc7a0623bc36263e5f 0 1564924843195 4 connected</span><br><span class="line">bbe8b7035bfd31c47bec7d612acc112cd2869368 127.0.0.1:7003@17003 master - 0 1564924844205 3 connected 10923-16383</span><br><span class="line">456921ae96af71d8183101f798cf5ceda4b0381e 127.0.0.1:7005@17005 slave bbe8b7035bfd31c47bec7d612acc112cd2869368 0 1564924845000 5 connected</span><br><span class="line">415db07121ba946b202bca98e15cbdffc60bc18a 127.0.0.1:7008@17008 slave 7020c8df9423686727783c60bd2f0e367634ba84 0 1564924846224 7 connected</span><br><span class="line">59b6597448b668a355d85dcc7a0623bc36263e5f 127.0.0.1:7002@17002 master - 0 1564924844000 2 connected 5461-10922</span><br></pre></td></tr></table></figure>
+
+<p>会发现 7008 端口对应的节点已经是 7007 端口对应的从节点(<code>slave 7020c8df9423686727783c60bd2f0e367634ba84</code>)</p>
+<h2 id="从集群中删除一个从节点"><a href="#从集群中删除一个从节点" class="headerlink" title="从集群中删除一个从节点"></a>从集群中删除一个从节点</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">redis-cli --cluster del-node host:port node_id</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -18209,6 +18209,46 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>vsftpd 虚拟用户配置说明</title>
+    <url>/202207251638/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
+<ul>
+<li>Centos 7</li>
+<li>Vsftpd 3.0.2</li>
+</ul>
+<p>vsftpd虚拟用户通过映射系统用户权限的方式，使虚拟用户具有和本地系统用户一样的权限，或者灵活的控制虚拟用户的权限(不和本地用户权限相同，不能高于本地权限)，达到访问权限的灵活控制，同时防止大批vsftpd用户添加到系统账号库中，使系统用户管理变动臃肿。</p>
+<span id="more"></span>
+
+<h3 id="创建虚拟用户映射的系统用户"><a href="#创建虚拟用户映射的系统用户" class="headerlink" title="创建虚拟用户映射的系统用户"></a>创建虚拟用户映射的系统用户</h3><p>系统用户virtftp拥有对ftp的读写权限，假设ftp根目录为&#x2F;data&#x2F;vsftpd&#x2F;<br>创建ftp用户组和用户virtftp，ftp相关系统账号属于ftp组  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd ftp</span><br><span class="line">useradd -d /data/vsftpd -M -s /sbin/nologin -g ftp virtftp</span><br><span class="line">mkdir /data/vsftpd</span><br><span class="line">chown -R virtftp:ftp /data/vsftpd</span><br><span class="line">chmod -R 750 /data/vsftpd</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>ftp根目录属于用户virtftp,用户组为ftp，设置权限750，使virtftp用户拥有读写权限</p>
+</blockquote>
+<h3 id="创建虚拟用户的口令库"><a href="#创建虚拟用户的口令库" class="headerlink" title="创建虚拟用户的口令库"></a>创建虚拟用户的口令库</h3><p>需要使用db_load命令根据原始口令文件(<code>/etc/vsftpd/passwd.txt</code>)生成db口令库文件，原始文件中奇数行为用户名，偶数行为密码</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">db_load -T -t hash -f /etc/vsftpd/passwd.txt /etc/vsftpd/passwd.db</span><br><span class="line">chmod 600 /etc/vsftpd/passwd.db</span><br></pre></td></tr></table></figure>
+<p>修改pam认证文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd,只保留以下2行<br>或者重新创建文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd_vu,并在<code>vsftpd.conf</code>中配置<code>pam_service_name=vsftpd_vu</code>)</p>
+<figure class="highlight shell"><figcaption><span>vsftpd_vu</span></figcaption><table><tr><td class="code"><pre><span class="line">auth required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd</span><br><span class="line">account required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd  </span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><code>db=/etc/vsftpd/passwd</code> 为<code>db_load</code>生产的文件，不要带后缀 <code>.db</code><br>如果认证发生错误，可检查日志文件：<code>/var/log/secure</code></p>
+</blockquote>
+<h3 id="配置-vsftpd-启用虚拟用户"><a href="#配置-vsftpd-启用虚拟用户" class="headerlink" title="配置 vsftpd 启用虚拟用户"></a>配置 vsftpd 启用虚拟用户</h3><p>修改vsftpd配置文件，默认为<code>/etc/vsftpd/vsftpd.conf</code> <a href="/202207231311/" title="vsftpd.conf常用配置文件说明">vsftpd.conf常用配置文件说明</a></p>
+<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">使用虚拟用户功能，必须允许本地用户</span></span><br><span class="line">local_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">启用虚拟用户配置，所有非匿名用户登录将视为游客，将被映射为guest_username</span>     </span><br><span class="line">guest_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">主配置文件中必需有，否则报错</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">500 OOPS: vsftpd: cannot locate user specified <span class="keyword">in</span> <span class="string">&#x27;guest_username&#x27;</span>:ftp</span></span><br><span class="line">guest_username=virtftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户独立配置文件目录,每个虚拟用户有一个同名的配置文件于此目录下</span></span><br><span class="line">user_config_dir=/etc/vsftpd/virtual_user_conf          </span><br><span class="line">                        </span><br></pre></td></tr></table></figure>
+
+<h3 id="配置虚拟用户配置文件"><a href="#配置虚拟用户配置文件" class="headerlink" title="配置虚拟用户配置文件"></a>配置虚拟用户配置文件</h3><p>虚拟用户配置文件位于 <code>vsftpd.conf</code> 配置 <code>user_config_dir</code> 指定的目录下，每个用户一个配置文件，配置文件和用户名同名<br>用户名，配置文件名，必须和口令文件中的用户名保持一致  </p>
+<figure class="highlight shell"><figcaption><span>user1</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定虚拟用户根目录</span></span><br><span class="line">local_root=/home/ftpsite/user1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户是和本地用户有相同权限;NO：虚拟用户和匿名用户权限相同</span>        </span><br><span class="line">virtual_use_local_privs=YES         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户对应的系统用户</span></span><br><span class="line">guest_username=virtftp   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户将被锁定在自己的宿主目录</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chroot_local_user=YES</span>    </span><br><span class="line">         </span><br><span class="line">write_enable=YES                               </span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">lock_upload_files=NO</span></span><br><span class="line">anon_umask=022</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">download_enable=NO</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_upload_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_mkdir_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_other_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_uploads=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_username=nono</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">allow_anon_ssl=YES</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_logins_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_data_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">cmds_allowed=CWD,LIST,MDTM,MKD,NLST,PASS,PASV,PORT,PWD,QUIT,RMD,RETR,SIZE,STOR,TYPE,USER,ACCT,APPE,CDUP,HELP,MODE,NOOP,REIN,STAT,STOU,STRU,SYST</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="常用配置说明"><a href="#常用配置说明" class="headerlink" title="常用配置说明"></a>常用配置说明</h3><p>virtual_use_local_privs参数说明<br>当<code>virtual_use_local_privs=YES</code>时，虚拟用户和本地用户有相同的权限；<br>当<code>virtual_use_local_privs=NO</code> 时，虚拟用户和匿名用户有相同的权限，默认是NO。<br>当<code>virtual_use_local_privs=YES</code>，<code>write_enable=YES</code>时，虚拟用户具有写权限（上传、下载、删除、重命名）。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=YES</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户不能浏览目录，只能上传文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=NO</code> 时，虚拟用户只能下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户只能上传和下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_mkdir_write_enable=YES</code> 时，虚拟用户只能下载文件和创建文件夹，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_other_write_enable=YES</code> 时，虚拟用户只能下载、删除和重命名文件，无其他权限。  </p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Vsftpd</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>vsftpd 服务常用配置说明</title>
     <url>/202207231311/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -18258,46 +18298,6 @@ width: 20%;
 <h1 id="常用配置参考"><a href="#常用配置参考" class="headerlink" title="常用配置参考"></a>常用配置参考</h1><h2 id="nginx-反代-FTP-服务"><a href="#nginx-反代-FTP-服务" class="headerlink" title="nginx 反代 FTP 服务"></a>nginx 反代 FTP 服务</h2><a href="/202207261420/" title="Nginx 服务常用配置说明">Nginx 服务常用配置说明</a>
 
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.cnblogs.com/steven-dou/p/14836224.html">FTP协议</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Vsftpd</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>vsftpd 虚拟用户配置说明</title>
-    <url>/202207251638/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
-<ul>
-<li>Centos 7</li>
-<li>Vsftpd 3.0.2</li>
-</ul>
-<p>vsftpd虚拟用户通过映射系统用户权限的方式，使虚拟用户具有和本地系统用户一样的权限，或者灵活的控制虚拟用户的权限(不和本地用户权限相同，不能高于本地权限)，达到访问权限的灵活控制，同时防止大批vsftpd用户添加到系统账号库中，使系统用户管理变动臃肿。</p>
-<span id="more"></span>
-
-<h3 id="创建虚拟用户映射的系统用户"><a href="#创建虚拟用户映射的系统用户" class="headerlink" title="创建虚拟用户映射的系统用户"></a>创建虚拟用户映射的系统用户</h3><p>系统用户virtftp拥有对ftp的读写权限，假设ftp根目录为&#x2F;data&#x2F;vsftpd&#x2F;<br>创建ftp用户组和用户virtftp，ftp相关系统账号属于ftp组  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd ftp</span><br><span class="line">useradd -d /data/vsftpd -M -s /sbin/nologin -g ftp virtftp</span><br><span class="line">mkdir /data/vsftpd</span><br><span class="line">chown -R virtftp:ftp /data/vsftpd</span><br><span class="line">chmod -R 750 /data/vsftpd</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>ftp根目录属于用户virtftp,用户组为ftp，设置权限750，使virtftp用户拥有读写权限</p>
-</blockquote>
-<h3 id="创建虚拟用户的口令库"><a href="#创建虚拟用户的口令库" class="headerlink" title="创建虚拟用户的口令库"></a>创建虚拟用户的口令库</h3><p>需要使用db_load命令根据原始口令文件(<code>/etc/vsftpd/passwd.txt</code>)生成db口令库文件，原始文件中奇数行为用户名，偶数行为密码</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">db_load -T -t hash -f /etc/vsftpd/passwd.txt /etc/vsftpd/passwd.db</span><br><span class="line">chmod 600 /etc/vsftpd/passwd.db</span><br></pre></td></tr></table></figure>
-<p>修改pam认证文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd,只保留以下2行<br>或者重新创建文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd_vu,并在<code>vsftpd.conf</code>中配置<code>pam_service_name=vsftpd_vu</code>)</p>
-<figure class="highlight shell"><figcaption><span>vsftpd_vu</span></figcaption><table><tr><td class="code"><pre><span class="line">auth required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd</span><br><span class="line">account required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd  </span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><code>db=/etc/vsftpd/passwd</code> 为<code>db_load</code>生产的文件，不要带后缀 <code>.db</code><br>如果认证发生错误，可检查日志文件：<code>/var/log/secure</code></p>
-</blockquote>
-<h3 id="配置-vsftpd-启用虚拟用户"><a href="#配置-vsftpd-启用虚拟用户" class="headerlink" title="配置 vsftpd 启用虚拟用户"></a>配置 vsftpd 启用虚拟用户</h3><p>修改vsftpd配置文件，默认为<code>/etc/vsftpd/vsftpd.conf</code> <a href="/202207231311/" title="vsftpd.conf常用配置文件说明">vsftpd.conf常用配置文件说明</a></p>
-<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">使用虚拟用户功能，必须允许本地用户</span></span><br><span class="line">local_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">启用虚拟用户配置，所有非匿名用户登录将视为游客，将被映射为guest_username</span>     </span><br><span class="line">guest_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">主配置文件中必需有，否则报错</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">500 OOPS: vsftpd: cannot locate user specified <span class="keyword">in</span> <span class="string">&#x27;guest_username&#x27;</span>:ftp</span></span><br><span class="line">guest_username=virtftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户独立配置文件目录,每个虚拟用户有一个同名的配置文件于此目录下</span></span><br><span class="line">user_config_dir=/etc/vsftpd/virtual_user_conf          </span><br><span class="line">                        </span><br></pre></td></tr></table></figure>
-
-<h3 id="配置虚拟用户配置文件"><a href="#配置虚拟用户配置文件" class="headerlink" title="配置虚拟用户配置文件"></a>配置虚拟用户配置文件</h3><p>虚拟用户配置文件位于 <code>vsftpd.conf</code> 配置 <code>user_config_dir</code> 指定的目录下，每个用户一个配置文件，配置文件和用户名同名<br>用户名，配置文件名，必须和口令文件中的用户名保持一致  </p>
-<figure class="highlight shell"><figcaption><span>user1</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定虚拟用户根目录</span></span><br><span class="line">local_root=/home/ftpsite/user1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户是和本地用户有相同权限;NO：虚拟用户和匿名用户权限相同</span>        </span><br><span class="line">virtual_use_local_privs=YES         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户对应的系统用户</span></span><br><span class="line">guest_username=virtftp   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户将被锁定在自己的宿主目录</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chroot_local_user=YES</span>    </span><br><span class="line">         </span><br><span class="line">write_enable=YES                               </span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">lock_upload_files=NO</span></span><br><span class="line">anon_umask=022</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">download_enable=NO</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_upload_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_mkdir_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_other_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_uploads=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_username=nono</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">allow_anon_ssl=YES</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_logins_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_data_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">cmds_allowed=CWD,LIST,MDTM,MKD,NLST,PASS,PASV,PORT,PWD,QUIT,RMD,RETR,SIZE,STOR,TYPE,USER,ACCT,APPE,CDUP,HELP,MODE,NOOP,REIN,STAT,STOU,STRU,SYST</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="常用配置说明"><a href="#常用配置说明" class="headerlink" title="常用配置说明"></a>常用配置说明</h3><p>virtual_use_local_privs参数说明<br>当<code>virtual_use_local_privs=YES</code>时，虚拟用户和本地用户有相同的权限；<br>当<code>virtual_use_local_privs=NO</code> 时，虚拟用户和匿名用户有相同的权限，默认是NO。<br>当<code>virtual_use_local_privs=YES</code>，<code>write_enable=YES</code>时，虚拟用户具有写权限（上传、下载、删除、重命名）。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=YES</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户不能浏览目录，只能上传文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=NO</code> 时，虚拟用户只能下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户只能上传和下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_mkdir_write_enable=YES</code> 时，虚拟用户只能下载文件和创建文件夹，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_other_write_enable=YES</code> 时，虚拟用户只能下载、删除和重命名文件，无其他权限。  </p>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>常用服务</category>
