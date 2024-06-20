@@ -5190,6 +5190,65 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>ELK 常见错误</title>
+    <url>/202312151503/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
+<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
+<p>要解决这个问题，可以考虑以下几个选项：</p>
+<ol>
+<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
+<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
+<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
+   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>获取  Elasticsearch 集群的最大分片数限制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
+</li>
+<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
+</li>
+</ol>
+<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>使用以下 filebeat 配置文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
+<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
+
+<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
+<ul>
+<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
+</li>
+<li><p><em><strong>ILM 配置问题</strong></em> </p>
+<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
+ <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>elasticsearch 安装使用及常见错误集锦</title>
     <url>/202303301601/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -5312,65 +5371,6 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/targz.html#targz-running">安装运行 Elasticsearch</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>ELK 常见错误</title>
-    <url>/202312151503/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
-<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
-<p>要解决这个问题，可以考虑以下几个选项：</p>
-<ol>
-<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
-<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
-<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
-   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>获取  Elasticsearch 集群的最大分片数限制</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
-</li>
-<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
-</li>
-</ol>
-<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>使用以下 filebeat 配置文件</p>
-<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
-<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
-
-<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
-<ul>
-<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
-</li>
-<li><p><em><strong>ILM 配置问题</strong></em> </p>
-<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
- <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
-</ul>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -7434,6 +7434,25 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Modular Admin HTML 模板使用注意事项</title>
+    <url>/202308071022/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Django 4.4</li>
+<li>Modular Admin v1.4.0</li>
+</ul>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type"><a href="#because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type" class="headerlink" title="because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type"></a>because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type</h2><p>使用 Django 模板语法加载 <code>index.html</code> 中的静态文件后，有个 <code>app.css</code> 文件请求 404，Console 中报错： <code>because its MIME type (&#39;text/html&#39;) is not a supported stylesheet MIME type</code></p>
+<p><em><strong>问题原因</strong></em> 在 Modular Admin 代码中搜索 <code>app.css</code>，除了 <code>index.html</code> 引用了此文件，<code>js/app.js</code> 也引用了此文件。在 Django 中使用次模板，需要修改此处的路径正确。<br><img src="https://i.csms.tech/img_213.png"></p>
+<h1 id="常用修改事项说明"><a href="#常用修改事项说明" class="headerlink" title="常用修改事项说明"></a>常用修改事项说明</h1><h2 id="菜单项的展开标签"><a href="#菜单项的展开标签" class="headerlink" title="菜单项的展开标签"></a>菜单项的展开标签</h2><p>要在页面中让菜单处于展开状态，需要给菜单应用 <code>active open</code> 的 class<br><img src="https://i.csms.tech/img_214.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-area-chart&quot;&gt;&lt;/i&gt; Charts &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-flot.html&quot;&gt; Flot Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-morris.html&quot;&gt; Morris Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li class=&quot;active open&quot;&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-table&quot;&gt;&lt;/i&gt; Tables &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li class=&quot;active&quot;&gt;</span><br><span class="line">            &lt;a href=&quot;static-tables.html&quot;&gt; Static Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;responsive-tables.html&quot;&gt; Responsive Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;forms.html&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-pencil-square-o&quot;&gt;&lt;/i&gt; Forms &lt;/a&gt;</span><br><span class="line">&lt;/li&gt;</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>HTML</category>
+      </categories>
+      <tags>
+        <tag>HTML</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Hexo Next 添加 canvas-nest 特效</title>
     <url>/b12589273/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -7463,25 +7482,6 @@ width: 20%;
         <tag>Hexo</tag>
         <tag>canvas-nest</tag>
         <tag>Next</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Modular Admin HTML 模板使用注意事项</title>
-    <url>/202308071022/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Django 4.4</li>
-<li>Modular Admin v1.4.0</li>
-</ul>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type"><a href="#because-its-MIME-type-‘text-x2F-html’-is-not-a-supported-stylesheet-MIME-type" class="headerlink" title="because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type"></a>because its MIME type (‘text&#x2F;html’) is not a supported stylesheet MIME type</h2><p>使用 Django 模板语法加载 <code>index.html</code> 中的静态文件后，有个 <code>app.css</code> 文件请求 404，Console 中报错： <code>because its MIME type (&#39;text/html&#39;) is not a supported stylesheet MIME type</code></p>
-<p><em><strong>问题原因</strong></em> 在 Modular Admin 代码中搜索 <code>app.css</code>，除了 <code>index.html</code> 引用了此文件，<code>js/app.js</code> 也引用了此文件。在 Django 中使用次模板，需要修改此处的路径正确。<br><img src="https://i.csms.tech/img_213.png"></p>
-<h1 id="常用修改事项说明"><a href="#常用修改事项说明" class="headerlink" title="常用修改事项说明"></a>常用修改事项说明</h1><h2 id="菜单项的展开标签"><a href="#菜单项的展开标签" class="headerlink" title="菜单项的展开标签"></a>菜单项的展开标签</h2><p>要在页面中让菜单处于展开状态，需要给菜单应用 <code>active open</code> 的 class<br><img src="https://i.csms.tech/img_214.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-area-chart&quot;&gt;&lt;/i&gt; Charts &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-flot.html&quot;&gt; Flot Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;charts-morris.html&quot;&gt; Morris Charts &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li class=&quot;active open&quot;&gt;</span><br><span class="line">    &lt;a href=&quot;&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-table&quot;&gt;&lt;/i&gt; Tables &lt;i class=&quot;fa arrow&quot;&gt;&lt;/i&gt;</span><br><span class="line">    &lt;/a&gt;</span><br><span class="line">    &lt;ul class=&quot;sidebar-nav&quot;&gt;</span><br><span class="line">        &lt;li class=&quot;active&quot;&gt;</span><br><span class="line">            &lt;a href=&quot;static-tables.html&quot;&gt; Static Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">        &lt;li&gt;</span><br><span class="line">            &lt;a href=&quot;responsive-tables.html&quot;&gt; Responsive Tables &lt;/a&gt;</span><br><span class="line">        &lt;/li&gt;</span><br><span class="line">    &lt;/ul&gt;</span><br><span class="line">&lt;/li&gt;</span><br><span class="line">&lt;li&gt;</span><br><span class="line">    &lt;a href=&quot;forms.html&quot;&gt;</span><br><span class="line">        &lt;i class=&quot;fa fa-pencil-square-o&quot;&gt;&lt;/i&gt; Forms &lt;/a&gt;</span><br><span class="line">&lt;/li&gt;</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>HTML</category>
-      </categories>
-      <tags>
-        <tag>HTML</tag>
       </tags>
   </entry>
   <entry>
@@ -8520,6 +8520,57 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 监控</title>
+    <url>/202305231329/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="Kubernetes-Metrics-Server"><a href="#Kubernetes-Metrics-Server" class="headerlink" title="Kubernetes Metrics Server"></a>Kubernetes Metrics Server</h1><p>Kubernetes Metrics Server 从 <code>kubelet</code> 收集资源使用指标（情况）并通过 Metrics API 将其暴露给 Kubernetes API Server，以供 HPA(Horizontal Pod Autoscaler) 和 VPA(Vertical Pod Autoscaler) 使用。<code>kubectl top</code> 也使用 Metrics API。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server](https://github.com/kubernetes-sigs/metrics-server)">[1]</span></a></sup></p>
+<h2 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h2><p>Kubernetes Metrics Server 安装之前必须要开启 kube api-server 的聚合层功能以及认证鉴权功能 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置聚合层](https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/)">[3]</span></a></sup> </p>
+<p>检查 Kubernetes API Server 是否启用了聚合层功能及认证鉴权功能</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -ef | grep apiserver | grep -E <span class="string">&quot;authorization-mode|enable-aggregator-routing&quot;</span></span></span><br><span class="line">root       390   369  7 13:55 ?        00:00:37 kube-apiserver --advertise-address=172.31.26.116 \</span><br><span class="line">                                                               --allow-privileged=true \</span><br><span class="line">                                                               --authorization-mode=Node,RBAC \</span><br><span class="line">                                                               --client-ca-file=/etc/kubernetes/pki/ca.crt \</span><br><span class="line">                                                               --enable-admission-plugins=NodeRestriction \</span><br><span class="line">                                                               --enable-bootstrap-token-auth=true \</span><br><span class="line">                                                               --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt \</span><br><span class="line">                                                               --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt \</span><br><span class="line">                                                               --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key \</span><br><span class="line">                                                               --etcd-servers=https://127.0.0.1:2379 \</span><br><span class="line">                                                               --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \</span><br><span class="line">                                                               --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname \</span><br><span class="line">                                                               --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt \</span><br><span class="line">                                                               --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key \</span><br><span class="line">                                                               --requestheader-allowed-names=front-proxy-client \</span><br><span class="line">                                                               --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt \</span><br><span class="line">                                                               --requestheader-extra-headers-prefix=X-Remote-Extra- \</span><br><span class="line">                                                               --requestheader-group-headers=X-Remote-Group \</span><br><span class="line">                                                               --requestheader-username-headers=X-Remote-User \</span><br><span class="line">                                                               --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local \</span><br><span class="line">                                                               --service-account-key-file=/etc/kubernetes/pki/sa.pub \</span><br><span class="line">                                                               --service-account-signing-key-file=/etc/kubernetes/pki/sa.key \</span><br><span class="line">                                                               --service-cluster-ip-range=10.96.0.0/12 \</span><br><span class="line">                                                               --tls-cert-file=/etc/kubernetes/pki/apiserver.crt --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \</span><br><span class="line">                                                               --enable-aggregator-routing=true</span><br></pre></td></tr></table></figure>
+<p>输出中包含了 <code>--authorization-mode=Node,RBAC</code> 和 <code>--enable-aggregator-routing=true</code>，表示已开启对应功能。如若未开启，修改 <code>api-server</code> 的 manifest 文件 <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>，在 <code>kube-apiserver</code> 的启动参数中添加 <code>--enable-aggregator-routing=true</code> 和 <code>--authorization-mode=Node,RBAC</code></p>
+<p>以下命令使用 yaml 文件安装最新版本 Metrics Server <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server installation](https://github.com/kubernetes-sigs/metrics-server#installation)">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</span><br></pre></td></tr></table></figure>
+
+<h2 id="Kubernetes-Metrics-Server-部署配置常见错误"><a href="#Kubernetes-Metrics-Server-部署配置常见错误" class="headerlink" title="Kubernetes Metrics Server 部署配置常见错误"></a>Kubernetes Metrics Server 部署配置常见错误</h2><h3 id="Failed-to-scrape-node"><a href="#Failed-to-scrape-node" class="headerlink" title="Failed to scrape node"></a>Failed to scrape node</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep metrics</span></span><br><span class="line">kube-system                 metrics-server-5cdf47479d-rwtd6             0/1     Running       0              5m53s</span><br></pre></td></tr></table></figure>
+<p>检查 Pod 日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.21.3:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.21.3 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.26.116:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.26.116 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.19.164:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.19.164 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster2&quot;</span><br></pre></td></tr></table></figure>
+<p>根据日志提示，由于 metrics-server 未获得TLS Bootstrap 签发证书的导致访问各节点资源时报错。</p>
+<ol>
+<li><a href="https://www.modb.pro/db/408792">参考解决办法</a></li>
+<li>添加选项 <code>--kubelet-insecure-tls</code> 不验证 Kubelet 的 CA 证书 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=InternalIP</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    - --kubelet-insecure-tls</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+<h3 id="no-such-host"><a href="#no-such-host" class="headerlink" title="no such host"></a>no such host</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态，检查 Pod 日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster3:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster3 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker1:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker1 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker2:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker2 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker2&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster2:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster2 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster2&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">I0524 09:32:43.033797       1 server.go:187] &quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br></pre></td></tr></table></figure>
+<p>根据日志显示，API Server 的主机名解析存在问题。这是因为节点主机名在集群的 DNS 中无法解析导致，可以通过在 Metrics Server 的 Pod 中手动添加解析解决</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">spec:</span><br><span class="line">  hostAliases:</span><br><span class="line">  - ip: &#x27;172.31.26.116&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.19.164&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master2&#x27;</span><br><span class="line">  - ip: &#x27;172.31.21.3&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master3&#x27;</span><br><span class="line">  - ip: &#x27;172.31.16.124&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.22.159&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker2&#x27;</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=Hostname</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br></pre></td></tr></table></figure>
+
+<h2 id="Metrics-Server-无法获取所在节点的主机的监控信息"><a href="#Metrics-Server-无法获取所在节点的主机的监控信息" class="headerlink" title="Metrics Server 无法获取所在节点的主机的监控信息"></a>Metrics Server 无法获取所在节点的主机的监控信息</h2><p>Metrics Server 部署成功后，无法获取所在节点的主机的监控信息，获取其他主机的监控信息正常，具体信息如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME          STATUS   ROLES           AGE    VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME</span><br><span class="line">k8s-master1   Ready    control-plane   169d   v1.24.7   172.31.26.116   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master2   Ready    control-plane   169d   v1.24.7   172.31.19.164   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master3   Ready    control-plane   169d   v1.24.7   172.31.21.3     &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker1   Ready    &lt;none&gt;          169d   v1.24.7   172.31.16.124   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker2   Ready    &lt;none&gt;          169d   v1.24.7   172.31.22.159   &lt;none&gt;        CentOS Linux 7 (Core)   3.10.0-1160.80.1.el7.x86_64   docker://20.10.9</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep met</span></span><br><span class="line">metrics-server-c48655c66-jxwpt             1/1     Running   0              12m    10.244.4.138    k8s-worker1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME          CPU(cores)   CPU%        MEMORY(bytes)   MEMORY%     </span><br><span class="line">k8s-master1   381m         9%          3263Mi          43%         </span><br><span class="line">k8s-master2   149m         3%          3432Mi          45%         </span><br><span class="line">k8s-master3   166m         4%          3163Mi          41%         </span><br><span class="line">k8s-worker2   2093m        13%         21933Mi         71%         </span><br><span class="line">k8s-worker1   &lt;unknown&gt;    &lt;unknown&gt;   &lt;unknown&gt;       &lt;unknown&gt; </span><br></pre></td></tr></table></figure>
+
+<p>查看 Metrics Server Pod 日志，显示</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-c48655c66-jxwpt</span></span><br><span class="line">E0525 05:19:42.085468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:19:57.125457       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:12.101468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:27.077495       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>根据日志显示，是因为无法连接节点的 kubelet (端口 10250) 导致。为了定位问题，修改 Metrics Server 的部署 Yaml 文件，在其中加入一个容器，来方便使用工具测试问题。参考以下内容，在 Pod 中加入容器 <code>centos:centos7.9.2009</code></p>
+<figure class="highlight shell"><figcaption><span>metrics-server.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">  name: metrics-server</span><br><span class="line">  namespace: kube-system</span><br><span class="line">spec:</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      k8s-app: metrics-server</span><br><span class="line">  strategy:</span><br><span class="line">    rollingUpdate:</span><br><span class="line">      maxUnavailable: 0</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        k8s-app: metrics-server</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">      - image: centos:centos7.9.2009</span><br><span class="line">        command:</span><br><span class="line">        - ping</span><br><span class="line">        - 127.0.0.1</span><br><span class="line">        name: centos7</span><br><span class="line">      - args:</span><br><span class="line">        - --cert-dir=/tmp</span><br><span class="line">        - --secure-port=4443</span><br><span class="line">        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname</span><br><span class="line">        - --kubelet-use-node-status-port</span><br><span class="line">        - --metric-resolution=15s</span><br><span class="line">        - --kubelet-insecure-tls</span><br><span class="line">        image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br><span class="line">        imagePullPolicy: IfNotPresent</span><br><span class="line">        ...</span><br></pre></td></tr></table></figure>
+<p>重新部署后，登陆容器 <code>centos7</code>，安装所需工具进行测试。根据日志信息，首先测试 Pod 是否能连接到节点的 kubelet</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.22.159:10250</span></span><br><span class="line">* About to connect() to 172.31.22.159 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.22.159...</span><br><span class="line">* Connected to 172.31.22.159 (172.31.22.159) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.22.159:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>根据以上测试，Metrics Server 的 Pod 无法连接所在节点 k8s-worker1（<code>172.31.16.124</code>）的 kubelet （<code>172.31.16.124:10250</code>），可以正常连接其他节点的 kubelet。由此可以确定问题原因。</p>
+<p>考虑到 Metrics Server 的 Pod 只是访问不到宿主节点所在的 kubelet，可以访问其他节点的 kubelet，梳理其中的网络连同流程发现，<strong>在访问其他节点的 kubelet 时，Metrics Server Pod 的报文在流出宿主节点前，会被 SNAT 为宿主节点的出口 IP，报文源 IP 为 宿主节点的 IP。而访问宿主节点的 kubelet 的报文，其源 IP 为 Metrics Server Pod 的 IP，目的 IP 为宿主节点的 IP。怀疑可能因为集群节点上的 iptables 允许集群节点的 IP 访问 kubelet，而 Pod 的 IP 未被允许访问 kubelet</strong>。为验证此猜想，在节点 <code>k8s-worker1</code> 的 iptables 添加允许 Metrics Server Pod 的 IP 访问的规则进行测试</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -I INPUT 7 -s 10.244.4.138 -j ACCEPT</span><br></pre></td></tr></table></figure>
+<p>再次测试和 kubelet 的连通性，发现可以正常连通，再次检查 <code>kubectl top node</code>，可以查到所有节点的监控数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* Connected to 172.31.16.124 (172.31.16.124) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.16.124:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME                CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   </span><br><span class="line">fm-k8s-c1-master1   286m         7%     3242Mi          42%       </span><br><span class="line">fm-k8s-c1-master2   150m         3%     3262Mi          43%       </span><br><span class="line">fm-k8s-c1-master3   251m         6%     3247Mi          42%       </span><br><span class="line">fm-k8s-c1-worker1   166m         1%     4317Mi          13%       </span><br><span class="line">fm-k8s-c1-worker2   2013m        12%    21684Mi         70%</span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">metrics-server</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server#installation">metrics-server installation</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/">配置聚合层</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>ingress-nginx 安装配置</title>
     <url>/202209301604/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8687,146 +8738,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes 监控</title>
-    <url>/202305231329/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Kubernetes 1.24</li>
-</ul>
-<h1 id="Kubernetes-Metrics-Server"><a href="#Kubernetes-Metrics-Server" class="headerlink" title="Kubernetes Metrics Server"></a>Kubernetes Metrics Server</h1><p>Kubernetes Metrics Server 从 <code>kubelet</code> 收集资源使用指标（情况）并通过 Metrics API 将其暴露给 Kubernetes API Server，以供 HPA(Horizontal Pod Autoscaler) 和 VPA(Vertical Pod Autoscaler) 使用。<code>kubectl top</code> 也使用 Metrics API。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server](https://github.com/kubernetes-sigs/metrics-server)">[1]</span></a></sup></p>
-<h2 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h2><p>Kubernetes Metrics Server 安装之前必须要开启 kube api-server 的聚合层功能以及认证鉴权功能 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置聚合层](https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/)">[3]</span></a></sup> </p>
-<p>检查 Kubernetes API Server 是否启用了聚合层功能及认证鉴权功能</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -ef | grep apiserver | grep -E <span class="string">&quot;authorization-mode|enable-aggregator-routing&quot;</span></span></span><br><span class="line">root       390   369  7 13:55 ?        00:00:37 kube-apiserver --advertise-address=172.31.26.116 \</span><br><span class="line">                                                               --allow-privileged=true \</span><br><span class="line">                                                               --authorization-mode=Node,RBAC \</span><br><span class="line">                                                               --client-ca-file=/etc/kubernetes/pki/ca.crt \</span><br><span class="line">                                                               --enable-admission-plugins=NodeRestriction \</span><br><span class="line">                                                               --enable-bootstrap-token-auth=true \</span><br><span class="line">                                                               --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt \</span><br><span class="line">                                                               --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt \</span><br><span class="line">                                                               --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key \</span><br><span class="line">                                                               --etcd-servers=https://127.0.0.1:2379 \</span><br><span class="line">                                                               --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \</span><br><span class="line">                                                               --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname \</span><br><span class="line">                                                               --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt \</span><br><span class="line">                                                               --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key \</span><br><span class="line">                                                               --requestheader-allowed-names=front-proxy-client \</span><br><span class="line">                                                               --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt \</span><br><span class="line">                                                               --requestheader-extra-headers-prefix=X-Remote-Extra- \</span><br><span class="line">                                                               --requestheader-group-headers=X-Remote-Group \</span><br><span class="line">                                                               --requestheader-username-headers=X-Remote-User \</span><br><span class="line">                                                               --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local \</span><br><span class="line">                                                               --service-account-key-file=/etc/kubernetes/pki/sa.pub \</span><br><span class="line">                                                               --service-account-signing-key-file=/etc/kubernetes/pki/sa.key \</span><br><span class="line">                                                               --service-cluster-ip-range=10.96.0.0/12 \</span><br><span class="line">                                                               --tls-cert-file=/etc/kubernetes/pki/apiserver.crt --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \</span><br><span class="line">                                                               --enable-aggregator-routing=true</span><br></pre></td></tr></table></figure>
-<p>输出中包含了 <code>--authorization-mode=Node,RBAC</code> 和 <code>--enable-aggregator-routing=true</code>，表示已开启对应功能。如若未开启，修改 <code>api-server</code> 的 manifest 文件 <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>，在 <code>kube-apiserver</code> 的启动参数中添加 <code>--enable-aggregator-routing=true</code> 和 <code>--authorization-mode=Node,RBAC</code></p>
-<p>以下命令使用 yaml 文件安装最新版本 Metrics Server <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server installation](https://github.com/kubernetes-sigs/metrics-server#installation)">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</span><br></pre></td></tr></table></figure>
-
-<h2 id="Kubernetes-Metrics-Server-部署配置常见错误"><a href="#Kubernetes-Metrics-Server-部署配置常见错误" class="headerlink" title="Kubernetes Metrics Server 部署配置常见错误"></a>Kubernetes Metrics Server 部署配置常见错误</h2><h3 id="Failed-to-scrape-node"><a href="#Failed-to-scrape-node" class="headerlink" title="Failed to scrape node"></a>Failed to scrape node</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep metrics</span></span><br><span class="line">kube-system                 metrics-server-5cdf47479d-rwtd6             0/1     Running       0              5m53s</span><br></pre></td></tr></table></figure>
-<p>检查 Pod 日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.21.3:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.21.3 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.26.116:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.26.116 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.19.164:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.19.164 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster2&quot;</span><br></pre></td></tr></table></figure>
-<p>根据日志提示，由于 metrics-server 未获得TLS Bootstrap 签发证书的导致访问各节点资源时报错。</p>
-<ol>
-<li><a href="https://www.modb.pro/db/408792">参考解决办法</a></li>
-<li>添加选项 <code>--kubelet-insecure-tls</code> 不验证 Kubelet 的 CA 证书 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=InternalIP</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    - --kubelet-insecure-tls</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ol>
-<h3 id="no-such-host"><a href="#no-such-host" class="headerlink" title="no such host"></a>no such host</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态，检查 Pod 日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster3:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster3 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker1:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker1 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker2:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker2 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker2&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster2:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster2 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster2&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">I0524 09:32:43.033797       1 server.go:187] &quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br></pre></td></tr></table></figure>
-<p>根据日志显示，API Server 的主机名解析存在问题。这是因为节点主机名在集群的 DNS 中无法解析导致，可以通过在 Metrics Server 的 Pod 中手动添加解析解决</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">spec:</span><br><span class="line">  hostAliases:</span><br><span class="line">  - ip: &#x27;172.31.26.116&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.19.164&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master2&#x27;</span><br><span class="line">  - ip: &#x27;172.31.21.3&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master3&#x27;</span><br><span class="line">  - ip: &#x27;172.31.16.124&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.22.159&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker2&#x27;</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=Hostname</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br></pre></td></tr></table></figure>
-
-<h2 id="Metrics-Server-无法获取所在节点的主机的监控信息"><a href="#Metrics-Server-无法获取所在节点的主机的监控信息" class="headerlink" title="Metrics Server 无法获取所在节点的主机的监控信息"></a>Metrics Server 无法获取所在节点的主机的监控信息</h2><p>Metrics Server 部署成功后，无法获取所在节点的主机的监控信息，获取其他主机的监控信息正常，具体信息如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME          STATUS   ROLES           AGE    VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME</span><br><span class="line">k8s-master1   Ready    control-plane   169d   v1.24.7   172.31.26.116   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master2   Ready    control-plane   169d   v1.24.7   172.31.19.164   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master3   Ready    control-plane   169d   v1.24.7   172.31.21.3     &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker1   Ready    &lt;none&gt;          169d   v1.24.7   172.31.16.124   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker2   Ready    &lt;none&gt;          169d   v1.24.7   172.31.22.159   &lt;none&gt;        CentOS Linux 7 (Core)   3.10.0-1160.80.1.el7.x86_64   docker://20.10.9</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep met</span></span><br><span class="line">metrics-server-c48655c66-jxwpt             1/1     Running   0              12m    10.244.4.138    k8s-worker1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME          CPU(cores)   CPU%        MEMORY(bytes)   MEMORY%     </span><br><span class="line">k8s-master1   381m         9%          3263Mi          43%         </span><br><span class="line">k8s-master2   149m         3%          3432Mi          45%         </span><br><span class="line">k8s-master3   166m         4%          3163Mi          41%         </span><br><span class="line">k8s-worker2   2093m        13%         21933Mi         71%         </span><br><span class="line">k8s-worker1   &lt;unknown&gt;    &lt;unknown&gt;   &lt;unknown&gt;       &lt;unknown&gt; </span><br></pre></td></tr></table></figure>
-
-<p>查看 Metrics Server Pod 日志，显示</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-c48655c66-jxwpt</span></span><br><span class="line">E0525 05:19:42.085468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:19:57.125457       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:12.101468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:27.077495       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>根据日志显示，是因为无法连接节点的 kubelet (端口 10250) 导致。为了定位问题，修改 Metrics Server 的部署 Yaml 文件，在其中加入一个容器，来方便使用工具测试问题。参考以下内容，在 Pod 中加入容器 <code>centos:centos7.9.2009</code></p>
-<figure class="highlight shell"><figcaption><span>metrics-server.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">  name: metrics-server</span><br><span class="line">  namespace: kube-system</span><br><span class="line">spec:</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      k8s-app: metrics-server</span><br><span class="line">  strategy:</span><br><span class="line">    rollingUpdate:</span><br><span class="line">      maxUnavailable: 0</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        k8s-app: metrics-server</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">      - image: centos:centos7.9.2009</span><br><span class="line">        command:</span><br><span class="line">        - ping</span><br><span class="line">        - 127.0.0.1</span><br><span class="line">        name: centos7</span><br><span class="line">      - args:</span><br><span class="line">        - --cert-dir=/tmp</span><br><span class="line">        - --secure-port=4443</span><br><span class="line">        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname</span><br><span class="line">        - --kubelet-use-node-status-port</span><br><span class="line">        - --metric-resolution=15s</span><br><span class="line">        - --kubelet-insecure-tls</span><br><span class="line">        image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br><span class="line">        imagePullPolicy: IfNotPresent</span><br><span class="line">        ...</span><br></pre></td></tr></table></figure>
-<p>重新部署后，登陆容器 <code>centos7</code>，安装所需工具进行测试。根据日志信息，首先测试 Pod 是否能连接到节点的 kubelet</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.22.159:10250</span></span><br><span class="line">* About to connect() to 172.31.22.159 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.22.159...</span><br><span class="line">* Connected to 172.31.22.159 (172.31.22.159) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.22.159:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>根据以上测试，Metrics Server 的 Pod 无法连接所在节点 k8s-worker1（<code>172.31.16.124</code>）的 kubelet （<code>172.31.16.124:10250</code>），可以正常连接其他节点的 kubelet。由此可以确定问题原因。</p>
-<p>考虑到 Metrics Server 的 Pod 只是访问不到宿主节点所在的 kubelet，可以访问其他节点的 kubelet，梳理其中的网络连同流程发现，<strong>在访问其他节点的 kubelet 时，Metrics Server Pod 的报文在流出宿主节点前，会被 SNAT 为宿主节点的出口 IP，报文源 IP 为 宿主节点的 IP。而访问宿主节点的 kubelet 的报文，其源 IP 为 Metrics Server Pod 的 IP，目的 IP 为宿主节点的 IP。怀疑可能因为集群节点上的 iptables 允许集群节点的 IP 访问 kubelet，而 Pod 的 IP 未被允许访问 kubelet</strong>。为验证此猜想，在节点 <code>k8s-worker1</code> 的 iptables 添加允许 Metrics Server Pod 的 IP 访问的规则进行测试</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -I INPUT 7 -s 10.244.4.138 -j ACCEPT</span><br></pre></td></tr></table></figure>
-<p>再次测试和 kubelet 的连通性，发现可以正常连通，再次检查 <code>kubectl top node</code>，可以查到所有节点的监控数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* Connected to 172.31.16.124 (172.31.16.124) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.16.124:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME                CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   </span><br><span class="line">fm-k8s-c1-master1   286m         7%     3242Mi          42%       </span><br><span class="line">fm-k8s-c1-master2   150m         3%     3262Mi          43%       </span><br><span class="line">fm-k8s-c1-master3   251m         6%     3247Mi          42%       </span><br><span class="line">fm-k8s-c1-worker1   166m         1%     4317Mi          13%       </span><br><span class="line">fm-k8s-c1-worker2   2013m        12%    21684Mi         70%</span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">metrics-server</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server#installation">metrics-server installation</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/">配置聚合层</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Kubernetes 网络</title>
     <url>/202212020941/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8972,6 +8883,95 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
@@ -12908,6 +12908,71 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>LVM 逻辑卷管理</title>
+    <url>/202208021256/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>LVM是 Logical Volume Manager(逻辑卷管理)的简写,LVM将一个或多个硬盘或分区在逻辑上集合，相当于一个大硬盘来使用，当硬盘的空间不够使用的时候，可以继续将其它的硬盘或分区加入其中，这样可以实现磁盘空间的动态管理，相对于普通的磁盘分区有很大的灵活性。与传统的磁盘与分区相比，LVM为计算机提供了更高层次的磁盘存储。它使系统管理员可以更方便的为应用与用户分配存储空间。  </p>
+<blockquote>
+<p><strong><code>/boot</code> 分区不可以在逻辑卷组上,否则bootloader会无法读取.</strong></p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="LVM-原理简介"><a href="#LVM-原理简介" class="headerlink" title="LVM 原理简介"></a>LVM 原理简介</h3><p>单一硬盘系统的 LVM 基本原理如下图所示<br><img src="https://i.csms.tech/img_23.png"></p>
+<p>多硬盘系统的 LVM 基本原理如下图所示<br><img src="https://i.csms.tech/img_24.png"><br><img src="https://i.csms.tech/img_25.png"></p>
+<h4 id="基本概念说明"><a href="#基本概念说明" class="headerlink" title="基本概念说明"></a>基本概念说明</h4><h5 id="PV（Physical-Volume）-物理卷"><a href="#PV（Physical-Volume）-物理卷" class="headerlink" title="PV（Physical Volume）- 物理卷"></a>PV（Physical Volume）- 物理卷</h5><p>物理卷在逻辑卷管理中处于最底层，它可以是实际物理硬盘上的分区，也可以是整个物理硬盘，也可以是raid设备,是LVM的基本存储逻辑块，但和基本的物理存储介质(如分区、磁盘等)比较，却包含有与LVM相关的管理参数。  </p>
+<p>PE（physical extent）：每一个物理卷被划分为称为PE(Physical Extents)的基本单元，具有唯一编号的PE是可以被LVM寻址的最小单元。PE的大小是在VG过程中配置的，默认为4MB。</p>
+<h5 id="VG（Volumne-Group）-卷组"><a href="#VG（Volumne-Group）-卷组" class="headerlink" title="VG（Volumne Group）- 卷组"></a>VG（Volumne Group）- 卷组</h5><p>卷组建立在物理卷之上，一个卷组中至少要包括一个物理卷，在卷组建立之后可动态添加物理卷到卷组中。一个逻辑卷管理系统工程中可以只有一个卷组，也可以拥有多个卷组。  </p>
+<h5 id="LV（Logical-Volume）-逻辑卷"><a href="#LV（Logical-Volume）-逻辑卷" class="headerlink" title="LV（Logical Volume）- 逻辑卷"></a>LV（Logical Volume）- 逻辑卷</h5><p>逻辑卷建立在卷组之上，卷组中的未分配空间可以用于建立新的逻辑卷，逻辑卷建立后可以动态地扩展和缩小空间。系统中的多个逻辑卷可以属于同一个卷组，也可以属于不同的多个卷组。</p>
+<h3 id="LVM-基本操作"><a href="#LVM-基本操作" class="headerlink" title="LVM 基本操作"></a>LVM 基本操作</h3><h4 id="创建-PV-常用操作命令"><a href="#创建-PV-常用操作命令" class="headerlink" title="创建 PV 常用操作命令"></a>创建 PV 常用操作命令</h4><p>将空闲分区 <code>/dev/vdb1</code> 配置为可用的 PV（Physical Volume）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pvcreate /dev/vdb1</span><br></pre></td></tr></table></figure>
+<p>将空闲磁盘 <code>/dev/vdd</code> 配置为可用的 PV（Physical Volume）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pvcreate /dev/vdd </span><br></pre></td></tr></table></figure>
+<p>查看 PV 的信息，常用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pvs</span><br><span class="line">pvscan</span><br><span class="line">pvdisplay</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_26.png"><br><img src="https://i.csms.tech/img_27.png"></p>
+<h4 id="创建-VG-常用操作命令"><a href="#创建-VG-常用操作命令" class="headerlink" title="创建 VG 常用操作命令"></a>创建 VG 常用操作命令</h4><p>使用已有的PV ，创建卷组（Volumne Group）名为 <code>VG1</code> 的 VG</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vgcreate VG1 /dev/vdb1 /dev/vdd</span><br></pre></td></tr></table></figure>
+
+<p>查看 VG 的信息，常用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vgs</span><br><span class="line">vgscan</span><br><span class="line">vgdisplay</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_28.png"><br><img src="https://i.csms.tech/img_29.png"></p>
+<h4 id="创建-LV-常用操作命令"><a href="#创建-LV-常用操作命令" class="headerlink" title="创建 LV 常用操作命令"></a>创建 LV 常用操作命令</h4><p>使用已有的卷组 VG1 ，创建逻辑卷（Logical Volume）名为 <code>data</code> 的 LV，并配置 <code>data</code> 逻辑卷的大小为1000m</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvcreate -L 1000M -n data VG1</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><code>-L|--size</code>  指定逻辑卷的大小</p>
+</blockquote>
+<p>查看 LV 的信息，常用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvs</span><br><span class="line">lvscan</span><br><span class="line">lvdisplay</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_30.png"><br><img src="https://i.csms.tech/img_31.png"></p>
+<blockquote>
+<p><strong>逻辑卷无法直接使用，必须格式化挂载之后才能使用</strong><br>逻辑卷的引用需要逻辑卷的设备文件, 逻辑卷的设备文件有两种书写形式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/dev/vg_name/lv_name</span><br><span class="line">/dev/mapper/vg_name-lv_name</span><br></pre></td></tr></table></figure>
+<p>格式化 LV 并挂载，正确的挂载后，可正常使用新加的磁盘空间</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkfs.xfs /dev/VG1/data</span><br><span class="line">mount /dev/VG1/data /data</span><br></pre></td></tr></table></figure>
+<p>为了防止系统重启后挂载失效，需要将挂载信息写入配置文件 <code>/etc/fstab</code></p>
+<figure class="highlight shell"><figcaption><span>/etc/fstab</span></figcaption><table><tr><td class="code"><pre><span class="line">/dev/VG1/data /data xfs defaults 0 0</span><br></pre></td></tr></table></figure>
+</blockquote>
+<h4 id="LVM-扩容操作"><a href="#LVM-扩容操作" class="headerlink" title="LVM 扩容操作"></a>LVM 扩容操作</h4><h5 id="VG-扩容"><a href="#VG-扩容" class="headerlink" title="VG 扩容"></a>VG 扩容</h5><p>使用已有的 PV ，或者 <a href="#%E5%88%9B%E5%BB%BA-PV-%E5%B8%B8%E7%94%A8%E6%93%8D%E4%BD%9C%E5%91%BD%E4%BB%A4">新建 PV</a> 来扩容已有的 VG, 假设用来扩容的 PV 为 <code>/dev/vde</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vgextend VG1 /dev/vde</span><br></pre></td></tr></table></figure>
+
+<h5 id="LV-扩容"><a href="#LV-扩容" class="headerlink" title="LV 扩容"></a>LV 扩容</h5><p>使用 VG 的空闲空间扩容 LV<br>指定要扩容的大小</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvextend -L +100m /dev/VG1/data</span><br></pre></td></tr></table></figure>
+<p>或者直接通过指定 PV 扩容 LV， 整个 PV 的空间被扩容到 LV， 前提是 PV 已被扩容到了 VG</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvextend /dev/VG1/data /dev/vde</span><br></pre></td></tr></table></figure>
+<p>其他扩容方式可查看命令帮助 <code>lvextend -h</code>  </p>
+<p>扩容 LV 后需要重新调整分区文件系统大小</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">resize2fs /dev/VG1/data</span><br></pre></td></tr></table></figure>
+<p><code>xfs</code> 文件系统需要使用以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">xfs_growfs /dev/VG1/data</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>LVM</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>logstash 使用详解</title>
     <url>/202307211022/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -13074,71 +13139,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>LVM 逻辑卷管理</title>
-    <url>/202208021256/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>LVM是 Logical Volume Manager(逻辑卷管理)的简写,LVM将一个或多个硬盘或分区在逻辑上集合，相当于一个大硬盘来使用，当硬盘的空间不够使用的时候，可以继续将其它的硬盘或分区加入其中，这样可以实现磁盘空间的动态管理，相对于普通的磁盘分区有很大的灵活性。与传统的磁盘与分区相比，LVM为计算机提供了更高层次的磁盘存储。它使系统管理员可以更方便的为应用与用户分配存储空间。  </p>
-<blockquote>
-<p><strong><code>/boot</code> 分区不可以在逻辑卷组上,否则bootloader会无法读取.</strong></p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="LVM-原理简介"><a href="#LVM-原理简介" class="headerlink" title="LVM 原理简介"></a>LVM 原理简介</h3><p>单一硬盘系统的 LVM 基本原理如下图所示<br><img src="https://i.csms.tech/img_23.png"></p>
-<p>多硬盘系统的 LVM 基本原理如下图所示<br><img src="https://i.csms.tech/img_24.png"><br><img src="https://i.csms.tech/img_25.png"></p>
-<h4 id="基本概念说明"><a href="#基本概念说明" class="headerlink" title="基本概念说明"></a>基本概念说明</h4><h5 id="PV（Physical-Volume）-物理卷"><a href="#PV（Physical-Volume）-物理卷" class="headerlink" title="PV（Physical Volume）- 物理卷"></a>PV（Physical Volume）- 物理卷</h5><p>物理卷在逻辑卷管理中处于最底层，它可以是实际物理硬盘上的分区，也可以是整个物理硬盘，也可以是raid设备,是LVM的基本存储逻辑块，但和基本的物理存储介质(如分区、磁盘等)比较，却包含有与LVM相关的管理参数。  </p>
-<p>PE（physical extent）：每一个物理卷被划分为称为PE(Physical Extents)的基本单元，具有唯一编号的PE是可以被LVM寻址的最小单元。PE的大小是在VG过程中配置的，默认为4MB。</p>
-<h5 id="VG（Volumne-Group）-卷组"><a href="#VG（Volumne-Group）-卷组" class="headerlink" title="VG（Volumne Group）- 卷组"></a>VG（Volumne Group）- 卷组</h5><p>卷组建立在物理卷之上，一个卷组中至少要包括一个物理卷，在卷组建立之后可动态添加物理卷到卷组中。一个逻辑卷管理系统工程中可以只有一个卷组，也可以拥有多个卷组。  </p>
-<h5 id="LV（Logical-Volume）-逻辑卷"><a href="#LV（Logical-Volume）-逻辑卷" class="headerlink" title="LV（Logical Volume）- 逻辑卷"></a>LV（Logical Volume）- 逻辑卷</h5><p>逻辑卷建立在卷组之上，卷组中的未分配空间可以用于建立新的逻辑卷，逻辑卷建立后可以动态地扩展和缩小空间。系统中的多个逻辑卷可以属于同一个卷组，也可以属于不同的多个卷组。</p>
-<h3 id="LVM-基本操作"><a href="#LVM-基本操作" class="headerlink" title="LVM 基本操作"></a>LVM 基本操作</h3><h4 id="创建-PV-常用操作命令"><a href="#创建-PV-常用操作命令" class="headerlink" title="创建 PV 常用操作命令"></a>创建 PV 常用操作命令</h4><p>将空闲分区 <code>/dev/vdb1</code> 配置为可用的 PV（Physical Volume）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pvcreate /dev/vdb1</span><br></pre></td></tr></table></figure>
-<p>将空闲磁盘 <code>/dev/vdd</code> 配置为可用的 PV（Physical Volume）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pvcreate /dev/vdd </span><br></pre></td></tr></table></figure>
-<p>查看 PV 的信息，常用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pvs</span><br><span class="line">pvscan</span><br><span class="line">pvdisplay</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_26.png"><br><img src="https://i.csms.tech/img_27.png"></p>
-<h4 id="创建-VG-常用操作命令"><a href="#创建-VG-常用操作命令" class="headerlink" title="创建 VG 常用操作命令"></a>创建 VG 常用操作命令</h4><p>使用已有的PV ，创建卷组（Volumne Group）名为 <code>VG1</code> 的 VG</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vgcreate VG1 /dev/vdb1 /dev/vdd</span><br></pre></td></tr></table></figure>
-
-<p>查看 VG 的信息，常用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vgs</span><br><span class="line">vgscan</span><br><span class="line">vgdisplay</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_28.png"><br><img src="https://i.csms.tech/img_29.png"></p>
-<h4 id="创建-LV-常用操作命令"><a href="#创建-LV-常用操作命令" class="headerlink" title="创建 LV 常用操作命令"></a>创建 LV 常用操作命令</h4><p>使用已有的卷组 VG1 ，创建逻辑卷（Logical Volume）名为 <code>data</code> 的 LV，并配置 <code>data</code> 逻辑卷的大小为1000m</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvcreate -L 1000M -n data VG1</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><code>-L|--size</code>  指定逻辑卷的大小</p>
-</blockquote>
-<p>查看 LV 的信息，常用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvs</span><br><span class="line">lvscan</span><br><span class="line">lvdisplay</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_30.png"><br><img src="https://i.csms.tech/img_31.png"></p>
-<blockquote>
-<p><strong>逻辑卷无法直接使用，必须格式化挂载之后才能使用</strong><br>逻辑卷的引用需要逻辑卷的设备文件, 逻辑卷的设备文件有两种书写形式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/dev/vg_name/lv_name</span><br><span class="line">/dev/mapper/vg_name-lv_name</span><br></pre></td></tr></table></figure>
-<p>格式化 LV 并挂载，正确的挂载后，可正常使用新加的磁盘空间</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkfs.xfs /dev/VG1/data</span><br><span class="line">mount /dev/VG1/data /data</span><br></pre></td></tr></table></figure>
-<p>为了防止系统重启后挂载失效，需要将挂载信息写入配置文件 <code>/etc/fstab</code></p>
-<figure class="highlight shell"><figcaption><span>/etc/fstab</span></figcaption><table><tr><td class="code"><pre><span class="line">/dev/VG1/data /data xfs defaults 0 0</span><br></pre></td></tr></table></figure>
-</blockquote>
-<h4 id="LVM-扩容操作"><a href="#LVM-扩容操作" class="headerlink" title="LVM 扩容操作"></a>LVM 扩容操作</h4><h5 id="VG-扩容"><a href="#VG-扩容" class="headerlink" title="VG 扩容"></a>VG 扩容</h5><p>使用已有的 PV ，或者 <a href="#%E5%88%9B%E5%BB%BA-PV-%E5%B8%B8%E7%94%A8%E6%93%8D%E4%BD%9C%E5%91%BD%E4%BB%A4">新建 PV</a> 来扩容已有的 VG, 假设用来扩容的 PV 为 <code>/dev/vde</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vgextend VG1 /dev/vde</span><br></pre></td></tr></table></figure>
-
-<h5 id="LV-扩容"><a href="#LV-扩容" class="headerlink" title="LV 扩容"></a>LV 扩容</h5><p>使用 VG 的空闲空间扩容 LV<br>指定要扩容的大小</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvextend -L +100m /dev/VG1/data</span><br></pre></td></tr></table></figure>
-<p>或者直接通过指定 PV 扩容 LV， 整个 PV 的空间被扩容到 LV， 前提是 PV 已被扩容到了 VG</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lvextend /dev/VG1/data /dev/vde</span><br></pre></td></tr></table></figure>
-<p>其他扩容方式可查看命令帮助 <code>lvextend -h</code>  </p>
-<p>扩容 LV 后需要重新调整分区文件系统大小</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">resize2fs /dev/VG1/data</span><br></pre></td></tr></table></figure>
-<p><code>xfs</code> 文件系统需要使用以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">xfs_growfs /dev/VG1/data</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>LVM</tag>
       </tags>
   </entry>
   <entry>
@@ -14634,6 +14634,241 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>Prometheus 指标汇总</title>
+    <url>/202306061427/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Prometheus 2.44.0</li>
+<li>Grafana 9.5.2</li>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="Kubernetes-相关指标"><a href="#Kubernetes-相关指标" class="headerlink" title="Kubernetes 相关指标"></a>Kubernetes 相关指标</h1><a href="/202212141608/" title="Kubernetes 中部署并监控 Kubernetes 集群参考">Kubernetes 中部署并监控 Kubernetes 集群参考</a>。
+
+<p><a href="https://csms.tech/202212141608/#配置-Prometheus-自动发现-kubelet-并读取监控指标">配置 Prometheus 监控 Kubelet</a> 之后可以采集到 Kubelet 监控指标。</p>
+<p><a href="https://csms.tech/202212141608/#配置-Prometheus-从-cAdvisor-读取监控数据">配置 Prometheus 读取 cAdvisor</a> 之后可以通过 cAdvisor 采集到容器相关的监控指标。</p>
+<table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kubelet_pod_start_duration_seconds_count</code></td>
+<td></td>
+<td>Pod 启动的时间</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_pod_start_duration_seconds_bucket</code></td>
+<td></td>
+<td>Pod 启动的时间的延迟直方图数据</td>
+<td><code>kubelet_pod_start_duration_seconds_bucket&#123;le=&quot;0.5&quot;&#125;</code></td>
+</tr>
+<tr>
+<td><code>kubelet_running_pods</code></td>
+<td></td>
+<td>运行的 Pod 的数量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_running_containers</code></td>
+<td></td>
+<td>运行的 Containers 的数量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_runtime_operations_errors_total</code></td>
+<td></td>
+<td>Kubelet 和 CRI 交互产生的错误（类型）</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_started_containers_total</code></td>
+<td></td>
+<td>Kubelet 启动的 Container 总数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_started_pods_total</code></td>
+<td></td>
+<td>Kubelet 启动的 Pod 总数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_volume_stats_available_bytes</code></td>
+<td></td>
+<td>PV Volume 可以使用的磁盘空间</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kube_node_status_allocatable</code><br/><code>kube_node_status_capacity</code></td>
+<td></td>
+<td>节点的可分配的 <strong>资源</strong> 数量</td>
+<td><code>kube_node_status_allocatable&#123;resource=&quot;pods&quot;&#125;</code><br/>节点可分配的 Pod 的数量</td>
+</tr>
+<tr>
+<td><code>kubelet_started_pods_total</code></td>
+<td><code>Counter</code></td>
+<td>已启动的 Pod 数量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>container_cpu_usage_seconds_total</code></td>
+<td><code>Counter</code></td>
+<td>Container 使用的 CPU</td>
+<td></td>
+</tr>
+<tr>
+<td><code>container_memory_usage_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>Pod 使用的内存</td>
+<td><code>container_memory_usage_bytes&#123;namespace=&quot;default&quot;&#125;</code></td>
+</tr>
+<tr>
+<td><code>kube_pod_container_status_restarts_total</code></td>
+<td><code>Counter</code></td>
+<td>Pod 的重启次数</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="nginx-ingress-controller-相关指标"><a href="#nginx-ingress-controller-相关指标" class="headerlink" title="nginx-ingress-controller 相关指标"></a>nginx-ingress-controller 相关指标</h2><p><a href="https://csms.tech/202212141608/#配置-Prometheus-抓取-Ingress-Nginx-指标">配置 Prometheus 监控 Ingress-Nginx-Controller 指标</a> 后，Prometheus 可以读取到 Ingress-Nginx-Controller 暴露的监控指标。</p>
+<p><a href="https://csms.tech/202306051707/#使用-Prometheus-数据源展示-Kubernetes-中-Ingress-Nginx-Controller-监控数据">Grafana 中配置使用 Ingress-Nginx-Controller 指标示例</a></p>
+<table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>nginx_ingress_controller_requests</code></td>
+<td><code>Counter</code></td>
+<td>Ingress Nginx Controller 接收到的所有请求数，，包括各个状态码</td>
+<td><code>irate(nginx_ingress_controller_requests[2m])</code> - 请求速率</td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_nginx_process_connections</code></td>
+<td>连接数，包括各个状态码</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_request_duration_seconds_sum</code></td>
+<td>请求持续时间的总和<br/><em><strong>请求持续时间是从请求进入 Ingress 控制器开始，到响应返回给客户端结束的整个时间</strong></em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_request_duration_seconds_count</code></td>
+<td>请求持续时间的计数。</td>
+<td>计算平均请求持续时间：平均请求持续时间 &#x3D; 请求持续时间总和 &#x2F; 请求持续时间计数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_sum</code></td>
+<td>upstream 占用时间的总和<br/><em><strong>upstream 占用时间是指请求从 Ingress 到达 upstream（backend）服务器的时间</strong></em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_count</code></td>
+<td>upstream 上游占用时间的计数</td>
+<td>计算平均上游占用时间：平均上游占用时间 &#x3D; 上游占用时间总和 &#x2F; 上游占用时间计数。</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="node-相关指标"><a href="#node-相关指标" class="headerlink" title="node 相关指标"></a>node 相关指标</h1><h2 id="主机信息"><a href="#主机信息" class="headerlink" title="主机信息"></a>主机信息</h2><p>包括 CPU 架构、内核版本、操作系统类型、主机名等，集中在指标 <code>node_uname_info</code> 中。</p>
+<h2 id="CPU"><a href="#CPU" class="headerlink" title="CPU"></a>CPU</h2><table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>node_cpu_seconds_total</code></td>
+<td><code>Counter</code></td>
+<td>CPU 使用时间</td>
+<td><code>node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;</code> - CPU 空闲时间</td>
+</tr>
+</tbody></table>
+<h3 id="统计节点-CPU-使用率"><a href="#统计节点-CPU-使用率" class="headerlink" title="统计节点 CPU 使用率"></a>统计节点 CPU 使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">100 - (avg by (instance) (irate(node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;[5m])) * 100)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h2><table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>node_memory_MemTotal_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>总的内存</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_memory_MemFree_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>空闲内存</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_memory_Cached_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>Cache 内存</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_memory_Buffers_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>Buffers 内存</td>
+<td></td>
+</tr>
+</tbody></table>
+<h3 id="统计节点的-内存使用率"><a href="#统计节点的-内存使用率" class="headerlink" title="统计节点的 内存使用率"></a>统计节点的 内存使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes) / node_memory_MemTotal_bytes * 100</span><br></pre></td></tr></table></figure>
+
+<h2 id="Network"><a href="#Network" class="headerlink" title="Network"></a>Network</h2><table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>node_network_receive_bytes_total</code></td>
+<td><code>Counter</code></td>
+<td>网卡<strong>接收</strong>的流量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_network_transmit_bytes_total</code></td>
+<td><code>Counter</code></td>
+<td>网卡<strong>发送</strong>的流量</td>
+<td></td>
+</tr>
+</tbody></table>
+<h3 id="网卡流量带宽"><a href="#网卡流量带宽" class="headerlink" title="网卡流量带宽"></a>网卡流量带宽</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">irate(node_network_receive_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br><span class="line">irate(node_network_transmit_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Prometheus 安装配置</title>
     <url>/202211221610/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15106,241 +15341,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Prometheus 指标汇总</title>
-    <url>/202306061427/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Prometheus 2.44.0</li>
-<li>Grafana 9.5.2</li>
-<li>Kubernetes 1.24</li>
-</ul>
-<h1 id="Kubernetes-相关指标"><a href="#Kubernetes-相关指标" class="headerlink" title="Kubernetes 相关指标"></a>Kubernetes 相关指标</h1><a href="/202212141608/" title="Kubernetes 中部署并监控 Kubernetes 集群参考">Kubernetes 中部署并监控 Kubernetes 集群参考</a>。
-
-<p><a href="https://csms.tech/202212141608/#配置-Prometheus-自动发现-kubelet-并读取监控指标">配置 Prometheus 监控 Kubelet</a> 之后可以采集到 Kubelet 监控指标。</p>
-<p><a href="https://csms.tech/202212141608/#配置-Prometheus-从-cAdvisor-读取监控数据">配置 Prometheus 读取 cAdvisor</a> 之后可以通过 cAdvisor 采集到容器相关的监控指标。</p>
-<table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>kubelet_pod_start_duration_seconds_count</code></td>
-<td></td>
-<td>Pod 启动的时间</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_pod_start_duration_seconds_bucket</code></td>
-<td></td>
-<td>Pod 启动的时间的延迟直方图数据</td>
-<td><code>kubelet_pod_start_duration_seconds_bucket&#123;le=&quot;0.5&quot;&#125;</code></td>
-</tr>
-<tr>
-<td><code>kubelet_running_pods</code></td>
-<td></td>
-<td>运行的 Pod 的数量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_running_containers</code></td>
-<td></td>
-<td>运行的 Containers 的数量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_runtime_operations_errors_total</code></td>
-<td></td>
-<td>Kubelet 和 CRI 交互产生的错误（类型）</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_started_containers_total</code></td>
-<td></td>
-<td>Kubelet 启动的 Container 总数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_started_pods_total</code></td>
-<td></td>
-<td>Kubelet 启动的 Pod 总数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_volume_stats_available_bytes</code></td>
-<td></td>
-<td>PV Volume 可以使用的磁盘空间</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kube_node_status_allocatable</code><br/><code>kube_node_status_capacity</code></td>
-<td></td>
-<td>节点的可分配的 <strong>资源</strong> 数量</td>
-<td><code>kube_node_status_allocatable&#123;resource=&quot;pods&quot;&#125;</code><br/>节点可分配的 Pod 的数量</td>
-</tr>
-<tr>
-<td><code>kubelet_started_pods_total</code></td>
-<td><code>Counter</code></td>
-<td>已启动的 Pod 数量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>container_cpu_usage_seconds_total</code></td>
-<td><code>Counter</code></td>
-<td>Container 使用的 CPU</td>
-<td></td>
-</tr>
-<tr>
-<td><code>container_memory_usage_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>Pod 使用的内存</td>
-<td><code>container_memory_usage_bytes&#123;namespace=&quot;default&quot;&#125;</code></td>
-</tr>
-<tr>
-<td><code>kube_pod_container_status_restarts_total</code></td>
-<td><code>Counter</code></td>
-<td>Pod 的重启次数</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="nginx-ingress-controller-相关指标"><a href="#nginx-ingress-controller-相关指标" class="headerlink" title="nginx-ingress-controller 相关指标"></a>nginx-ingress-controller 相关指标</h2><p><a href="https://csms.tech/202212141608/#配置-Prometheus-抓取-Ingress-Nginx-指标">配置 Prometheus 监控 Ingress-Nginx-Controller 指标</a> 后，Prometheus 可以读取到 Ingress-Nginx-Controller 暴露的监控指标。</p>
-<p><a href="https://csms.tech/202306051707/#使用-Prometheus-数据源展示-Kubernetes-中-Ingress-Nginx-Controller-监控数据">Grafana 中配置使用 Ingress-Nginx-Controller 指标示例</a></p>
-<table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>nginx_ingress_controller_requests</code></td>
-<td><code>Counter</code></td>
-<td>Ingress Nginx Controller 接收到的所有请求数，，包括各个状态码</td>
-<td><code>irate(nginx_ingress_controller_requests[2m])</code> - 请求速率</td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_nginx_process_connections</code></td>
-<td>连接数，包括各个状态码</td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_request_duration_seconds_sum</code></td>
-<td>请求持续时间的总和<br/><em><strong>请求持续时间是从请求进入 Ingress 控制器开始，到响应返回给客户端结束的整个时间</strong></em></td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_request_duration_seconds_count</code></td>
-<td>请求持续时间的计数。</td>
-<td>计算平均请求持续时间：平均请求持续时间 &#x3D; 请求持续时间总和 &#x2F; 请求持续时间计数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_sum</code></td>
-<td>upstream 占用时间的总和<br/><em><strong>upstream 占用时间是指请求从 Ingress 到达 upstream（backend）服务器的时间</strong></em></td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_count</code></td>
-<td>upstream 上游占用时间的计数</td>
-<td>计算平均上游占用时间：平均上游占用时间 &#x3D; 上游占用时间总和 &#x2F; 上游占用时间计数。</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="node-相关指标"><a href="#node-相关指标" class="headerlink" title="node 相关指标"></a>node 相关指标</h1><h2 id="主机信息"><a href="#主机信息" class="headerlink" title="主机信息"></a>主机信息</h2><p>包括 CPU 架构、内核版本、操作系统类型、主机名等，集中在指标 <code>node_uname_info</code> 中。</p>
-<h2 id="CPU"><a href="#CPU" class="headerlink" title="CPU"></a>CPU</h2><table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>node_cpu_seconds_total</code></td>
-<td><code>Counter</code></td>
-<td>CPU 使用时间</td>
-<td><code>node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;</code> - CPU 空闲时间</td>
-</tr>
-</tbody></table>
-<h3 id="统计节点-CPU-使用率"><a href="#统计节点-CPU-使用率" class="headerlink" title="统计节点 CPU 使用率"></a>统计节点 CPU 使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">100 - (avg by (instance) (irate(node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;[5m])) * 100)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h2><table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>node_memory_MemTotal_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>总的内存</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_memory_MemFree_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>空闲内存</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_memory_Cached_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>Cache 内存</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_memory_Buffers_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>Buffers 内存</td>
-<td></td>
-</tr>
-</tbody></table>
-<h3 id="统计节点的-内存使用率"><a href="#统计节点的-内存使用率" class="headerlink" title="统计节点的 内存使用率"></a>统计节点的 内存使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes) / node_memory_MemTotal_bytes * 100</span><br></pre></td></tr></table></figure>
-
-<h2 id="Network"><a href="#Network" class="headerlink" title="Network"></a>Network</h2><table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>node_network_receive_bytes_total</code></td>
-<td><code>Counter</code></td>
-<td>网卡<strong>接收</strong>的流量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_network_transmit_bytes_total</code></td>
-<td><code>Counter</code></td>
-<td>网卡<strong>发送</strong>的流量</td>
-<td></td>
-</tr>
-</tbody></table>
-<h3 id="网卡流量带宽"><a href="#网卡流量带宽" class="headerlink" title="网卡流量带宽"></a>网卡流量带宽</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">irate(node_network_receive_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br><span class="line">irate(node_network_transmit_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Prometheus 抓取 Nginx 指标</title>
     <url>/202306270947/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Prometheus 抓取 Nginx 运行时指标，主要有以下方法：</p>
@@ -15754,41 +15754,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Prometheus Redis exporter 使用</title>
-    <url>/202404301039/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
-<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
-<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启动  <code>redis_exporter</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
-
-<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
-<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
-<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
-
-<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
-
-<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
-<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Prometheus Process exporter 使用</title>
     <url>/202405091320/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/ncabatoff/process-exporter?tab=readme-ov-file">process-exporter Github</a></p>
@@ -15873,6 +15838,41 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Prometheus Redis exporter 使用</title>
+    <url>/202404301039/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
+<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
+<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启动  <code>redis_exporter</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
+
+<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
+<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
+<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
+
+<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
+
+<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
+<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Pycharm 常用配置</title>
     <url>/202208041319/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15938,6 +15938,26 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>python 中 json 格式</title>
+    <url>/202301201605/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python3.10</li>
+</ul>
+<p>Python 中操作 json 相关格式，主要使用模块 <code>json</code></p>
+<h1 id="Python-数据类型转换为-json-格式"><a href="#Python-数据类型转换为-json-格式" class="headerlink" title="Python 数据类型转换为 json 格式"></a>Python 数据类型转换为 json 格式</h1><p>python 数据类型转换为 json ，主要使用方法 <code>dumps()</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; adict = &#123;<span class="string">&#x27;a&#x27;</span>: 1, <span class="string">&#x27;b&#x27;</span>: <span class="string">&#x27;st&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(adict)</span></span><br><span class="line">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; alist = [1,2,3,4]</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(alist)</span></span><br><span class="line">&#x27;[1, 2, 3, 4]&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="json-格式转换为-Python-数据类型"><a href="#json-格式转换为-Python-数据类型" class="headerlink" title="json 格式转换为 Python 数据类型"></a>json 格式转换为 Python 数据类型</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; ajson = <span class="string">&#x27;[1, 2, 3, 4]&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(ajson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.load(ajson)</span></span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File &quot;&lt;console&gt;&quot;, line 1, in &lt;module&gt;</span><br><span class="line">  File &quot;/usr/local/lib/python3.10/json/__init__.py&quot;, line 293, in load</span><br><span class="line">    return loads(fp.read(),</span><br><span class="line">AttributeError: &#x27;str&#x27; object has no attribute &#x27;read&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(ajson)</span></span><br><span class="line">[1, 2, 3, 4]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; bjson = <span class="string">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(bjson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(bjson)</span></span><br><span class="line">&#123;&#x27;a&#x27;: 1, &#x27;b&#x27;: &#x27;st&#x27;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>python dict 使用</title>
     <url>/202301101011/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15952,26 +15972,6 @@ width: 20%;
 
 <h2 id="合并-dict"><a href="#合并-dict" class="headerlink" title="合并 dict"></a>合并 dict</h2><p>要将多个字典的键值合并到一个新的字典中，可以使用字典的解包方式。<em><strong>如果字典中有重复的 key，最终的值为最后的字典中的值</strong></em></p>
 <figure class="highlight python"><table><tr><td class="code"><pre><span class="line">query = &#123;<span class="string">&#x27;name&#x27;</span>: <span class="string">&#x27;d&#x27;</span>&#125;</span><br><span class="line">params = &#123;<span class="string">&#x27;id&#x27;</span>: <span class="string">&#x27;65220d913a0283df8a&#x27;</span>&#125;</span><br><span class="line">merged_dict = &#123;**query, **params&#125;</span><br></pre></td></tr></table></figure>
-<span id="more"></span>]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>python 中 json 格式</title>
-    <url>/202301201605/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python3.10</li>
-</ul>
-<p>Python 中操作 json 相关格式，主要使用模块 <code>json</code></p>
-<h1 id="Python-数据类型转换为-json-格式"><a href="#Python-数据类型转换为-json-格式" class="headerlink" title="Python 数据类型转换为 json 格式"></a>Python 数据类型转换为 json 格式</h1><p>python 数据类型转换为 json ，主要使用方法 <code>dumps()</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; adict = &#123;<span class="string">&#x27;a&#x27;</span>: 1, <span class="string">&#x27;b&#x27;</span>: <span class="string">&#x27;st&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(adict)</span></span><br><span class="line">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; alist = [1,2,3,4]</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.dumps(alist)</span></span><br><span class="line">&#x27;[1, 2, 3, 4]&#x27;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="json-格式转换为-Python-数据类型"><a href="#json-格式转换为-Python-数据类型" class="headerlink" title="json 格式转换为 Python 数据类型"></a>json 格式转换为 Python 数据类型</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; ajson = <span class="string">&#x27;[1, 2, 3, 4]&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(ajson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.load(ajson)</span></span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File &quot;&lt;console&gt;&quot;, line 1, in &lt;module&gt;</span><br><span class="line">  File &quot;/usr/local/lib/python3.10/json/__init__.py&quot;, line 293, in load</span><br><span class="line">    return loads(fp.read(),</span><br><span class="line">AttributeError: &#x27;str&#x27; object has no attribute &#x27;read&#x27;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(ajson)</span></span><br><span class="line">[1, 2, 3, 4]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; bjson = <span class="string">&#x27;&#123;&quot;a&quot;: 1, &quot;b&quot;: &quot;st&quot;&#125;&#x27;</span></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">type</span>(bjson)</span></span><br><span class="line">&lt;class &#x27;str&#x27;&gt;</span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; json.loads(bjson)</span></span><br><span class="line">&#123;&#x27;a&#x27;: 1, &#x27;b&#x27;: &#x27;st&#x27;&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
 <span id="more"></span>]]></content>
       <categories>
         <category>Python</category>
@@ -17832,40 +17832,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Vault Policy</title>
-    <url>/202307131545/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
-<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
-<p>以下示例创建一个只读策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
-<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>读取策略内容</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
-</blockquote>
-<p>使用新建的 token 登陆并尝试更新相关键</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>读取键，可以看到只能读取键值，无法写入</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Vault</category>
-      </categories>
-      <tags>
-        <tag>Vault</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Vault 介绍及安装配置</title>
     <url>/202307100928/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -17956,6 +17922,40 @@ width: 20%;
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://thiscute.world/posts/experience-of-vault/#4-vault-agent-%E9%85%8D%E7%BD%AE">secrets 管理工具 Vault 的介绍、安装及使用</a></p>
 <p><a href="https://lonegunmanb.github.io/essential-vault/">Vault 中文手册</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/internals/architecture">Vault High-Level Overview</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#install-vault">Installing Vault</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#dev-mode">Dev mode</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#ha-mode">HA mode</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#initialize-and-unseal-vault">Initialize and unseal Vault</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/5.%E5%90%AF%E5%8A%A8%E6%A0%87%E5%87%86%E7%9A%84Vault%E6%9C%8D%E5%8A%A1.html">Vault 中文手册</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/6.Vault%E7%9A%84%E6%9E%B6%E6%9E%84.html">Vault的架构</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5.html">基本概念</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/2.%E5%B0%81%E5%8D%B0%E4%B8%8E%E8%A7%A3%E5%B0%81.html">封印与解封</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/4.%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6/overview.html">Vault 配置文件</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/9.%E5%AE%9E%E9%99%85%E6%A1%88%E4%BE%8B/1.%E5%8A%A0%E5%AF%86%E5%8D%B3%E6%9C%8D%E5%8A%A1.html">加密即服务</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Vault</category>
+      </categories>
+      <tags>
+        <tag>Vault</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Vault Policy</title>
+    <url>/202307131545/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
+<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
+<p>以下示例创建一个只读策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
+<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>读取策略内容</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
+</blockquote>
+<p>使用新建的 token 登陆并尝试更新相关键</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>读取键，可以看到只能读取键值，无法写入</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Tools</category>
         <category>Vault</category>
