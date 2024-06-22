@@ -8738,6 +8738,95 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 网络</title>
     <url>/202212020941/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8883,95 +8972,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
@@ -14380,6 +14380,48 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>操作系统导论专业词汇表</title>
+    <url>/202405311003/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Operating System Concepts v10(操作系统导论第10版)中涉及的相关专业词汇。</p>
+<h1 id="memory"><a href="#memory" class="headerlink" title="memory"></a>memory</h1><h2 id="EEPROM"><a href="#EEPROM" class="headerlink" title="EEPROM"></a>EEPROM</h2><p><code>EEPROM(Electrically Erasable Programmable Read-Only Memory)</code>.</p>
+<p>Operating System 上电运行后启动的第一个程序是 <code>bootstrap program</code> （操作系统启动引导程序，其启动之后会加载操作系统）。RAM 是易失性存储，不能将 <code>bootstrap program</code> 放置到 RAM 中，当下主机会使用 EEPROM 放置 <code>bootstrap program</code>。<code>bootstrap program</code> 可以被修改，但是不能频繁修改，它属于慢速存储，其中包含了不经常会使用的静态程序和数据。比如 iPhone 使用了 EEPROM 存储了设备 <code>serial numbers</code> 和 <code>hardware information</code></p>
+<h2 id="Main-Memory"><a href="#Main-Memory" class="headerlink" title="Main Memory"></a>Main Memory</h2><p><strong>Main Memory</strong> 通常是 CPU 可以直接定位和访问的唯一的大存储设备。如果 CPU 要处理磁盘上的数据，数据必须首先被传输到 <strong>Main Memory</strong>，指令要能被 CPU 执行，也必须首先载入内存中。</p>
+<p><strong><code>Program</code></strong> 要能被运行，首先必须载入到内存中，并提供内存绝对地址给 CPU 以供加载指令和数据。</p>
+<h2 id="NVM"><a href="#NVM" class="headerlink" title="NVM"></a>NVM</h2><p> <code>Nonvolatile Memory Devices (NVM)</code> </p>
+<h1 id="CPU"><a href="#CPU" class="headerlink" title="CPU"></a>CPU</h1><h2 id="SMP"><a href="#SMP" class="headerlink" title="SMP"></a>SMP</h2><p><code>Symmetric Multiprocessing (SMP)</code>，对称处理系统，在系统中存在多个处理器，每个处理器中包含一个或多个 CPU，每个 CPU 有自己的 L1 Cache （CPU 独享）和 Register，每个处理器有 L2 Cache（处理器中的多个 CPU 共享 L2 cache），同一个处理器中的 CPU 使用处理器内部通信系统通信，跨处理器的 CPU 之间通过系统总线（Bus）通信。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="1.3.2 Multiprocessor Systems">[2]</span></a></sup></p>
+<h2 id="NUMA"><a href="#NUMA" class="headerlink" title="NUMA"></a>NUMA</h2><p><strong>系统中的处理器不宜太多，多处理器可以提高系统的任务处理能力，但是当 CPU 过高时，对系统总线的争抢会成为系统瓶颈。</strong></p>
+<p>为了避免太多 Processors 争抢系统总线造成的性能下降，一个可选的 方法是为每个 CPU（或 CPU 集）提供专用的本地内存，CPU 通过一个更小更快的本地 bus 连接专用的本地内存。所有的 CPU 通过一个 <strong>内部通信系统</strong> 进行连接，所有 CPU 共享同一个物理地址空间，这种架构被称为 <code>Non-uniform Memory Access (NUMA)</code></p>
+<p><img src="https://i.csms.tech/img_236.png"></p>
+<h2 id="Program-and-Process"><a href="#Program-and-Process" class="headerlink" title="Program and Process"></a>Program and Process</h2><p><strong><code>Program</code></strong> 是一个静态实体，只是存储在操作系统中的文件（集合）</p>
+<p><strong><code>Process</code></strong> 是操作系统上的活动（Active）实体，是 <strong><code>Program</code></strong> 由操作系统加载运行之后的实体。</p>
+<p><strong><code>Process</code></strong> 运行过程中需要操作系统为其分配各种资源，如 CPU、Memory、Files、IO 等来完成其运行。</p>
+<p>如果一个 <strong><code>Program</code></strong> 被操作系统运行（启动）了多次，那么其产生的多个 <strong><code>Process</code></strong>  属于分割（单独）的实体。</p>
+<h1 id="Disk"><a href="#Disk" class="headerlink" title="Disk"></a>Disk</h1><p>可以讲 NVS 根据硬盘组成划分成 2 大类</p>
+<ul>
+<li>机械硬盘（Mechanical）： HDDs，Optical Disks，Holographic storage，Magnetic Tape。</li>
+<li>Electrical（NVM）： Flash Memory，FRAM，NRAM，SSD</li>
+</ul>
+<h2 id="NVS"><a href="#NVS" class="headerlink" title="NVS"></a>NVS</h2><p><code>Nonvolatile Storage (NVS)</code></p>
+<h2 id="DMA"><a href="#DMA" class="headerlink" title="DMA"></a>DMA</h2><p><code>Direct Memory Access (DMA)</code> 在 CPU 需要从存储读写大量数据到内存时，如果数据通过 CPU 中转，成本太高，为了解决这个问题，DMA 被采用，在传输大块数据时，首先在 CPU 中为数据设置好必要的 buffer、指针、计数器等资源，设备控制器直接（在磁盘和内存中）传输数据块而无须 CPU 参与实际的数据传输，只需要在数据块传输完成时，向 CPU 产生中断以指示设备控制器数据传输已完成。在 DMA 过程中，CPU 依旧可以做其他工作。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="1.2.3 I/O Structure">[1]</span></a></sup></p>
+<h1 id="Glossary"><a href="#Glossary" class="headerlink" title="Glossary"></a>Glossary</h1><p><code>GNU</code>： GNU’s Not Unix，Richard Stallman 于 1984 年开始开发的自由（free）的类 Unix 操作系统。包括编译器、编辑器、库文件、游戏等应用，没有内核。</p>
+<p><code>GNU/Linux</code>： 1991 年，Linus Torvalds 发布了最初版类 Unix 操作系统内核，并使用了 GNU 提供的编译器和工具。</p>
+<p><code>FSF</code>: Free Software Foundation，自由软件基金会，由 Richard Stallman 于 1985 年成立，旨在鼓励和推动自由软件的使用和开发。<strong>自由不等于免费</strong></p>
+<p><code>GPL</code>： GNU General Public License。</p>
+<p><code>ELF</code>: Executable and Linkable Format.</p>
+<p><code>ABI</code> : Application Binary Interface. ABI 定义了在不同架构以及不同的操作系统中，一个二进制代码（Binary Code）提供的接口的差异性。ABI 定义了二进制代码的底层细节，如地址宽度、向系统调用（system calls）提供参数的方法、运行时的堆栈（stack）的组织方式、系统库的二进制格式、数据类型等信息。ABI 是架构级别（architecture-level）的定义，如果一个二进制文件是根据特点的架构（如 ARMv8 processor）编译（链接）而成，那将他迁移到支持此 ABI 的另外的系统上，理论上它也可以正常运行。<sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="2.6 Why Applications Are Operating-System Specific">[3]</span></a></sup></p>
+<p><code>RTE</code> : Run Time Environment. </p>
+<h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;">1.2.3 I/O Structure<a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;">1.3.2 Multiprocessor Systems<a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;">2.6 Why Applications Are Operating-System Specific<a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>读书笔记</category>
+        <category>OS</category>
+        <category>Operating System Concepts v10</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>php 编译安装配置</title>
     <url>/202207301722/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -14450,48 +14492,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>php</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>操作系统导论专业词汇表</title>
-    <url>/202405311003/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Operating System Concepts v10(操作系统导论第10版)中涉及的相关专业词汇。</p>
-<h1 id="memory"><a href="#memory" class="headerlink" title="memory"></a>memory</h1><h2 id="EEPROM"><a href="#EEPROM" class="headerlink" title="EEPROM"></a>EEPROM</h2><p><code>EEPROM(Electrically Erasable Programmable Read-Only Memory)</code>.</p>
-<p>Operating System 上电运行后启动的第一个程序是 <code>bootstrap program</code> （操作系统启动引导程序，其启动之后会加载操作系统）。RAM 是易失性存储，不能将 <code>bootstrap program</code> 放置到 RAM 中，当下主机会使用 EEPROM 放置 <code>bootstrap program</code>。<code>bootstrap program</code> 可以被修改，但是不能频繁修改，它属于慢速存储，其中包含了不经常会使用的静态程序和数据。比如 iPhone 使用了 EEPROM 存储了设备 <code>serial numbers</code> 和 <code>hardware information</code></p>
-<h2 id="Main-Memory"><a href="#Main-Memory" class="headerlink" title="Main Memory"></a>Main Memory</h2><p><strong>Main Memory</strong> 通常是 CPU 可以直接定位和访问的唯一的大存储设备。如果 CPU 要处理磁盘上的数据，数据必须首先被传输到 <strong>Main Memory</strong>，指令要能被 CPU 执行，也必须首先载入内存中。</p>
-<p><strong><code>Program</code></strong> 要能被运行，首先必须载入到内存中，并提供内存绝对地址给 CPU 以供加载指令和数据。</p>
-<h2 id="NVM"><a href="#NVM" class="headerlink" title="NVM"></a>NVM</h2><p> <code>Nonvolatile Memory Devices (NVM)</code> </p>
-<h1 id="CPU"><a href="#CPU" class="headerlink" title="CPU"></a>CPU</h1><h2 id="SMP"><a href="#SMP" class="headerlink" title="SMP"></a>SMP</h2><p><code>Symmetric Multiprocessing (SMP)</code>，对称处理系统，在系统中存在多个处理器，每个处理器中包含一个或多个 CPU，每个 CPU 有自己的 L1 Cache （CPU 独享）和 Register，每个处理器有 L2 Cache（处理器中的多个 CPU 共享 L2 cache），同一个处理器中的 CPU 使用处理器内部通信系统通信，跨处理器的 CPU 之间通过系统总线（Bus）通信。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="1.3.2 Multiprocessor Systems">[2]</span></a></sup></p>
-<h2 id="NUMA"><a href="#NUMA" class="headerlink" title="NUMA"></a>NUMA</h2><p><strong>系统中的处理器不宜太多，多处理器可以提高系统的任务处理能力，但是当 CPU 过高时，对系统总线的争抢会成为系统瓶颈。</strong></p>
-<p>为了避免太多 Processors 争抢系统总线造成的性能下降，一个可选的 方法是为每个 CPU（或 CPU 集）提供专用的本地内存，CPU 通过一个更小更快的本地 bus 连接专用的本地内存。所有的 CPU 通过一个 <strong>内部通信系统</strong> 进行连接，所有 CPU 共享同一个物理地址空间，这种架构被称为 <code>Non-uniform Memory Access (NUMA)</code></p>
-<p><img src="https://i.csms.tech/img_236.png"></p>
-<h2 id="Program-and-Process"><a href="#Program-and-Process" class="headerlink" title="Program and Process"></a>Program and Process</h2><p><strong><code>Program</code></strong> 是一个静态实体，只是存储在操作系统中的文件（集合）</p>
-<p><strong><code>Process</code></strong> 是操作系统上的活动（Active）实体，是 <strong><code>Program</code></strong> 由操作系统加载运行之后的实体。</p>
-<p><strong><code>Process</code></strong> 运行过程中需要操作系统为其分配各种资源，如 CPU、Memory、Files、IO 等来完成其运行。</p>
-<p>如果一个 <strong><code>Program</code></strong> 被操作系统运行（启动）了多次，那么其产生的多个 <strong><code>Process</code></strong>  属于分割（单独）的实体。</p>
-<h1 id="Disk"><a href="#Disk" class="headerlink" title="Disk"></a>Disk</h1><p>可以讲 NVS 根据硬盘组成划分成 2 大类</p>
-<ul>
-<li>机械硬盘（Mechanical）： HDDs，Optical Disks，Holographic storage，Magnetic Tape。</li>
-<li>Electrical（NVM）： Flash Memory，FRAM，NRAM，SSD</li>
-</ul>
-<h2 id="NVS"><a href="#NVS" class="headerlink" title="NVS"></a>NVS</h2><p><code>Nonvolatile Storage (NVS)</code></p>
-<h2 id="DMA"><a href="#DMA" class="headerlink" title="DMA"></a>DMA</h2><p><code>Direct Memory Access (DMA)</code> 在 CPU 需要从存储读写大量数据到内存时，如果数据通过 CPU 中转，成本太高，为了解决这个问题，DMA 被采用，在传输大块数据时，首先在 CPU 中为数据设置好必要的 buffer、指针、计数器等资源，设备控制器直接（在磁盘和内存中）传输数据块而无须 CPU 参与实际的数据传输，只需要在数据块传输完成时，向 CPU 产生中断以指示设备控制器数据传输已完成。在 DMA 过程中，CPU 依旧可以做其他工作。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="1.2.3 I/O Structure">[1]</span></a></sup></p>
-<h1 id="Glossary"><a href="#Glossary" class="headerlink" title="Glossary"></a>Glossary</h1><p><code>GNU</code>： GNU’s Not Unix，Richard Stallman 于 1984 年开始开发的自由（free）的类 Unix 操作系统。包括编译器、编辑器、库文件、游戏等应用，没有内核。</p>
-<p><code>GNU/Linux</code>： 1991 年，Linus Torvalds 发布了最初版类 Unix 操作系统内核，并使用了 GNU 提供的编译器和工具。</p>
-<p><code>FSF</code>: Free Software Foundation，自由软件基金会，由 Richard Stallman 于 1985 年成立，旨在鼓励和推动自由软件的使用和开发。<strong>自由不等于免费</strong></p>
-<p><code>GPL</code>： GNU General Public License。</p>
-<p><code>ELF</code>: Executable and Linkable Format.</p>
-<p><code>ABI</code> : Application Binary Interface. ABI 定义了在不同架构以及不同的操作系统中，一个二进制代码（Binary Code）提供的接口的差异性。ABI 定义了二进制代码的底层细节，如地址宽度、向系统调用（system calls）提供参数的方法、运行时的堆栈（stack）的组织方式、系统库的二进制格式、数据类型等信息。ABI 是架构级别（architecture-level）的定义，如果一个二进制文件是根据特点的架构（如 ARMv8 processor）编译（链接）而成，那将他迁移到支持此 ABI 的另外的系统上，理论上它也可以正常运行。<sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="2.6 Why Applications Are Operating-System Specific">[3]</span></a></sup></p>
-<p><code>RTE</code> : Run Time Environment. </p>
-<h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;">1.2.3 I/O Structure<a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;">1.3.2 Multiprocessor Systems<a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;">2.6 Why Applications Are Operating-System Specific<a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>读书笔记</category>
-        <category>OS</category>
-        <category>Operating System Concepts v10</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -15761,6 +15761,41 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Prometheus Redis exporter 使用</title>
+    <url>/202404301039/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
+<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
+<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
+<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启动  <code>redis_exporter</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
+
+<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
+<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
+<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
+
+<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
+
+<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
+<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Prometheus Process exporter 使用</title>
     <url>/202405091320/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/ncabatoff/process-exporter?tab=readme-ov-file">process-exporter Github</a></p>
@@ -15836,41 +15871,6 @@ width: 20%;
 <p>因为配置中匹配进程的顺序的关系，假如系统中还有除此之外的其他 <code>php</code> 进程，那么由最后的 <code>&#123;&#123;.Comm&#125;&#125;</code> 统计到的 <code>php</code> 进程资源使用数据中不再包含前面 3 个特定进程的资源使用数据。</p>
 </blockquote>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/ncabatoff/process-exporter?tab=readme-ov-file#using-a-config-file">Using a config file</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Prometheus Redis exporter 使用</title>
-    <url>/202404301039/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/oliver006/redis_exporter">Prometheus ValKey &amp; Redis Metrics Exporter</a></p>
-<p><a href="https://github.com/oliver006/redis_exporter/releases">Prometheus Redis Metrics Exporter 下载页面</a></p>
-<h1 id="redis-exporter-安装"><a href="#redis-exporter-安装" class="headerlink" title="redis_exporter 安装"></a>redis_exporter 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/oliver006/redis_exporter/releases/download/v1.59.0/redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">tar -xf redis_exporter-v1.59.0.linux-amd64.tar.gz</span><br><span class="line">mv redis_exporter-v1.59.0.linux-amd64/redis_exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>为 <code>redis_exporter</code> 生成 <code>systemd</code> 服务配置文件 <code>/usr/lib/systemd/system/redis_exporter.service</code></p>
-<figure class="highlight shell"><figcaption><span>/usr/lib/systemd/system/redis_exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=redis_exporter</span><br><span class="line">After=syslog.target</span><br><span class="line">After=network.target</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=simple</span><br><span class="line">ExecStart=/usr/bin/redis_exporter</span><br><span class="line">Restart=always</span><br><span class="line">RestartSec=10</span><br><span class="line">StartLimitInterval=100</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启动  <code>redis_exporter</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl <span class="built_in">enable</span> --now redis_exporter</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status redis_exporter</span></span><br><span class="line">● redis_exporter.service - redis_exporter</span><br><span class="line">   Loaded: loaded (/usr/lib/systemd/system/redis_exporter.service; enabled; vendor preset: disabled)</span><br><span class="line">   Active: active (running) since Tue 2024-04-30 10:45:58 CST; 5s ago</span><br><span class="line"> Main PID: 12126 (redis_exporter)</span><br><span class="line">   CGroup: /system.slice/redis_exporter.service</span><br><span class="line">           └─12126 /usr/bin/redis_exporter</span><br><span class="line"></span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal systemd[1]: Started redis_exporter.</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Redis Metrics Exp...md64&quot;</span><br><span class="line">Apr 30 10:45:58 ip-172-31-26-219.us-west-1.compute.internal redis_exporter[12126]: time=&quot;2024-04-30T10:45:58+08:00&quot; level=info msg=&quot;Providing metrics...rics&quot;</span><br><span class="line">Hint: Some lines were ellipsized, use -l to show in full.</span><br></pre></td></tr></table></figure>
-
-<p> <code>redis_exporter</code> 服务启动后，默认启动 <code>9121</code> 端口提供 Metrics 数据供 Prometheus 抓取。</p>
-<h1 id="redis-exporter-配置"><a href="#redis-exporter-配置" class="headerlink" title="redis_exporter 配置"></a>redis_exporter 配置</h1><h2 id="redis-实例及认证信息配置"><a href="#redis-实例及认证信息配置" class="headerlink" title="redis 实例及认证信息配置"></a>redis 实例及认证信息配置</h2><p>如果要通过一个 <code>redis_exporter</code> 实例监控多个 Redis 实例，可以参照以下配置文件配置 Redis 实例及其认证信息，如果无需密码认证，则保留密码项为空。</p>
-<figure class="highlight shell"><figcaption><span>/etc/redis_exporter_pwd_file.json</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">&#123;</span><br><span class="line">    &quot;redis://localhost:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://localhost:7382&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7380&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7381&quot;: &quot;paswd12&quot;,</span><br><span class="line">    &quot;redis://172.31.19.9:7382&quot;: &quot;&quot;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>修改 <code>redis_exporter</code> 启动参数，使其读取上面配置的实例和其认证信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">/usr/bin/redis_exporter -redis.password-file /etc/redis_exporter_pwd_file.json</span><br></pre></td></tr></table></figure>
-
-<h2 id="配置-Prometheus-抓取-redis-exporter-指标"><a href="#配置-Prometheus-抓取-redis-exporter-指标" class="headerlink" title="配置 Prometheus 抓取 redis_exporter 指标"></a>配置 Prometheus 抓取 redis_exporter 指标</h2><p>参考以下配置使用文件发现的方式配置被监控的 Redis 实例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">scrape_configs:</span><br><span class="line">  - job_name: &#x27;redis_exporter_targets&#x27;</span><br><span class="line">    file_sd_configs:</span><br><span class="line">      - files:</span><br><span class="line">        - targets-redis-instances.yml</span><br><span class="line">    metrics_path: /scrape</span><br><span class="line">    relabel_configs:</span><br><span class="line">      - source_labels: [__address__]</span><br><span class="line">        target_label: __param_target</span><br><span class="line">      - source_labels: [__param_target]</span><br><span class="line">        target_label: instance</span><br><span class="line">      - target_label: __address__</span><br><span class="line">        replacement: &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">  #</span><span class="language-bash"><span class="comment"># config for scraping the exporter itself</span></span></span><br><span class="line">  - job_name: &#x27;redis_exporter&#x27;</span><br><span class="line">    static_configs:</span><br><span class="line">      - targets:</span><br><span class="line">        - &lt;&lt;REDIS-EXPORTER-HOSTNAME&gt;&gt;:9121</span><br></pre></td></tr></table></figure>
-
-<p><code>targets-redis-instances.yml</code> 文件内容包含 Targets 内容：</p>
-<figure class="highlight shell"><figcaption><span>targets-redis-instances.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">- labels:</span><br><span class="line">    label1: value1</span><br><span class="line">  targets: [ &quot;redis://redis-host-01:6379&quot;, &quot;redis://redis-host-02:6379&quot;]</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>]]></content>
       <categories>
         <category>Tools</category>
         <category>Prometheus</category>
@@ -17972,50 +17972,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>vim</title>
-    <url>/202208181117/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="vim-配置"><a href="#vim-配置" class="headerlink" title="vim 配置"></a>vim 配置</h1><p><code>vim</code> 启动时会读取 <code>/etc/vimrc</code>（全局配置） 和 <code>~/.vimrc</code> （用户配置）</p>
-<p>常用配置如下，使用 <code>&quot;</code> 注释</p>
-<figure class="highlight shell"><figcaption><span>/etc/vimrc</span></figcaption><table><tr><td class="code"><pre><span class="line">&quot; 自动缩进 </span><br><span class="line">set ai</span><br><span class="line">set autoindent</span><br><span class="line"></span><br><span class="line">&quot; 保存历史命令数量</span><br><span class="line">set history=50</span><br><span class="line"></span><br><span class="line">&quot; 右下角显示当前鼠标位置（行列数）</span><br><span class="line">set ruler</span><br><span class="line"></span><br><span class="line">&quot; 鼠标位置所在行显示下划线</span><br><span class="line">set cursorline</span><br><span class="line"></span><br><span class="line">&quot; 开启语法高亮</span><br><span class="line">syntax on</span><br><span class="line"></span><br><span class="line">&quot; 高亮搜索结果</span><br><span class="line">set hlsearch</span><br><span class="line"></span><br><span class="line">&quot; 搜索时不区分大小写</span><br><span class="line">set ignorecase</span><br><span class="line"></span><br><span class="line">&quot; 将 tab 转换为空格</span><br><span class="line">set expandtab</span><br><span class="line"></span><br><span class="line">&quot; tab 转换为4个空格</span><br><span class="line">set tabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 删除时，可以一次删除4个空格</span><br><span class="line">set softtabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 显示行数</span><br><span class="line">set nu</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-
-<h1 id="vim-常见用法"><a href="#vim-常见用法" class="headerlink" title="vim 常见用法"></a>vim 常见用法</h1><h2 id="读写加解密文件"><a href="#读写加解密文件" class="headerlink" title="读写加解密文件"></a>读写加解密文件</h2><h3 id="创建新的加密文件"><a href="#创建新的加密文件" class="headerlink" title="创建新的加密文件"></a>创建新的加密文件</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vim -x mysecfile</span><br></pre></td></tr></table></figure>
-<p>使用 <code>vim</code> 的 <code>-x</code> 选项，将创建一个新的文件，并提示需要设置加密密码，输入 2 次密码后，将进入 <code>vim</code> 界面，编辑完内容，保存后，产生的文件为 <code>vim</code> 加密的文件，使用 <code>file</code> 命令查看，显示如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file mysecfile</span></span><br><span class="line">mysecfile: Vim encrypted file data</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>之后要使用 <code>vim</code> 编辑此文件，都要按照提示输入密码，如果未输入密码或者输入的密码错误，打开的文件内容将显示为乱码，只有输入正确的密码，才能看到正确的文件内容，如果使用其他编辑器，可以直接打开文件，但是内容乱码  </p>
-<h3 id="加密已有文件"><a href="#加密已有文件" class="headerlink" title="加密已有文件"></a>加密已有文件</h3><p>对于已经存在的未加密文件，使用 <code>vim</code> 的 <code>-x</code> 选项时，会要求输入密码，此时不输入密码，或者随便输入，都会打开正确的文件内容(因为文件并未被 <code>vim</code> 加密保护)  </p>
-<p>对于已经存在的未加密文件，若要使用 <code>vim</code> 进行加密，可以在 <code>vim</code> 打开文件后，使用 <code>vim</code> 的 <code>X</code> 命令对文件进行加密。具体操作为： 在 <code>vim</code> 的一般模式下（按 <code>Esc</code> 进入），输入 </p>
-<figure class="highlight vim"><table><tr><td class="code"><pre><span class="line">:<span class="keyword">X</span></span><br></pre></td></tr></table></figure>
-<p>确定后 <code>vim</code> 会提示输入 2 次密码，完成加密，最后保存文件</p>
-<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:wq</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><strong>对于 <code>vim</code> 已经加密的文件，如果使用 <code>vim</code> 打开时输入错误的密码或者未输入密码，打开文件显示乱码，此时如果对文件进行了保存，会导致乱码被保存为文件内容，导致文件内容丢失</strong></p>
-</blockquote>
-<h3 id="文件解密"><a href="#文件解密" class="headerlink" title="文件解密"></a>文件解密</h3><p>对 <code>vim</code> 已加密的文件，需要解密的话，在正确打开文件后，可以通过 <a href="#%E5%8A%A0%E5%AF%86%E5%B7%B2%E6%9C%89%E6%96%87%E4%BB%B6">加密已有文件</a> 中的步骤，将文件密码设置为空即可<br>或者正确打开加密文件后，进入一般模式下，执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:set key=</span><br></pre></td></tr></table></figure>
-
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="vim-INSERT-模式中无法使用鼠标复制粘贴"><a href="#vim-INSERT-模式中无法使用鼠标复制粘贴" class="headerlink" title="vim INSERT 模式中无法使用鼠标复制粘贴"></a>vim INSERT 模式中无法使用鼠标复制粘贴</h2><p><strong>环境信息</strong>：</p>
-<ul>
-<li>Debian GNU&#x2F;Linux 12</li>
-<li>VIM - Vi IMproved 9.0</li>
-</ul>
-<p>在 Debian 的 Docker 镜像中安装 <code>apt install vim</code> 后， 在 <code>vim</code> INSERT 模式下无法使用鼠标复制粘贴内容，这是由于 <code>vim</code> 默认的鼠标配置干扰了鼠标操作。<strong>禁用鼠标模式即可解决</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set mouse=</span><br></pre></td></tr></table></figure>
-
-<p>复制粘贴到 <code>vim</code> 后格式可能会错乱，使用 <code>paste</code> 模式解决</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set paste</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Vault Secrets Engine</title>
     <url>/202307121444/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -18080,6 +18036,50 @@ width: 20%;
       </categories>
       <tags>
         <tag>Vault</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>vim</title>
+    <url>/202208181117/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="vim-配置"><a href="#vim-配置" class="headerlink" title="vim 配置"></a>vim 配置</h1><p><code>vim</code> 启动时会读取 <code>/etc/vimrc</code>（全局配置） 和 <code>~/.vimrc</code> （用户配置）</p>
+<p>常用配置如下，使用 <code>&quot;</code> 注释</p>
+<figure class="highlight shell"><figcaption><span>/etc/vimrc</span></figcaption><table><tr><td class="code"><pre><span class="line">&quot; 自动缩进 </span><br><span class="line">set ai</span><br><span class="line">set autoindent</span><br><span class="line"></span><br><span class="line">&quot; 保存历史命令数量</span><br><span class="line">set history=50</span><br><span class="line"></span><br><span class="line">&quot; 右下角显示当前鼠标位置（行列数）</span><br><span class="line">set ruler</span><br><span class="line"></span><br><span class="line">&quot; 鼠标位置所在行显示下划线</span><br><span class="line">set cursorline</span><br><span class="line"></span><br><span class="line">&quot; 开启语法高亮</span><br><span class="line">syntax on</span><br><span class="line"></span><br><span class="line">&quot; 高亮搜索结果</span><br><span class="line">set hlsearch</span><br><span class="line"></span><br><span class="line">&quot; 搜索时不区分大小写</span><br><span class="line">set ignorecase</span><br><span class="line"></span><br><span class="line">&quot; 将 tab 转换为空格</span><br><span class="line">set expandtab</span><br><span class="line"></span><br><span class="line">&quot; tab 转换为4个空格</span><br><span class="line">set tabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 删除时，可以一次删除4个空格</span><br><span class="line">set softtabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 显示行数</span><br><span class="line">set nu</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+
+<h1 id="vim-常见用法"><a href="#vim-常见用法" class="headerlink" title="vim 常见用法"></a>vim 常见用法</h1><h2 id="读写加解密文件"><a href="#读写加解密文件" class="headerlink" title="读写加解密文件"></a>读写加解密文件</h2><h3 id="创建新的加密文件"><a href="#创建新的加密文件" class="headerlink" title="创建新的加密文件"></a>创建新的加密文件</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vim -x mysecfile</span><br></pre></td></tr></table></figure>
+<p>使用 <code>vim</code> 的 <code>-x</code> 选项，将创建一个新的文件，并提示需要设置加密密码，输入 2 次密码后，将进入 <code>vim</code> 界面，编辑完内容，保存后，产生的文件为 <code>vim</code> 加密的文件，使用 <code>file</code> 命令查看，显示如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file mysecfile</span></span><br><span class="line">mysecfile: Vim encrypted file data</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>之后要使用 <code>vim</code> 编辑此文件，都要按照提示输入密码，如果未输入密码或者输入的密码错误，打开的文件内容将显示为乱码，只有输入正确的密码，才能看到正确的文件内容，如果使用其他编辑器，可以直接打开文件，但是内容乱码  </p>
+<h3 id="加密已有文件"><a href="#加密已有文件" class="headerlink" title="加密已有文件"></a>加密已有文件</h3><p>对于已经存在的未加密文件，使用 <code>vim</code> 的 <code>-x</code> 选项时，会要求输入密码，此时不输入密码，或者随便输入，都会打开正确的文件内容(因为文件并未被 <code>vim</code> 加密保护)  </p>
+<p>对于已经存在的未加密文件，若要使用 <code>vim</code> 进行加密，可以在 <code>vim</code> 打开文件后，使用 <code>vim</code> 的 <code>X</code> 命令对文件进行加密。具体操作为： 在 <code>vim</code> 的一般模式下（按 <code>Esc</code> 进入），输入 </p>
+<figure class="highlight vim"><table><tr><td class="code"><pre><span class="line">:<span class="keyword">X</span></span><br></pre></td></tr></table></figure>
+<p>确定后 <code>vim</code> 会提示输入 2 次密码，完成加密，最后保存文件</p>
+<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:wq</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><strong>对于 <code>vim</code> 已经加密的文件，如果使用 <code>vim</code> 打开时输入错误的密码或者未输入密码，打开文件显示乱码，此时如果对文件进行了保存，会导致乱码被保存为文件内容，导致文件内容丢失</strong></p>
+</blockquote>
+<h3 id="文件解密"><a href="#文件解密" class="headerlink" title="文件解密"></a>文件解密</h3><p>对 <code>vim</code> 已加密的文件，需要解密的话，在正确打开文件后，可以通过 <a href="#%E5%8A%A0%E5%AF%86%E5%B7%B2%E6%9C%89%E6%96%87%E4%BB%B6">加密已有文件</a> 中的步骤，将文件密码设置为空即可<br>或者正确打开加密文件后，进入一般模式下，执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:set key=</span><br></pre></td></tr></table></figure>
+
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="vim-INSERT-模式中无法使用鼠标复制粘贴"><a href="#vim-INSERT-模式中无法使用鼠标复制粘贴" class="headerlink" title="vim INSERT 模式中无法使用鼠标复制粘贴"></a>vim INSERT 模式中无法使用鼠标复制粘贴</h2><p><strong>环境信息</strong>：</p>
+<ul>
+<li>Debian GNU&#x2F;Linux 12</li>
+<li>VIM - Vi IMproved 9.0</li>
+</ul>
+<p>在 Debian 的 Docker 镜像中安装 <code>apt install vim</code> 后， 在 <code>vim</code> INSERT 模式下无法使用鼠标复制粘贴内容，这是由于 <code>vim</code> 默认的鼠标配置干扰了鼠标操作。<strong>禁用鼠标模式即可解决</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set mouse=</span><br></pre></td></tr></table></figure>
+
+<p>复制粘贴到 <code>vim</code> 后格式可能会错乱，使用 <code>paste</code> 模式解决</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set paste</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -18410,6 +18410,37 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>网宿云存储 python sdk 常用操作</title>
+    <url>/f63bf868/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li><p>Centos7</p>
+</li>
+<li><p>Python3</p>
+</li>
+<li><p>wcs-python3-sdk (5.0.35)</p>
+</li>
+</ul>
+<p>网宿云 python sdk 安装命令 <code>pip3 install wcs-python3-sdk</code>， 安装后包含 cli 工具 <code>wcscmd</code></p>
+<h1 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd --configure [--config=FILE] </span><br></pre></td></tr></table></figure>
+
+<p><code>--config=FILE  </code>配置文件存储路径，默认<code>~/.wcscfg</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[参考链接](https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk)">[1]</span></a></sup></p>
+<h1 id="wcscmd-常用操作"><a href="#wcscmd-常用操作" class="headerlink" title="wcscmd 常用操作"></a>wcscmd 常用操作</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listbucket </span><br><span class="line">wcscmd stat wcs://BUCKET/OBJECT  \# 查询文件信息</span><br><span class="line">wcscmd deletePrefix wcs://BUCKET PREFIX  \# 根据前缀（文件路径，必须从头开始匹配，不需要最前面的/）删除目录或文件</span><br><span class="line">wcscmd put wcs://BUCKET/file file</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h2 id="列出所有的文件"><a href="#列出所有的文件" class="headerlink" title="列出所有的文件"></a>列出所有的文件</h2><p>以下命令列出所有文件列表，并写入文件中</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listall wcs://BUCKET ./temp/f</span><br></pre></td></tr></table></figure>
+
+<h1 id="python3-sdk-操作"><a href="#python3-sdk-操作" class="headerlink" title="python3 sdk 操作"></a>python3 sdk 操作</h1><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> wcs.commons.config <span class="keyword">import</span> Config</span><br><span class="line"><span class="keyword">from</span> wcs.services.client <span class="keyword">import</span> Client</span><br><span class="line"></span><br><span class="line">config_file = <span class="string">&quot;/root/.wcscfg&quot;</span></span><br><span class="line">cfg = Config(config_file)</span><br><span class="line">cli = Client(cfg)</span><br><span class="line">bucketName = <span class="string">&quot;TestBucket&quot;</span></span><br><span class="line">buckList = cli.bucket_list(bucketName, marker=<span class="string">&#x27;&#x27;</span>)    <span class="comment"># 列出bucket中的文件列表，每次最多获取1000个，第一页 `marker=&#x27;&#x27;`, 请求第一页的响应中marker的值为新的页的marker，可通过新的marker继续发起请求</span></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk">参考链接</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>网宿</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
+        <tag>网宿</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>婚礼用品</title>
     <url>/202403051140/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="伴手礼选择"><a href="#伴手礼选择" class="headerlink" title="伴手礼选择"></a>伴手礼选择</h1><h2 id="伴娘伴手礼"><a href="#伴娘伴手礼" class="headerlink" title="伴娘伴手礼"></a>伴娘伴手礼</h2><table>
@@ -18472,37 +18503,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>生活日常</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>网宿云存储 python sdk 常用操作</title>
-    <url>/f63bf868/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li><p>Centos7</p>
-</li>
-<li><p>Python3</p>
-</li>
-<li><p>wcs-python3-sdk (5.0.35)</p>
-</li>
-</ul>
-<p>网宿云 python sdk 安装命令 <code>pip3 install wcs-python3-sdk</code>， 安装后包含 cli 工具 <code>wcscmd</code></p>
-<h1 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd --configure [--config=FILE] </span><br></pre></td></tr></table></figure>
-
-<p><code>--config=FILE  </code>配置文件存储路径，默认<code>~/.wcscfg</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[参考链接](https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk)">[1]</span></a></sup></p>
-<h1 id="wcscmd-常用操作"><a href="#wcscmd-常用操作" class="headerlink" title="wcscmd 常用操作"></a>wcscmd 常用操作</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listbucket </span><br><span class="line">wcscmd stat wcs://BUCKET/OBJECT  \# 查询文件信息</span><br><span class="line">wcscmd deletePrefix wcs://BUCKET PREFIX  \# 根据前缀（文件路径，必须从头开始匹配，不需要最前面的/）删除目录或文件</span><br><span class="line">wcscmd put wcs://BUCKET/file file</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h2 id="列出所有的文件"><a href="#列出所有的文件" class="headerlink" title="列出所有的文件"></a>列出所有的文件</h2><p>以下命令列出所有文件列表，并写入文件中</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wcscmd listall wcs://BUCKET ./temp/f</span><br></pre></td></tr></table></figure>
-
-<h1 id="python3-sdk-操作"><a href="#python3-sdk-操作" class="headerlink" title="python3 sdk 操作"></a>python3 sdk 操作</h1><figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> wcs.commons.config <span class="keyword">import</span> Config</span><br><span class="line"><span class="keyword">from</span> wcs.services.client <span class="keyword">import</span> Client</span><br><span class="line"></span><br><span class="line">config_file = <span class="string">&quot;/root/.wcscfg&quot;</span></span><br><span class="line">cfg = Config(config_file)</span><br><span class="line">cli = Client(cfg)</span><br><span class="line">bucketName = <span class="string">&quot;TestBucket&quot;</span></span><br><span class="line">buckList = cli.bucket_list(bucketName, marker=<span class="string">&#x27;&#x27;</span>)    <span class="comment"># 列出bucket中的文件列表，每次最多获取1000个，第一页 `marker=&#x27;&#x27;`, 请求第一页的响应中marker的值为新的页的marker，可通过新的marker继续发起请求</span></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/Wangsu-Cloud-Storage/wcs-python-sdk">参考链接</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>网宿</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
-        <tag>网宿</tag>
       </tags>
   </entry>
   <entry>
