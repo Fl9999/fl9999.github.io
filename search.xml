@@ -1146,6 +1146,163 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Ansible playbook 使用介绍</title>
+    <url>/202309011341/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>ansible 2.9.27</li>
+</ul>
+<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
+<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
+<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
+<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
+<span id="more"></span>
+<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
+<ul>
+<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
+<li><code>remote_user</code> 用户名。</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
+
+<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
+
+<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
+<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
+
+<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
+
+<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
+
+<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
+<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
+<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
+<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
+<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
+
+<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
+<ul>
+<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
+">[1]</span></a></sup></li>
+<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
+</ul>
+<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
+">[1]</span></a></sup></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>action </code></td>
+<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain</code></td>
+<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>table </code></td>
+<td>This option specifies the packet matching table which the command should operate on</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain_management </code></td>
+<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>comment </code></td>
+<td>规则的注释说明</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ctstate </code><br/><code>list / elements=string</code></td>
+<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>source </code></td>
+<td>Source specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination</code> <br/><code>string</code></td>
+<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_port </code><br/><code>string</code></td>
+<td>Destination port or port range specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
+<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dst_range </code><br/><code>string</code></td>
+<td>Specifies the destination IP range to match in the iprange module.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>source_port </code></td>
+<td>Source port or port range specification.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>flush</code><br/><code>boolean</code></td>
+<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>jump </code></td>
+<td>This specifies the target of the rule</td>
+<td></td>
+</tr>
+<tr>
+<td><code>protocol </code></td>
+<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>rule_num </code></td>
+<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ansible</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Ansible playbooks 使用介绍</title>
     <url>/202405231459/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1337,233 +1494,6 @@ width: 20%;
 </tbody></table>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_intro.html#ansible-playbooks">Ansible playbooks</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#where-to-set-variables">Where to set variables</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_vars_facts.html">Discovering variables: facts and magic variables</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#registering-variables">Registering variables</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>ansible</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Ansible playbook 使用介绍</title>
-    <url>/202309011341/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>ansible 2.9.27</li>
-</ul>
-<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
-<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
-<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
-<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
-<span id="more"></span>
-<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
-<ul>
-<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
-<li><code>remote_user</code> 用户名。</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
-
-<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
-
-<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
-<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
-
-<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
-
-<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
-
-<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
-<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
-<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
-<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
-<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
-
-
-
-
-
-<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
-
-<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
-<ul>
-<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
-">[1]</span></a></sup></li>
-<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
-</ul>
-<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)
-">[1]</span></a></sup></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>action </code></td>
-<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain</code></td>
-<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>table </code></td>
-<td>This option specifies the packet matching table which the command should operate on</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain_management </code></td>
-<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>comment </code></td>
-<td>规则的注释说明</td>
-<td></td>
-</tr>
-<tr>
-<td><code>ctstate </code><br/><code>list / elements=string</code></td>
-<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>source </code></td>
-<td>Source specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination</code> <br/><code>string</code></td>
-<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_port </code><br/><code>string</code></td>
-<td>Destination port or port range specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
-<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
-<td></td>
-</tr>
-<tr>
-<td><code>dst_range </code><br/><code>string</code></td>
-<td>Specifies the destination IP range to match in the iprange module.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>source_port </code></td>
-<td>Source port or port range specification.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>flush</code><br/><code>boolean</code></td>
-<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>jump </code></td>
-<td>This specifies the target of the rule</td>
-<td></td>
-</tr>
-<tr>
-<td><code>protocol </code></td>
-<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>rule_num </code></td>
-<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>ansible</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Ansible templates 使用介绍</title>
-    <url>/202405241042/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>ansible-core 2.16</li>
-<li>Docker image python:3.12.3</li>
-</ul>
-<a href="/202308311109/" title="Ansible 安装部署参考">Ansible 安装部署参考</a>
-
-<a href="/202309011341/" title="Ansible playbook 使用介绍">Ansible playbook 使用介绍</a>
-
-<p>Ansible 使用 Jinja2 模板语言对变量或者 Facts 进行模板化。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Templating (Jinja2)](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_templating.html#templating-jinja2)">[1]</span></a></sup></p>
-<h1 id="模板数据处理"><a href="#模板数据处理" class="headerlink" title="模板数据处理"></a>模板数据处理</h1><h2 id="Filters"><a href="#Filters" class="headerlink" title="Filters"></a>Filters</h2><p>使用 <code>Filters</code> 可以进行数据转换（如 <code>JSON</code> –&gt; <code>YAML</code>）、URL 分割等操作。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Using filters to manipulate data](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#using-filters-to-manipulate-data)">[2]</span></a></sup></p>
-<h3 id="为变量提供默认值"><a href="#为变量提供默认值" class="headerlink" title="为变量提供默认值"></a>为变量提供默认值</h3><p>在模板中使用的变量未定义的情况下，可能会导致 Ansible 处理失败，为了以更优雅的方式处理此类问题，可以在模板中为变量提供 <strong>默认值</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | default(5) &#125;&#125;</span><br></pre></td></tr></table></figure>
-<p>也可以在变量计算值为空或者 <code>false</code> 时使用默认值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; lookup(&#x27;env&#x27;, &#x27;MY_USER&#x27;) | default(&#x27;admin&#x27;, true) &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<h3 id="配置变量为可选变量"><a href="#配置变量为可选变量" class="headerlink" title="配置变量为可选变量"></a>配置变量为可选变量</h3><p>默认情况下，Ansible Template 中所有的变量都必须有值，否则会抛出异常。假如需要在模板中的部分变量没有值或未定义的情况下也可以正常部署，可以将其配置为 <strong>可选(optional)</strong></p>
-<p>要将变量配置为 **可选(optional)**，可以将其 <strong>默认值(default value)</strong> 设置为特殊变量 <strong><code>omit</code></strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Touch files with an optional mode</span><br><span class="line">  ansible.builtin.file:</span><br><span class="line">    dest: &quot;&#123;&#123; item.path &#125;&#125;&quot;</span><br><span class="line">    state: touch</span><br><span class="line">    mode: &quot;&#123;&#123; item.mode | default(omit) &#125;&#125;&quot;</span><br><span class="line">  loop:</span><br><span class="line">    - path: /tmp/foo</span><br><span class="line">    - path: /tmp/bar</span><br><span class="line">    - path: /tmp/baz</span><br><span class="line">      mode: &quot;0444&quot;</span><br></pre></td></tr></table></figure>
-
-<h3 id="变量类型"><a href="#变量类型" class="headerlink" title="变量类型"></a>变量类型</h3><p>如果需要对变量类型进行转换，可以参考以下方法 </p>
-<h4 id="获取变量类型"><a href="#获取变量类型" class="headerlink" title="获取变量类型"></a>获取变量类型</h4><p><strong>2.3 以上版本中</strong>，可以使用 <code>type_debug</code> 显示变量类型</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; myvar | type_debug &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<h4 id="字典转换为列表"><a href="#字典转换为列表" class="headerlink" title="字典转换为列表"></a>字典转换为列表</h4><p>New in version 2.6.</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; dict | dict2items &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>原始字典数据：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tags:</span><br><span class="line">  Application: payment</span><br><span class="line">  Environment: dev</span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>&#123;&#123; dict | dict2items &#125;&#125;</code> 转换后的列表数据：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- key: Application</span><br><span class="line">  value: payment</span><br><span class="line">- key: Environment</span><br><span class="line">  value: dev</span><br></pre></td></tr></table></figure>
-<p>转换后的列表默认以关键字 <code>key</code> 指示之前的字典中的 <code>key</code> 值，以关键字 <code>value</code> 指示之前的字典中的 <code>value</code> 值。<em><strong>如果想要自定义 key 名称，<code>dict2items</code> 接受关键字参数 <code>key_name</code> 和 <code>value_name</code></strong></em></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Dictionary data (before applying the ansible.builtin.dict2items filter):</span></span><br><span class="line">files:</span><br><span class="line">  users: /etc/passwd</span><br><span class="line">  groups: /etc/group</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">applying the ansible.builtin.dict2items filter</span></span><br><span class="line">&#123;&#123; files | dict2items(key_name=&#x27;file&#x27;, value_name=&#x27;path&#x27;) &#125;&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">List data (after applying the ansible.builtin.dict2items filter):</span></span><br><span class="line">- file: users</span><br><span class="line">  path: /etc/passwd</span><br><span class="line">- file: groups</span><br><span class="line">  path: /etc/group</span><br></pre></td></tr></table></figure>
-
-<h4 id="列表转换为字典"><a href="#列表转换为字典" class="headerlink" title="列表转换为字典"></a>列表转换为字典</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; tags | items2dict &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>List data (before applying the <code>ansible.builtin.items2dict</code> filter):</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tags:</span><br><span class="line">  - key: Application</span><br><span class="line">    value: payment</span><br><span class="line">  - key: Environment</span><br><span class="line">    value: dev</span><br></pre></td></tr></table></figure>
-
-<p>Dictionary data (after applying the <code>ansible.builtin.items2dict</code> filter):</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Application: payment</span><br><span class="line">Environment: dev</span><br></pre></td></tr></table></figure>
-
-<p>假如 List Data 中的关键字不是 <code>key</code> 和 <code>value</code>，此时必须使用参数 <code>key_name</code> 和 <code>value_name</code> 指定</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; fruits | items2dict(key_name=&#x27;fruit&#x27;, value_name=&#x27;color&#x27;) &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<h4 id="强制类型转换"><a href="#强制类型转换" class="headerlink" title="强制类型转换"></a>强制类型转换</h4><p>使用以下语法强制转换变量数据类型 <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Forcing the data type](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#forcing-the-data-type)">[5]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">some_string_value | bool</span><br><span class="line"></span><br><span class="line">ansible_facts[&#x27;os_family&#x27;] == &quot;RedHat&quot; and ansible_facts[&#x27;lsb&#x27;][&#x27;major_release&#x27;] | int </span><br></pre></td></tr></table></figure>
-
-<h4 id="YAML-和-JSON-数据转换"><a href="#YAML-和-JSON-数据转换" class="headerlink" title="YAML 和 JSON 数据转换"></a>YAML 和 JSON 数据转换</h4><p>可以使用以下语法将数据转换为 JSON 或者 YAML 格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | to_json &#125;&#125;</span><br><span class="line">&#123;&#123; some_variable | to_yaml &#125;&#125;</span><br></pre></td></tr></table></figure>
-<p>可以使用以下语法将数据转换为方便人类阅读 JSON 或者 YAML 格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | to_nice_json &#125;&#125;</span><br><span class="line">&#123;&#123; some_variable | to_nice_yaml &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>制定行首缩进程度</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | to_nice_json(indent=2) &#125;&#125;</span><br><span class="line">&#123;&#123; some_variable | to_nice_yaml(indent=8) &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_templating.html#templating-jinja2">Templating (Jinja2)</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_templating.html#templating-jinja2">Templating (Jinja2)</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#using-filters-to-manipulate-data">Using filters to manipulate data</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#making-variables-optional">Making variables optional</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#managing-data-types">Managing data types</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#forcing-the-data-type">Forcing the data type</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#formatting-data-yaml-and-json">Formatting data: YAML and JSON</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -2058,6 +1988,76 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a><br><a href="https://docs.ansible.com/ansible/latest/collections/index_module.html">Index of all Modules</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/reference_appendices/release_and_maintenance.html#ansible-core-control-node-python-support">ansible-core control node Python support</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Parallelism and Shell Commands</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html#how-to-build-your-inventory">How to build your inventory</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html#managing-inventory-load-order">Managing inventory load order</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html#how-variables-are-merged">How variables are merged</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html#connecting-to-hosts-behavioral-inventory-parameters">Connecting to hosts: behavioral inventory parameters</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/inventory_guide/intro_inventory.html#organizing-host-and-group-variables">Organizing host and group variables</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/inventory_guide/intro_patterns.html#common-patterns">Common patterns</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/inventory_guide/connection_details.html#setting-a-remote-user">Setting a remote user</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html#ansible-builtin-lineinfile-module-manage-lines-in-text-files">ansible.builtin.lineinfile module – Manage lines in text files</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/service_module.html#ansible-collections-ansible-builtin-service-module">ansible.builtin.service</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ansible</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Ansible templates 使用介绍</title>
+    <url>/202405241042/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>ansible-core 2.16</li>
+<li>Docker image python:3.12.3</li>
+</ul>
+<a href="/202308311109/" title="Ansible 安装部署参考">Ansible 安装部署参考</a>
+
+<a href="/202309011341/" title="Ansible playbook 使用介绍">Ansible playbook 使用介绍</a>
+
+<p>Ansible 使用 Jinja2 模板语言对变量或者 Facts 进行模板化。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Templating (Jinja2)](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_templating.html#templating-jinja2)">[1]</span></a></sup></p>
+<h1 id="模板数据处理"><a href="#模板数据处理" class="headerlink" title="模板数据处理"></a>模板数据处理</h1><h2 id="Filters"><a href="#Filters" class="headerlink" title="Filters"></a>Filters</h2><p>使用 <code>Filters</code> 可以进行数据转换（如 <code>JSON</code> –&gt; <code>YAML</code>）、URL 分割等操作。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Using filters to manipulate data](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#using-filters-to-manipulate-data)">[2]</span></a></sup></p>
+<h3 id="为变量提供默认值"><a href="#为变量提供默认值" class="headerlink" title="为变量提供默认值"></a>为变量提供默认值</h3><p>在模板中使用的变量未定义的情况下，可能会导致 Ansible 处理失败，为了以更优雅的方式处理此类问题，可以在模板中为变量提供 <strong>默认值</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | default(5) &#125;&#125;</span><br></pre></td></tr></table></figure>
+<p>也可以在变量计算值为空或者 <code>false</code> 时使用默认值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; lookup(&#x27;env&#x27;, &#x27;MY_USER&#x27;) | default(&#x27;admin&#x27;, true) &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="配置变量为可选变量"><a href="#配置变量为可选变量" class="headerlink" title="配置变量为可选变量"></a>配置变量为可选变量</h3><p>默认情况下，Ansible Template 中所有的变量都必须有值，否则会抛出异常。假如需要在模板中的部分变量没有值或未定义的情况下也可以正常部署，可以将其配置为 <strong>可选(optional)</strong></p>
+<p>要将变量配置为 **可选(optional)**，可以将其 <strong>默认值(default value)</strong> 设置为特殊变量 <strong><code>omit</code></strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Touch files with an optional mode</span><br><span class="line">  ansible.builtin.file:</span><br><span class="line">    dest: &quot;&#123;&#123; item.path &#125;&#125;&quot;</span><br><span class="line">    state: touch</span><br><span class="line">    mode: &quot;&#123;&#123; item.mode | default(omit) &#125;&#125;&quot;</span><br><span class="line">  loop:</span><br><span class="line">    - path: /tmp/foo</span><br><span class="line">    - path: /tmp/bar</span><br><span class="line">    - path: /tmp/baz</span><br><span class="line">      mode: &quot;0444&quot;</span><br></pre></td></tr></table></figure>
+
+<h3 id="变量类型"><a href="#变量类型" class="headerlink" title="变量类型"></a>变量类型</h3><p>如果需要对变量类型进行转换，可以参考以下方法 </p>
+<h4 id="获取变量类型"><a href="#获取变量类型" class="headerlink" title="获取变量类型"></a>获取变量类型</h4><p><strong>2.3 以上版本中</strong>，可以使用 <code>type_debug</code> 显示变量类型</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; myvar | type_debug &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="字典转换为列表"><a href="#字典转换为列表" class="headerlink" title="字典转换为列表"></a>字典转换为列表</h4><p>New in version 2.6.</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; dict | dict2items &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>原始字典数据：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tags:</span><br><span class="line">  Application: payment</span><br><span class="line">  Environment: dev</span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>&#123;&#123; dict | dict2items &#125;&#125;</code> 转换后的列表数据：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- key: Application</span><br><span class="line">  value: payment</span><br><span class="line">- key: Environment</span><br><span class="line">  value: dev</span><br></pre></td></tr></table></figure>
+<p>转换后的列表默认以关键字 <code>key</code> 指示之前的字典中的 <code>key</code> 值，以关键字 <code>value</code> 指示之前的字典中的 <code>value</code> 值。<em><strong>如果想要自定义 key 名称，<code>dict2items</code> 接受关键字参数 <code>key_name</code> 和 <code>value_name</code></strong></em></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Dictionary data (before applying the ansible.builtin.dict2items filter):</span></span><br><span class="line">files:</span><br><span class="line">  users: /etc/passwd</span><br><span class="line">  groups: /etc/group</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">applying the ansible.builtin.dict2items filter</span></span><br><span class="line">&#123;&#123; files | dict2items(key_name=&#x27;file&#x27;, value_name=&#x27;path&#x27;) &#125;&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">List data (after applying the ansible.builtin.dict2items filter):</span></span><br><span class="line">- file: users</span><br><span class="line">  path: /etc/passwd</span><br><span class="line">- file: groups</span><br><span class="line">  path: /etc/group</span><br></pre></td></tr></table></figure>
+
+<h4 id="列表转换为字典"><a href="#列表转换为字典" class="headerlink" title="列表转换为字典"></a>列表转换为字典</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; tags | items2dict &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>List data (before applying the <code>ansible.builtin.items2dict</code> filter):</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tags:</span><br><span class="line">  - key: Application</span><br><span class="line">    value: payment</span><br><span class="line">  - key: Environment</span><br><span class="line">    value: dev</span><br></pre></td></tr></table></figure>
+
+<p>Dictionary data (after applying the <code>ansible.builtin.items2dict</code> filter):</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Application: payment</span><br><span class="line">Environment: dev</span><br></pre></td></tr></table></figure>
+
+<p>假如 List Data 中的关键字不是 <code>key</code> 和 <code>value</code>，此时必须使用参数 <code>key_name</code> 和 <code>value_name</code> 指定</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; fruits | items2dict(key_name=&#x27;fruit&#x27;, value_name=&#x27;color&#x27;) &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<h4 id="强制类型转换"><a href="#强制类型转换" class="headerlink" title="强制类型转换"></a>强制类型转换</h4><p>使用以下语法强制转换变量数据类型 <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Forcing the data type](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#forcing-the-data-type)">[5]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">some_string_value | bool</span><br><span class="line"></span><br><span class="line">ansible_facts[&#x27;os_family&#x27;] == &quot;RedHat&quot; and ansible_facts[&#x27;lsb&#x27;][&#x27;major_release&#x27;] | int </span><br></pre></td></tr></table></figure>
+
+<h4 id="YAML-和-JSON-数据转换"><a href="#YAML-和-JSON-数据转换" class="headerlink" title="YAML 和 JSON 数据转换"></a>YAML 和 JSON 数据转换</h4><p>可以使用以下语法将数据转换为 JSON 或者 YAML 格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | to_json &#125;&#125;</span><br><span class="line">&#123;&#123; some_variable | to_yaml &#125;&#125;</span><br></pre></td></tr></table></figure>
+<p>可以使用以下语法将数据转换为方便人类阅读 JSON 或者 YAML 格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | to_nice_json &#125;&#125;</span><br><span class="line">&#123;&#123; some_variable | to_nice_yaml &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>制定行首缩进程度</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">&#123;&#123; some_variable | to_nice_json(indent=2) &#125;&#125;</span><br><span class="line">&#123;&#123; some_variable | to_nice_yaml(indent=8) &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_templating.html#templating-jinja2">Templating (Jinja2)</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_templating.html#templating-jinja2">Templating (Jinja2)</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#using-filters-to-manipulate-data">Using filters to manipulate data</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#making-variables-optional">Making variables optional</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#managing-data-types">Managing data types</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#forcing-the-data-type">Forcing the data type</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_filters.html#formatting-data-yaml-and-json">Formatting data: YAML and JSON</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -4192,94 +4192,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>docker compose 命令</title>
-    <url>/202208311004/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于 <code>Compose</code> 来说，大部分命令的对象既可以是项目本身，也可以指定为项目中的服务或者容器。如果没有特别的说明，命令对象将是项目，这意味着项目中所有的服务都会受到命令影响。  </p>
-<p>执行 <code>docker compose [COMMAND] --help</code>  可以查看具体某个命令的使用格式。  </p>
-<p><code>docker compose</code> 命令的基本的使用格式是  </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose [-f=&lt;arg&gt;...] [options] [COMMAND] [ARGS...]</span><br></pre></td></tr></table></figure>
-<p>常用选项  </p>
-<ul>
-<li><code>-f, --file FILE</code>  指定使用的 Compose 模板文件，默认为 <code>docker-compose.yml</code>，可以多次指定。  </li>
-<li><code>-p, --project-name NAME</code> 指定项目名称，默认将使用所在目录名称作为项目名。</li>
-</ul>
-<span id="more"></span>
-
-<h3 id="build"><a href="#build" class="headerlink" title="build"></a>build</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose build [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>构建（重新构建）项目中的服务容器。  </p>
-<p>服务容器一旦构建后，将会带上一个标记名，例如对于 web 项目中的一个 db 容器，可能是 web_db。<br>可以随时在项目目录下运行 <code>docker compose build</code> 来重新构建服务。<br>常用选项包括：</p>
-<ul>
-<li><code>--no-cache</code>  构建镜像过程中不使用 cache（这将加长构建过程）。</li>
-<li><code>--pull</code>  始终尝试通过 <code>pull</code> 来获取更新版本的镜像。</li>
-<li><code>-q, --quiet</code>  不输出任何内容到 STDOUT</li>
-</ul>
-<h3 id="config"><a href="#config" class="headerlink" title="config"></a>config</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose config</span><br></pre></td></tr></table></figure>
-<p>验证 Compose 文件格式是否正确，若正确则显示配置，若格式错误显示错误原因。</p>
-<h3 id="up"><a href="#up" class="headerlink" title="up"></a>up</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose up [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>该命令十分强大，它将尝试自动完成包括构建镜像，（重新）创建服务，启动服务，并关联服务相关容器的一系列操作。  </p>
-<p>链接的服务都将会被自动启动，除非已经处于运行状态。</p>
-<p>可以说，大部分时候都可以直接通过该命令来启动一个项目。</p>
-<p>默认情况，<code>docker compose up</code> 启动的容器都在前台，控制台将会同时打印所有容器的输出信息，可以很方便进行调试。</p>
-<p>当通过 <code>Ctrl-C</code> 停止命令时，所有容器将会停止。</p>
-<p>如果使用 <code>docker compose up -d</code>，将会在后台启动并运行所有的容器。一般推荐生产环境下使用该选项。</p>
-<p>默认情况，如果服务容器已经存在，<code>docker compose up</code> 将会尝试停止容器，然后重新创建（保持使用 volumes-from 挂载的卷），以保证新启动的服务匹配 <code>docker-compose.yml</code> 文件的最新内容。如果用户不希望容器被停止并重新创建，可以使用 <code>docker compose up --no-recreate</code>。这样将只会启动处于停止状态的容器，而忽略已经运行的服务。如果用户只想重新部署某个服务，可以使用 <code>docker compose up --no-deps -d &lt;SERVICE_NAME&gt;</code> 来重新创建服务并后台停止旧服务，启动新服务，并不会影响到其所依赖的服务。</p>
-<p>常用选项说明：  </p>
-<ul>
-<li><code>-d, --detach</code> 在后台运行服务容器</li>
-<li><code>--no-color</code> 不使用颜色来区分不同的服务的控制台输出</li>
-<li><code>--no-deps</code> 不启动服务所链接的容器。</li>
-<li><code>--force-recreate</code> 强制重新创建容器，不能与 <code>--no-recreate</code> 同时使用</li>
-<li><code>--no-recreate</code> 如果容器已经存在了，则不重新创建，不能与 <code>--force-recreate</code> 同时使用。</li>
-<li><code>--no-build</code> 不自动构建缺失的服务镜像</li>
-<li><code>-t, --timeout TIMEOUT</code> 停止容器时候的超时（默认为 10 秒）时间。</li>
-<li><code>--no-start</code> 创建服务但是不启动服务</li>
-<li><code>--build</code>  启动容器之前，重新构建容器</li>
-</ul>
-<h3 id="down"><a href="#down" class="headerlink" title="down"></a>down</h3><p>此命令将会停止 <code>up</code> 命令所启动的容器，并移除网络</p>
-<h3 id="start"><a href="#start" class="headerlink" title="start"></a>start</h3><p>启动已经存在的服务容器。</p>
-<h3 id="pause"><a href="#pause" class="headerlink" title="pause"></a>pause</h3><p>暂停一个服务容器。</p>
-<h3 id="unpause"><a href="#unpause" class="headerlink" title="unpause"></a>unpause</h3><p>恢复处于暂停状态中的服务。</p>
-<h3 id="restart"><a href="#restart" class="headerlink" title="restart"></a>restart</h3><p>重启项目中的服务。</p>
-<h3 id="stop"><a href="#stop" class="headerlink" title="stop"></a>stop</h3><p>停止已经处于运行状态的容器，但不删除它。通过 <code>docker compose start</code> 可以再次启动这些容器。</p>
-<h3 id="ps"><a href="#ps" class="headerlink" title="ps"></a>ps</h3><p>列出项目中目前的所有容器。</p>
-<h3 id="port"><a href="#port" class="headerlink" title="port"></a>port</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose port [options] SERVICE PRIVATE_PORT</span><br></pre></td></tr></table></figure>
-<p>打印某个容器端口所映射的公共端口  </p>
-<p>常用选项  </p>
-<ul>
-<li><code>--protocol=proto</code> 指定端口协议，tcp（默认值）或者 udp。</li>
-<li><code>--index=index</code> 如果同一服务存在多个容器，指定命令对象容器的序号（默认为 1）</li>
-</ul>
-<h3 id="exec"><a href="#exec" class="headerlink" title="exec"></a>exec</h3><p>进入指定的容器。</p>
-<h3 id="images"><a href="#images" class="headerlink" title="images"></a>images</h3><p>列出 Compose 文件中包含的镜像。</p>
-<h3 id="kill"><a href="#kill" class="headerlink" title="kill"></a>kill</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>通过发送 SIGKILL 信号来强制停止服务容器。</p>
-<p>支持通过 <code>-s</code> 参数来指定发送的信号，例如通过如下指令发送 SIGINT 信号。</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill -s SIGINT</span><br></pre></td></tr></table></figure>
-
-<h3 id="logs"><a href="#logs" class="headerlink" title="logs"></a>logs</h3><p>格式为 </p>
-<pre><code>docker compose logs [options] [SERVICE...]
-</code></pre>
-<p>查看服务容器的输出。默认情况下，<code>docker compose</code> 将对不同的服务输出使用不同的颜色来区分。可以通过 <code>--no-color</code> 来关闭颜色。<br>该命令在调试问题的时候十分有用。</p>
-<h3 id="top"><a href="#top" class="headerlink" title="top"></a>top</h3><p>查看各个服务容器内运行的进程。</p>
-<h3 id="rm"><a href="#rm" class="headerlink" title="rm"></a>rm</h3><p>删除所有（停止状态的）服务容器。推荐先执行 <code>docker compose stop</code> 命令来停止容器。<br>选项：</p>
-<ul>
-<li><code>-f, --force</code> 强制直接删除，包括非停止状态的容器。一般尽量不要使用该选项。</li>
-<li><code>-v</code> 删除容器所挂载的数据卷。</li>
-</ul>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://yeasy.gitbook.io/docker_practice/compose/commands">docker compose 命令说明</a></p>
-]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>docker compose 简介</title>
     <url>/202208301738/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>Compose</code> 项目是 <code>Docker</code> 官方的开源项目，负责实现对 <code>Docker 容器集群</code> 的快速编排。</p>
@@ -4477,6 +4389,94 @@ width: 20%;
 <p>执行 <code>docker compose up</code> 则会启动一个 <code>mongo:3.6</code> 镜像的容器。</p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.docker.com/compose/">Compose V2 beta</a><br><a href="https://yeasy.gitbook.io/docker_practice/compose/v2">Docker 从入门到实践</a><br><a href="https://docs.docker.com/compose/compose-file/05-services/">Docker Compose 指令官方文档</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/intro/history/">History and development of Docker Compose</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/gettingstarted/#step-7-split-up-your-services">Split up your services</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/environment-variables/set-environment-variables/">Ways to set environment variables with Compose</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/compose-file/05-services/#depends_on">depends_on</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/compose-file/05-services/#command">command</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>docker compose 命令</title>
+    <url>/202208311004/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于 <code>Compose</code> 来说，大部分命令的对象既可以是项目本身，也可以指定为项目中的服务或者容器。如果没有特别的说明，命令对象将是项目，这意味着项目中所有的服务都会受到命令影响。  </p>
+<p>执行 <code>docker compose [COMMAND] --help</code>  可以查看具体某个命令的使用格式。  </p>
+<p><code>docker compose</code> 命令的基本的使用格式是  </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose [-f=&lt;arg&gt;...] [options] [COMMAND] [ARGS...]</span><br></pre></td></tr></table></figure>
+<p>常用选项  </p>
+<ul>
+<li><code>-f, --file FILE</code>  指定使用的 Compose 模板文件，默认为 <code>docker-compose.yml</code>，可以多次指定。  </li>
+<li><code>-p, --project-name NAME</code> 指定项目名称，默认将使用所在目录名称作为项目名。</li>
+</ul>
+<span id="more"></span>
+
+<h3 id="build"><a href="#build" class="headerlink" title="build"></a>build</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose build [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>构建（重新构建）项目中的服务容器。  </p>
+<p>服务容器一旦构建后，将会带上一个标记名，例如对于 web 项目中的一个 db 容器，可能是 web_db。<br>可以随时在项目目录下运行 <code>docker compose build</code> 来重新构建服务。<br>常用选项包括：</p>
+<ul>
+<li><code>--no-cache</code>  构建镜像过程中不使用 cache（这将加长构建过程）。</li>
+<li><code>--pull</code>  始终尝试通过 <code>pull</code> 来获取更新版本的镜像。</li>
+<li><code>-q, --quiet</code>  不输出任何内容到 STDOUT</li>
+</ul>
+<h3 id="config"><a href="#config" class="headerlink" title="config"></a>config</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose config</span><br></pre></td></tr></table></figure>
+<p>验证 Compose 文件格式是否正确，若正确则显示配置，若格式错误显示错误原因。</p>
+<h3 id="up"><a href="#up" class="headerlink" title="up"></a>up</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose up [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>该命令十分强大，它将尝试自动完成包括构建镜像，（重新）创建服务，启动服务，并关联服务相关容器的一系列操作。  </p>
+<p>链接的服务都将会被自动启动，除非已经处于运行状态。</p>
+<p>可以说，大部分时候都可以直接通过该命令来启动一个项目。</p>
+<p>默认情况，<code>docker compose up</code> 启动的容器都在前台，控制台将会同时打印所有容器的输出信息，可以很方便进行调试。</p>
+<p>当通过 <code>Ctrl-C</code> 停止命令时，所有容器将会停止。</p>
+<p>如果使用 <code>docker compose up -d</code>，将会在后台启动并运行所有的容器。一般推荐生产环境下使用该选项。</p>
+<p>默认情况，如果服务容器已经存在，<code>docker compose up</code> 将会尝试停止容器，然后重新创建（保持使用 volumes-from 挂载的卷），以保证新启动的服务匹配 <code>docker-compose.yml</code> 文件的最新内容。如果用户不希望容器被停止并重新创建，可以使用 <code>docker compose up --no-recreate</code>。这样将只会启动处于停止状态的容器，而忽略已经运行的服务。如果用户只想重新部署某个服务，可以使用 <code>docker compose up --no-deps -d &lt;SERVICE_NAME&gt;</code> 来重新创建服务并后台停止旧服务，启动新服务，并不会影响到其所依赖的服务。</p>
+<p>常用选项说明：  </p>
+<ul>
+<li><code>-d, --detach</code> 在后台运行服务容器</li>
+<li><code>--no-color</code> 不使用颜色来区分不同的服务的控制台输出</li>
+<li><code>--no-deps</code> 不启动服务所链接的容器。</li>
+<li><code>--force-recreate</code> 强制重新创建容器，不能与 <code>--no-recreate</code> 同时使用</li>
+<li><code>--no-recreate</code> 如果容器已经存在了，则不重新创建，不能与 <code>--force-recreate</code> 同时使用。</li>
+<li><code>--no-build</code> 不自动构建缺失的服务镜像</li>
+<li><code>-t, --timeout TIMEOUT</code> 停止容器时候的超时（默认为 10 秒）时间。</li>
+<li><code>--no-start</code> 创建服务但是不启动服务</li>
+<li><code>--build</code>  启动容器之前，重新构建容器</li>
+</ul>
+<h3 id="down"><a href="#down" class="headerlink" title="down"></a>down</h3><p>此命令将会停止 <code>up</code> 命令所启动的容器，并移除网络</p>
+<h3 id="start"><a href="#start" class="headerlink" title="start"></a>start</h3><p>启动已经存在的服务容器。</p>
+<h3 id="pause"><a href="#pause" class="headerlink" title="pause"></a>pause</h3><p>暂停一个服务容器。</p>
+<h3 id="unpause"><a href="#unpause" class="headerlink" title="unpause"></a>unpause</h3><p>恢复处于暂停状态中的服务。</p>
+<h3 id="restart"><a href="#restart" class="headerlink" title="restart"></a>restart</h3><p>重启项目中的服务。</p>
+<h3 id="stop"><a href="#stop" class="headerlink" title="stop"></a>stop</h3><p>停止已经处于运行状态的容器，但不删除它。通过 <code>docker compose start</code> 可以再次启动这些容器。</p>
+<h3 id="ps"><a href="#ps" class="headerlink" title="ps"></a>ps</h3><p>列出项目中目前的所有容器。</p>
+<h3 id="port"><a href="#port" class="headerlink" title="port"></a>port</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose port [options] SERVICE PRIVATE_PORT</span><br></pre></td></tr></table></figure>
+<p>打印某个容器端口所映射的公共端口  </p>
+<p>常用选项  </p>
+<ul>
+<li><code>--protocol=proto</code> 指定端口协议，tcp（默认值）或者 udp。</li>
+<li><code>--index=index</code> 如果同一服务存在多个容器，指定命令对象容器的序号（默认为 1）</li>
+</ul>
+<h3 id="exec"><a href="#exec" class="headerlink" title="exec"></a>exec</h3><p>进入指定的容器。</p>
+<h3 id="images"><a href="#images" class="headerlink" title="images"></a>images</h3><p>列出 Compose 文件中包含的镜像。</p>
+<h3 id="kill"><a href="#kill" class="headerlink" title="kill"></a>kill</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>通过发送 SIGKILL 信号来强制停止服务容器。</p>
+<p>支持通过 <code>-s</code> 参数来指定发送的信号，例如通过如下指令发送 SIGINT 信号。</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill -s SIGINT</span><br></pre></td></tr></table></figure>
+
+<h3 id="logs"><a href="#logs" class="headerlink" title="logs"></a>logs</h3><p>格式为 </p>
+<pre><code>docker compose logs [options] [SERVICE...]
+</code></pre>
+<p>查看服务容器的输出。默认情况下，<code>docker compose</code> 将对不同的服务输出使用不同的颜色来区分。可以通过 <code>--no-color</code> 来关闭颜色。<br>该命令在调试问题的时候十分有用。</p>
+<h3 id="top"><a href="#top" class="headerlink" title="top"></a>top</h3><p>查看各个服务容器内运行的进程。</p>
+<h3 id="rm"><a href="#rm" class="headerlink" title="rm"></a>rm</h3><p>删除所有（停止状态的）服务容器。推荐先执行 <code>docker compose stop</code> 命令来停止容器。<br>选项：</p>
+<ul>
+<li><code>-f, --force</code> 强制直接删除，包括非停止状态的容器。一般尽量不要使用该选项。</li>
+<li><code>-v</code> 删除容器所挂载的数据卷。</li>
+</ul>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://yeasy.gitbook.io/docker_practice/compose/commands">docker compose 命令说明</a></p>
+]]></content>
       <categories>
         <category>Docker</category>
       </categories>
@@ -8740,6 +8740,95 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络数据包抓包分析</title>
+    <url>/202210250956/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes 1.21</li>
+<li>flannel 0.20</li>
+</ul>
+<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
+<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
+<table>
+<thead>
+<tr>
+<th>节点主机名</th>
+<th>节点角色</th>
+<th>节点 IP</th>
+<th>节点上测试 POD IP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>master</td>
+<td>master</td>
+<td>eth0： 10.150.0.21</td>
+<td>10.244.0.2</td>
+</tr>
+<tr>
+<td>worker1</td>
+<td>worker</td>
+<td>eth0： 10.150.0.19</td>
+<td>10.244.1.38</td>
+</tr>
+<tr>
+<td>worker2</td>
+<td>worker</td>
+<td>eth0： 10.150.0.20</td>
+<td>10.244.2.27</td>
+</tr>
+</tbody></table>
+<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
+<p>Flannel 支持三种不同后端实现，分别是：</p>
+<ul>
+<li>UDP</li>
+<li>VXLAN</li>
+<li>host-gw</li>
+</ul>
+<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
+<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
+<span id="more"></span>
+
+<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
+<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
+<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
+<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
+<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
+<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
+<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
+<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
+<p>因此 Flannel 的 VXLAN 模式有两种：</p>
+<ul>
+<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
+<li>Directrouting：直接路由型</li>
+</ul>
+<p>配置 Directrouting 模式</p>
+<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
+<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>tcpdump</tag>
+        <tag>Flannel</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 网络</title>
     <url>/202212020941/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8885,95 +8974,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 网络数据包抓包分析</title>
-    <url>/202210250956/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes 1.21</li>
-<li>flannel 0.20</li>
-</ul>
-<p>为观察 Kubernetes 集群中跨主机 POD 之间的网络通信数据流，本文通过 tcpdump 抓包，对数据流向进行记录观察。</p>
-<p>本示例中的 Kubernetes 集群由以下节点组成：</p>
-<table>
-<thead>
-<tr>
-<th>节点主机名</th>
-<th>节点角色</th>
-<th>节点 IP</th>
-<th>节点上测试 POD IP</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>master</td>
-<td>master</td>
-<td>eth0： 10.150.0.21</td>
-<td>10.244.0.2</td>
-</tr>
-<tr>
-<td>worker1</td>
-<td>worker</td>
-<td>eth0： 10.150.0.19</td>
-<td>10.244.1.38</td>
-</tr>
-<tr>
-<td>worker2</td>
-<td>worker</td>
-<td>eth0： 10.150.0.20</td>
-<td>10.244.2.27</td>
-</tr>
-</tbody></table>
-<h1 id="Flannel-简介"><a href="#Flannel-简介" class="headerlink" title="Flannel 简介"></a>Flannel 简介</h1><p>Kubernetes 系统上 POD 网络的实现依赖于第三方插件，Kubernetes 只负责提供了 CNI（容器网络接口），只要符合 CNI 规则的第三方插件都可以用于为 POD 提供网络实现。而 Flannel 是由 CoreOS 主推的目前比较主流的容器网络解决方案。</p>
-<p>Flannel 支持三种不同后端实现，分别是：</p>
-<ul>
-<li>UDP</li>
-<li>VXLAN</li>
-<li>host-gw</li>
-</ul>
-<p>UDP 是 Flannel 项目最早支持的一种方式，是性能最差的方式，目前已被废弃。</p>
-<p>用的最多的是 VXLAN 和 host-gw 模式的部署。</p>
-<span id="more"></span>
-
-<h2 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h2><p>Flannel 默认使用 VXLAN 模式。flannel 运行后，在各个宿主机配置了一个网络接口 <code>flannel.1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig flannel.1</span></span><br><span class="line">flannel.1: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.0  netmask 255.255.255.255  broadcast 0.0.0.0</span><br><span class="line">        inet6 fe80::7c63:25ff:fea9:a780  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether 7e:63:25:a9:a7:80  txqueuelen 0  (Ethernet)</span><br><span class="line">        RX packets 2857781  bytes 1505969406 (1.4 GiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 1946111  bytes 1603736503 (1.4 GiB)</span><br><span class="line">        TX errors 0  dropped 8 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>默认分配给集群 POD 的网段为 <code>10.244.0.0/16</code></p>
-<p>flannel 给 master 节点配置的 Pod 网络为 <code>10.244.0.0/24</code> 段，给 <code>worker1</code> 节点配置的 Pod 网络为 <code>10.244.1.0/24</code> 段，如果有更多的节点，以此类推。</p>
-<p>当有容器运行之后，flannel 会在节点上配置虚拟接口 <code>cni0</code>，比如在节点 <code>worker1</code>，IP 地址默认为 <code>10.244.1.1</code>，在 master 节点上 IP 为 <code>10.244.0.1</code>。</p>
-<p>此 <code>cni0</code> 接口是一个网桥设备，会作为此节点上的 POD 的默认网关</p>
-<p>在 POD 启动时，flannel 会创建一对 veth 虚拟设备，一端连接到容器，一端连接到 <code>cni0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ifconfig cni0</span></span><br><span class="line">cni0: flags=4163&lt;UP,BROADCAST,RUNNING,MULTICAST&gt;  mtu 1410</span><br><span class="line">        inet 10.244.0.1  netmask 255.255.255.0  broadcast 10.244.0.255</span><br><span class="line">        inet6 fe80::f054:6bff:fe0e:f9ef  prefixlen 64  scopeid 0x20&lt;link&gt;</span><br><span class="line">        ether f2:54:6b:0e:f9:ef  txqueuelen 1000  (Ethernet)</span><br><span class="line">        RX packets 3795780  bytes 469016599 (447.2 MiB)</span><br><span class="line">        RX errors 0  dropped 0  overruns 0  frame 0</span><br><span class="line">        TX packets 3832558  bytes 408850763 (389.9 MiB)</span><br><span class="line">        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>一旦节点启动并加入集群后，其他节点上的 flanneld 会添加路由规则，将到其他节点上的 POD 网段的流量路由到本节点的 flannel.1 接口，即进入二层隧道，然后封装 VXLAN 包，到达目标节点后(pod 网段和节点 ip 的映射关系，flannel 保存在 etcd 或者 k8s 中)，由目标节点上的 flannel.1 解封装，这就是 flannel 默认的 VXLAN 模式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip route show</span></span><br><span class="line">default via 10.150.0.1 dev eth0 </span><br><span class="line">10.150.0.1 dev eth0 scope link </span><br><span class="line">10.244.0.0/24 dev cni0 proto kernel scope link src 10.244.0.1 </span><br><span class="line">10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink </span><br><span class="line">10.244.2.0/24 via 10.244.2.0 dev flannel.1 onlink </span><br><span class="line">169.254.0.0/16 dev eth0 scope link metric 1002 </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>由于 VXLAN 额外的封包解包，导致其性能较差，所以 Flannel 就有了 <code>host-gw</code> 模式，即把宿主机当作网关，除了本地路由之外没有额外开销，性能和 calico 差不多，由于没有叠加来实现报文转发，这样会导致路由表庞大。因为一个节点对应一个网络，也就对应一条路由条目。</p>
-<p><code>host-gw</code> 虽然比 VXLAN 网络性能要强很多，但是种方式有个缺陷：<strong>要求各物理节点必须在同一个二层网络中</strong>。物理节点必须在同一网段中。这样会使得一个网段中的主机量会非常多，万一发一个广播报文就会产生干扰。在私有云场景下，宿主机不在同一网段是很常见的状态，所以就不能使用 <code>host-gw</code> 了。</p>
-<p>VXLAN 还有另外一种功能，VXLAN 也支持类似 host-gw 的方案，如果两个节点在同一网段时使用 host-gw 通信，如果不在同一网段中，即当前 pod 所在节点与目标 pod 所在节点中间有路由器，就使用 VXLAN 这种方式，使用叠加网络。</p>
-<p>结合了 Host-gw 和 VXLAN，这就是 VXLAN 的 <code>Directrouting</code> 模式</p>
-<p>因此 Flannel 的 VXLAN 模式有两种：</p>
-<ul>
-<li>VXLAN： 原生的 VXLAN，即扩展的虚拟 LAN</li>
-<li>Directrouting：直接路由型</li>
-</ul>
-<p>配置 Directrouting 模式</p>
-<p>修改 <code>kube-flannel.yml</code>，修改以下内容：</p>
-<figure class="highlight shell"><figcaption><span>kube-flannel.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">net-conf.json: |</span><br><span class="line">  &#123;</span><br><span class="line">    &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">    &quot;Backend&quot;: &#123;</span><br><span class="line">      &quot;Type&quot;: &quot;vxlan&quot;,</span><br><span class="line">      &quot;Directrouting&quot;: true</span><br><span class="line">    &#125;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="抓包示例"><a href="#抓包示例" class="headerlink" title="抓包示例"></a>抓包示例</h1><p>在 Flannel 的 VXLAN 模式下，overlay 流量需要通过节点的 <code>8472/udp</code> 端口（隧道）进行跨节点通信，如果跨节点 POD 网络通信存在异常，可以在两个节点上对 <code>8472/udp</code> 抓包观察流量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tcpdump -i eth0 -nnn &#x27;udp port 8472 and host 10.150.0.19&#x27;</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://juejin.cn/post/6963106745468059684">详解Kubernetes网络原理</a></p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>tcpdump</tag>
-        <tag>Flannel</tag>
       </tags>
   </entry>
   <entry>
