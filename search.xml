@@ -14743,6 +14743,48 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Prometheus blackbox export 安装配置</title>
+    <url>/202309261542/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>blackbox_exporter</code> 是一个由 Prometheus 社区维护的项目，它允许用户通过 HTTP、HTTPS、DNS、TCP 和 ICMP 协议对服务进行“黑盒”方式的探测，以检测和监控网络协议的可用性和响应时间。</p>
+<p>本文档以在 Kubernetes 中部署 <code>blackbox_exporter</code> 为例，演示其使用方法。</p>
+<p>为了能够监控到 Kubernetes 集群内部的部分信息（如 <code>api-server</code> 的证书等），建议 <a href="https://csms.tech/202212141608/#创建集群角色">参考文档为其配置 RBAC 策略</a> 以使其能读取 <code>kube-apiserver</code> 相关资源，<strong>本文档中的配置示例基于此权限配置</strong>。Namespace 为 <code>prometheus</code></p>
+<h1 id="Kubernetes-中部署-blackbox-export"><a href="#Kubernetes-中部署-blackbox-export" class="headerlink" title="Kubernetes 中部署 blackbox_export"></a>Kubernetes 中部署 blackbox_export</h1><h2 id="创建-ConfigMap-以外部化-blackbox-export-配置"><a href="#创建-ConfigMap-以外部化-blackbox-export-配置" class="headerlink" title="创建 ConfigMap 以外部化 blackbox_export 配置"></a>创建 ConfigMap 以外部化 blackbox_export 配置</h2><p><code>blackbox_export</code> 基于配置文件运行，将其配置文件通过 Kubernetes 的 ConfiMap 存储，分离运行环境和配置，方便管理。</p>
+<p>参考以下配置，创建 ConfigMap</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">data:</span><br><span class="line">  blackbox.yml: |-</span><br><span class="line">    modules:</span><br><span class="line">      http_2xx:</span><br><span class="line">        prober: http</span><br><span class="line">        timeout: 10s</span><br><span class="line">        http:</span><br><span class="line">          preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">      tcp_connect:</span><br><span class="line">        prober: tcp</span><br><span class="line">kind: ConfigMap</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-export-config</span><br><span class="line">  namespace: prometheus</span><br></pre></td></tr></table></figure>
+
+<h2 id="部署-blackbox-export"><a href="#部署-blackbox-export" class="headerlink" title="部署 blackbox_export"></a>部署 blackbox_export</h2><p>参考以下内容，创建 Deployment 和 Service，在此配置中，使用上面创建的 ConfigMap 作为 <code>blackbox_export</code> 的配置文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus-blackbox-export</span><br><span class="line">  namespace: prometheus</span><br><span class="line">  labels:</span><br><span class="line">    app: prometheus-blackbox-export</span><br><span class="line">spec:</span><br><span class="line">  replicas: 1</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      app: prometheus-blackbox-export</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        app: prometheus-blackbox-export</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">        - name: prometheus-blackbox-export</span><br><span class="line">          image: bitnami/blackbox-exporter</span><br><span class="line">          args:</span><br><span class="line">            - &quot;--config.file=/etc/blackbox/blackbox.yml&quot;</span><br><span class="line">          ports:</span><br><span class="line">            - containerPort: 9115</span><br><span class="line">          resources:</span><br><span class="line">            requests:</span><br><span class="line">              cpu: 500m</span><br><span class="line">              memory: 500M</span><br><span class="line">            limits:</span><br><span class="line">              cpu: 1</span><br><span class="line">              memory: 1Gi</span><br><span class="line">          volumeMounts:</span><br><span class="line">            - name: blackbox-config-volume</span><br><span class="line">              mountPath: /etc/blackbox/</span><br><span class="line">      volumes:</span><br><span class="line">        - name: blackbox-config-volume</span><br><span class="line">          configMap:</span><br><span class="line">            defaultMode: 420</span><br><span class="line">            name: blackbox-export-config</span><br><span class="line">---</span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Service</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-service</span><br><span class="line">  namespace: prometheus</span><br><span class="line">spec:</span><br><span class="line">  ports:</span><br><span class="line">    - name: blackbox-port</span><br><span class="line">      port: 9115</span><br><span class="line">      protocol: TCP</span><br><span class="line">      targetPort: 9115</span><br><span class="line">  selector:</span><br><span class="line">    app: prometheus-blackbox-export            </span><br></pre></td></tr></table></figure>
+
+<p>部署成功后，从 <code>prometheus</code> 的 Namespace 中测试访问 <code>blackbox_export</code> 的 Endpoint <code>blackbox-service:9115</code>，如果是在其他 Namespace，可以使用 Endpoint <code>blackbox-service.prometheus.svc.cluster.local:9115</code>。如果集群的域名不是 <code>cluster.local</code>，修改为实际值。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">prometheus-7589d5bbdd-xdjwt:~# curl -v blackbox-service:9115</span><br><span class="line">*   Trying 10.111.137.0:9115...</span><br><span class="line">* Connected to blackbox-service (10.111.137.0) port 9115 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: blackbox-service:9115</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/8.0.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">&lt; Content-Type: text/html</span><br><span class="line">&lt; Date: Tue, 26 Sep 2023 09:11:25 GMT</span><br><span class="line">&lt; Content-Length: 544</span><br><span class="line">&lt; </span><br><span class="line">&lt;html&gt;</span><br><span class="line">    &lt;head&gt;&lt;title&gt;Blackbox Exporter&lt;/title&gt;&lt;/head&gt;</span><br><span class="line">    &lt;body&gt;</span><br><span class="line">    &lt;h1&gt;Blackbox Exporter&lt;/h1&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&quot;&gt;Probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&amp;debug=true&quot;&gt;Debug probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;metrics&quot;&gt;Metrics&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;config&quot;&gt;Configuration&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;h2&gt;Recent Probes&lt;/h2&gt;</span><br><span class="line">    &lt;table border=&#x27;1&#x27;&gt;&lt;tr&gt;&lt;th&gt;Module&lt;/th&gt;&lt;th&gt;Target&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;Debug&lt;/th&gt;&lt;/table&gt;&lt;/body&gt;</span><br><span class="line">* Connection #0 to host blackbox-service left intact</span><br><span class="line">    &lt;/html&gt;</span><br></pre></td></tr></table></figure>
+
+<h2 id="Prometheus-读取-blackbox-exporter-数据"><a href="#Prometheus-读取-blackbox-exporter-数据" class="headerlink" title="Prometheus 读取 blackbox_exporter 数据"></a>Prometheus 读取 blackbox_exporter 数据</h2><p>在 Prometheus 配置中添加以下内容，使 Prometheus 抓取 <code>black_exporter</code> 的监控数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_2xx&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_2xx]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - http://www.google.com:5000/</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
+<p>部署完成后，观察过 Prometheus 的 Target，正常情况下可以看到监控目标的状态。</p>
+<span id="more"></span>
+
+<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint"><a href="#使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint" class="headerlink" title="使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint"></a>使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</h2><p>本示例演示使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint，Kubernetes 集群默认的域为 <code>cluster.local</code>，本示例中的 Kubernetes 集群使用默认域。Kubernetes 集群中和 <code>kube-apiserver</code> 的通信一般都是使用 HTTPS，因此在使用 <code>blackbox_exporter</code> 监控时需要指定使用 HTTPS 请求 <code>kube-apiserver</code>，同时可以达到监控 <code>kube-apiserver</code> HTTPS 证书的目的。</p>
+<p>使用 <code>kubeadmin</code> 初始化的集群默认使用自签名的证书，客户端使用 HTTPS 访问时需要提供 CA 证书。以下 <code>blackbox_exporter</code> 配置中，模块 <code>http_k8s_cluster</code> 配置了必须使用 HTTPS 请求 Endpoint，并且配置了 CA 路径</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">modules:</span><br><span class="line">  http_2xx:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 10s</span><br><span class="line">    http:</span><br><span class="line">      preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">  tcp_connect:</span><br><span class="line">    prober: tcp</span><br><span class="line">  http_k8s_cluster:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 5s</span><br><span class="line">    http:</span><br><span class="line">      method: GET</span><br><span class="line">      fail_if_ssl: false</span><br><span class="line">      fail_if_not_ssl: true</span><br><span class="line">      valid_status_codes: [200, 403]</span><br><span class="line">      tls_config:</span><br><span class="line">        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt</span><br><span class="line">        insecure_skip_verify: false</span><br></pre></td></tr></table></figure>
+
+<p>在 Prometheus 配置中添加以下 Target，用于监控  <code>kube-apiserver</code> 的 Endpoint <code>https://kubernetes.default.svc.cluster.local</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_k8s_cluster&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_k8s_cluster]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - https://kubernetes.default.svc.cluster.local</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
+<p>配置成功后，观察 Prometheus 中的 Targets，可以看到 Targets 状态<br><img src="https://i.csms.tech/img_221.png"></p>
+<h2 id="监控-HTTPS-类型-的-Endpoints-的证书过期时间"><a href="#监控-HTTPS-类型-的-Endpoints-的证书过期时间" class="headerlink" title="监控 HTTPS 类型 的 Endpoints 的证书过期时间"></a>监控 HTTPS 类型 的 Endpoints 的证书过期时间</h2><p>假如在 <code>blackbox_exporter</code> 配置了 <code>prober</code> 为 <code>http</code> 类型的 module，当在 Prometheus 中配置的 <code>targets</code> 的请求协议使用 <code>https</code> 时，<code>blackbox_exporter</code> 提供了关于证书的监控指标。配置示例可以参考 <a href="#%E4%BD%BF%E7%94%A8-blackbox-exporter-%E5%92%8C-Prometheus-%E7%9B%91%E6%8E%A7-Kubernetes-API-Server-%E7%9A%84-Endpoint">使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</a></p>
+<p><code>probe_ssl_earliest_cert_expiry</code> 指标显示了证书链中最早到期的证书的过期时间。其值是一个 Unix 时间戳，表示证书的过期日期和时间。</p>
+<p>如果要计算证书剩余的有效天数，可以使用以下表达式计算</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(probe_ssl_earliest_cert_expiry - time()) / 86400</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>predixy 安装配置</title>
     <url>/202207271506/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
@@ -14788,48 +14830,6 @@ width: 20%;
       <tags>
         <tag>Redis</tag>
         <tag>Predixy</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Prometheus blackbox export 安装配置</title>
-    <url>/202309261542/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>blackbox_exporter</code> 是一个由 Prometheus 社区维护的项目，它允许用户通过 HTTP、HTTPS、DNS、TCP 和 ICMP 协议对服务进行“黑盒”方式的探测，以检测和监控网络协议的可用性和响应时间。</p>
-<p>本文档以在 Kubernetes 中部署 <code>blackbox_exporter</code> 为例，演示其使用方法。</p>
-<p>为了能够监控到 Kubernetes 集群内部的部分信息（如 <code>api-server</code> 的证书等），建议 <a href="https://csms.tech/202212141608/#创建集群角色">参考文档为其配置 RBAC 策略</a> 以使其能读取 <code>kube-apiserver</code> 相关资源，<strong>本文档中的配置示例基于此权限配置</strong>。Namespace 为 <code>prometheus</code></p>
-<h1 id="Kubernetes-中部署-blackbox-export"><a href="#Kubernetes-中部署-blackbox-export" class="headerlink" title="Kubernetes 中部署 blackbox_export"></a>Kubernetes 中部署 blackbox_export</h1><h2 id="创建-ConfigMap-以外部化-blackbox-export-配置"><a href="#创建-ConfigMap-以外部化-blackbox-export-配置" class="headerlink" title="创建 ConfigMap 以外部化 blackbox_export 配置"></a>创建 ConfigMap 以外部化 blackbox_export 配置</h2><p><code>blackbox_export</code> 基于配置文件运行，将其配置文件通过 Kubernetes 的 ConfiMap 存储，分离运行环境和配置，方便管理。</p>
-<p>参考以下配置，创建 ConfigMap</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">data:</span><br><span class="line">  blackbox.yml: |-</span><br><span class="line">    modules:</span><br><span class="line">      http_2xx:</span><br><span class="line">        prober: http</span><br><span class="line">        timeout: 10s</span><br><span class="line">        http:</span><br><span class="line">          preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">      tcp_connect:</span><br><span class="line">        prober: tcp</span><br><span class="line">kind: ConfigMap</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-export-config</span><br><span class="line">  namespace: prometheus</span><br></pre></td></tr></table></figure>
-
-<h2 id="部署-blackbox-export"><a href="#部署-blackbox-export" class="headerlink" title="部署 blackbox_export"></a>部署 blackbox_export</h2><p>参考以下内容，创建 Deployment 和 Service，在此配置中，使用上面创建的 ConfigMap 作为 <code>blackbox_export</code> 的配置文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  name: prometheus-blackbox-export</span><br><span class="line">  namespace: prometheus</span><br><span class="line">  labels:</span><br><span class="line">    app: prometheus-blackbox-export</span><br><span class="line">spec:</span><br><span class="line">  replicas: 1</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      app: prometheus-blackbox-export</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        app: prometheus-blackbox-export</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">        - name: prometheus-blackbox-export</span><br><span class="line">          image: bitnami/blackbox-exporter</span><br><span class="line">          args:</span><br><span class="line">            - &quot;--config.file=/etc/blackbox/blackbox.yml&quot;</span><br><span class="line">          ports:</span><br><span class="line">            - containerPort: 9115</span><br><span class="line">          resources:</span><br><span class="line">            requests:</span><br><span class="line">              cpu: 500m</span><br><span class="line">              memory: 500M</span><br><span class="line">            limits:</span><br><span class="line">              cpu: 1</span><br><span class="line">              memory: 1Gi</span><br><span class="line">          volumeMounts:</span><br><span class="line">            - name: blackbox-config-volume</span><br><span class="line">              mountPath: /etc/blackbox/</span><br><span class="line">      volumes:</span><br><span class="line">        - name: blackbox-config-volume</span><br><span class="line">          configMap:</span><br><span class="line">            defaultMode: 420</span><br><span class="line">            name: blackbox-export-config</span><br><span class="line">---</span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Service</span><br><span class="line">metadata:</span><br><span class="line">  name: blackbox-service</span><br><span class="line">  namespace: prometheus</span><br><span class="line">spec:</span><br><span class="line">  ports:</span><br><span class="line">    - name: blackbox-port</span><br><span class="line">      port: 9115</span><br><span class="line">      protocol: TCP</span><br><span class="line">      targetPort: 9115</span><br><span class="line">  selector:</span><br><span class="line">    app: prometheus-blackbox-export            </span><br></pre></td></tr></table></figure>
-
-<p>部署成功后，从 <code>prometheus</code> 的 Namespace 中测试访问 <code>blackbox_export</code> 的 Endpoint <code>blackbox-service:9115</code>，如果是在其他 Namespace，可以使用 Endpoint <code>blackbox-service.prometheus.svc.cluster.local:9115</code>。如果集群的域名不是 <code>cluster.local</code>，修改为实际值。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">prometheus-7589d5bbdd-xdjwt:~# curl -v blackbox-service:9115</span><br><span class="line">*   Trying 10.111.137.0:9115...</span><br><span class="line">* Connected to blackbox-service (10.111.137.0) port 9115 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: blackbox-service:9115</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/8.0.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">&lt; Content-Type: text/html</span><br><span class="line">&lt; Date: Tue, 26 Sep 2023 09:11:25 GMT</span><br><span class="line">&lt; Content-Length: 544</span><br><span class="line">&lt; </span><br><span class="line">&lt;html&gt;</span><br><span class="line">    &lt;head&gt;&lt;title&gt;Blackbox Exporter&lt;/title&gt;&lt;/head&gt;</span><br><span class="line">    &lt;body&gt;</span><br><span class="line">    &lt;h1&gt;Blackbox Exporter&lt;/h1&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&quot;&gt;Probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;probe?target=prometheus.io&amp;module=http_2xx&amp;debug=true&quot;&gt;Debug probe prometheus.io for http_2xx&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;metrics&quot;&gt;Metrics&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;p&gt;&lt;a href=&quot;config&quot;&gt;Configuration&lt;/a&gt;&lt;/p&gt;</span><br><span class="line">    &lt;h2&gt;Recent Probes&lt;/h2&gt;</span><br><span class="line">    &lt;table border=&#x27;1&#x27;&gt;&lt;tr&gt;&lt;th&gt;Module&lt;/th&gt;&lt;th&gt;Target&lt;/th&gt;&lt;th&gt;Result&lt;/th&gt;&lt;th&gt;Debug&lt;/th&gt;&lt;/table&gt;&lt;/body&gt;</span><br><span class="line">* Connection #0 to host blackbox-service left intact</span><br><span class="line">    &lt;/html&gt;</span><br></pre></td></tr></table></figure>
-
-<h2 id="Prometheus-读取-blackbox-exporter-数据"><a href="#Prometheus-读取-blackbox-exporter-数据" class="headerlink" title="Prometheus 读取 blackbox_exporter 数据"></a>Prometheus 读取 blackbox_exporter 数据</h2><p>在 Prometheus 配置中添加以下内容，使 Prometheus 抓取 <code>black_exporter</code> 的监控数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_2xx&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_2xx]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - http://www.google.com:5000/</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
-<p>部署完成后，观察过 Prometheus 的 Target，正常情况下可以看到监控目标的状态。</p>
-<span id="more"></span>
-
-<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint"><a href="#使用-blackbox-exporter-和-Prometheus-监控-Kubernetes-API-Server-的-Endpoint" class="headerlink" title="使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint"></a>使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</h2><p>本示例演示使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint，Kubernetes 集群默认的域为 <code>cluster.local</code>，本示例中的 Kubernetes 集群使用默认域。Kubernetes 集群中和 <code>kube-apiserver</code> 的通信一般都是使用 HTTPS，因此在使用 <code>blackbox_exporter</code> 监控时需要指定使用 HTTPS 请求 <code>kube-apiserver</code>，同时可以达到监控 <code>kube-apiserver</code> HTTPS 证书的目的。</p>
-<p>使用 <code>kubeadmin</code> 初始化的集群默认使用自签名的证书，客户端使用 HTTPS 访问时需要提供 CA 证书。以下 <code>blackbox_exporter</code> 配置中，模块 <code>http_k8s_cluster</code> 配置了必须使用 HTTPS 请求 Endpoint，并且配置了 CA 路径</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">modules:</span><br><span class="line">  http_2xx:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 10s</span><br><span class="line">    http:</span><br><span class="line">      preferred_ip_protocol: &quot;ip4&quot; ##如果http监测是使用ipv4 就要写上</span><br><span class="line">  tcp_connect:</span><br><span class="line">    prober: tcp</span><br><span class="line">  http_k8s_cluster:</span><br><span class="line">    prober: http</span><br><span class="line">    timeout: 5s</span><br><span class="line">    http:</span><br><span class="line">      method: GET</span><br><span class="line">      fail_if_ssl: false</span><br><span class="line">      fail_if_not_ssl: true</span><br><span class="line">      valid_status_codes: [200, 403]</span><br><span class="line">      tls_config:</span><br><span class="line">        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt</span><br><span class="line">        insecure_skip_verify: false</span><br></pre></td></tr></table></figure>
-
-<p>在 Prometheus 配置中添加以下 Target，用于监控  <code>kube-apiserver</code> 的 Endpoint <code>https://kubernetes.default.svc.cluster.local</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- job_name: &#x27;blackbox_http_k8s_cluster&#x27;</span><br><span class="line">    scrape_interval: 60s</span><br><span class="line">    metrics_path: /probe</span><br><span class="line">    params:</span><br><span class="line">      module: [http_k8s_cluster]  # Look for a HTTP 200 response.</span><br><span class="line">    static_configs:</span><br><span class="line">        - targets:</span><br><span class="line">          - https://kubernetes.default.svc.cluster.local</span><br><span class="line">    relabel_configs:</span><br><span class="line">        - source_labels: [__address__]</span><br><span class="line">          target_label: __param_target</span><br><span class="line">        - source_labels: [__param_target]</span><br><span class="line">          target_label: instance</span><br><span class="line">        - target_label: __address__</span><br><span class="line">          replacement: blackbox-service.prometheus.svc.cluster.local:9115</span><br></pre></td></tr></table></figure>
-<p>配置成功后，观察 Prometheus 中的 Targets，可以看到 Targets 状态<br><img src="https://i.csms.tech/img_221.png"></p>
-<h2 id="监控-HTTPS-类型-的-Endpoints-的证书过期时间"><a href="#监控-HTTPS-类型-的-Endpoints-的证书过期时间" class="headerlink" title="监控 HTTPS 类型 的 Endpoints 的证书过期时间"></a>监控 HTTPS 类型 的 Endpoints 的证书过期时间</h2><p>假如在 <code>blackbox_exporter</code> 配置了 <code>prober</code> 为 <code>http</code> 类型的 module，当在 Prometheus 中配置的 <code>targets</code> 的请求协议使用 <code>https</code> 时，<code>blackbox_exporter</code> 提供了关于证书的监控指标。配置示例可以参考 <a href="#%E4%BD%BF%E7%94%A8-blackbox-exporter-%E5%92%8C-Prometheus-%E7%9B%91%E6%8E%A7-Kubernetes-API-Server-%E7%9A%84-Endpoint">使用 blackbox_exporter 和 Prometheus 监控 Kubernetes API Server 的 Endpoint</a></p>
-<p><code>probe_ssl_earliest_cert_expiry</code> 指标显示了证书链中最早到期的证书的过期时间。其值是一个 Unix 时间戳，表示证书的过期日期和时间。</p>
-<p>如果要计算证书剩余的有效天数，可以使用以下表达式计算</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(probe_ssl_earliest_cert_expiry - time()) / 86400</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>Prometheus</tag>
       </tags>
   </entry>
   <entry>
@@ -17838,6 +17838,57 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>tcp/udp 端口连通性测试</title>
+    <url>/202210241127/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="nc"><a href="#nc" class="headerlink" title="nc"></a>nc</h1><h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><h3 id="Centos-下安装"><a href="#Centos-下安装" class="headerlink" title="Centos 下安装"></a>Centos 下安装</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y nc</span><br></pre></td></tr></table></figure>
+
+<h3 id="Windows-下安装"><a href="#Windows-下安装" class="headerlink" title="Windows 下安装"></a>Windows 下安装</h3><p>Windows 下需要 <a href="https://eternallybored.org/misc/netcat/">下载 netcat 运行程序</a></p>
+<p>下载后直接解压，将 <code>nc.exe</code> 复制到 <code>C:\Windows\System32</code> 目录或将 <code>nc.exe</code> 添加到系统 path 环境变量中</p>
+<h2 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h2><table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-v</code> <br/><code>-vvv</code></td>
+<td>打印详细信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-t</code></td>
+<td>使用 TCP 协议，默认为 TCP 协议</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-u</code></td>
+<td>使用 UDP 协议，默认为 TCP 协议</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-z</code></td>
+<td>不发送数据，效果为立即关闭连接，快速得出测试结果</td>
+<td></td>
+</tr>
+</tbody></table>
+<blockquote>
+<p><em><strong>注意事项</strong></em>：客户端测试使用 <code>localhost</code> 作为主机名时，会优先被解析为 IPv6 地址，如果端口监听在 IPv4 地址，会导致测试结果不可达</p>
+</blockquote>
+<h3 id="测试-udp-端口连通性"><a href="#测试-udp-端口连通性" class="headerlink" title="测试 udp 端口连通性"></a>测试 udp 端口连通性</h3><p>以下输出表示端口<strong>可达</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nc -vuz ip/domain 8472</span></span><br><span class="line">Ncat: Version 7.50 ( https://nmap.org/ncat )</span><br><span class="line">Ncat: Connected to ip:8472.</span><br><span class="line">Ncat: UDP packet sent successfully</span><br><span class="line">Ncat: 1 bytes sent, 0 bytes received in 2.01 seconds.</span><br></pre></td></tr></table></figure>
+<p>以下输出表示端口<strong>不可达</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nc -vuz 127.0.0.1 8473</span></span><br><span class="line">Ncat: Version 7.50 ( https://nmap.org/ncat )</span><br><span class="line">Ncat: Connected to 127.0.0.1:8473.</span><br><span class="line">Ncat: Connection refused.</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>netcat</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>常用工具下载链接</title>
     <url>/202302041721/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常用工具下载目录"><a href="#常用工具下载目录" class="headerlink" title="常用工具下载目录"></a>常用工具下载目录</h1><p><a href="https://s.csms.tech/file/">常用工具下载目录</a></p>
@@ -17907,57 +17958,6 @@ width: 20%;
       <categories>
         <category>Tools</category>
       </categories>
-  </entry>
-  <entry>
-    <title>tcp/udp 端口连通性测试</title>
-    <url>/202210241127/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="nc"><a href="#nc" class="headerlink" title="nc"></a>nc</h1><h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><h3 id="Centos-下安装"><a href="#Centos-下安装" class="headerlink" title="Centos 下安装"></a>Centos 下安装</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y nc</span><br></pre></td></tr></table></figure>
-
-<h3 id="Windows-下安装"><a href="#Windows-下安装" class="headerlink" title="Windows 下安装"></a>Windows 下安装</h3><p>Windows 下需要 <a href="https://eternallybored.org/misc/netcat/">下载 netcat 运行程序</a></p>
-<p>下载后直接解压，将 <code>nc.exe</code> 复制到 <code>C:\Windows\System32</code> 目录或将 <code>nc.exe</code> 添加到系统 path 环境变量中</p>
-<h2 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h2><table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-v</code> <br/><code>-vvv</code></td>
-<td>打印详细信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t</code></td>
-<td>使用 TCP 协议，默认为 TCP 协议</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-u</code></td>
-<td>使用 UDP 协议，默认为 TCP 协议</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-z</code></td>
-<td>不发送数据，效果为立即关闭连接，快速得出测试结果</td>
-<td></td>
-</tr>
-</tbody></table>
-<blockquote>
-<p><em><strong>注意事项</strong></em>：客户端测试使用 <code>localhost</code> 作为主机名时，会优先被解析为 IPv6 地址，如果端口监听在 IPv4 地址，会导致测试结果不可达</p>
-</blockquote>
-<h3 id="测试-udp-端口连通性"><a href="#测试-udp-端口连通性" class="headerlink" title="测试 udp 端口连通性"></a>测试 udp 端口连通性</h3><p>以下输出表示端口<strong>可达</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nc -vuz ip/domain 8472</span></span><br><span class="line">Ncat: Version 7.50 ( https://nmap.org/ncat )</span><br><span class="line">Ncat: Connected to ip:8472.</span><br><span class="line">Ncat: UDP packet sent successfully</span><br><span class="line">Ncat: 1 bytes sent, 0 bytes received in 2.01 seconds.</span><br></pre></td></tr></table></figure>
-<p>以下输出表示端口<strong>不可达</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nc -vuz 127.0.0.1 8473</span></span><br><span class="line">Ncat: Version 7.50 ( https://nmap.org/ncat )</span><br><span class="line">Ncat: Connected to 127.0.0.1:8473.</span><br><span class="line">Ncat: Connection refused.</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>netcat</tag>
-      </tags>
   </entry>
   <entry>
     <title>Ubuntu 系列软件包管理命令</title>
@@ -18525,46 +18525,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>vsftpd 虚拟用户配置说明</title>
-    <url>/202207251638/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
-<ul>
-<li>Centos 7</li>
-<li>Vsftpd 3.0.2</li>
-</ul>
-<p>vsftpd虚拟用户通过映射系统用户权限的方式，使虚拟用户具有和本地系统用户一样的权限，或者灵活的控制虚拟用户的权限(不和本地用户权限相同，不能高于本地权限)，达到访问权限的灵活控制，同时防止大批vsftpd用户添加到系统账号库中，使系统用户管理变动臃肿。</p>
-<span id="more"></span>
-
-<h3 id="创建虚拟用户映射的系统用户"><a href="#创建虚拟用户映射的系统用户" class="headerlink" title="创建虚拟用户映射的系统用户"></a>创建虚拟用户映射的系统用户</h3><p>系统用户virtftp拥有对ftp的读写权限，假设ftp根目录为&#x2F;data&#x2F;vsftpd&#x2F;<br>创建ftp用户组和用户virtftp，ftp相关系统账号属于ftp组  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd ftp</span><br><span class="line">useradd -d /data/vsftpd -M -s /sbin/nologin -g ftp virtftp</span><br><span class="line">mkdir /data/vsftpd</span><br><span class="line">chown -R virtftp:ftp /data/vsftpd</span><br><span class="line">chmod -R 750 /data/vsftpd</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>ftp根目录属于用户virtftp,用户组为ftp，设置权限750，使virtftp用户拥有读写权限</p>
-</blockquote>
-<h3 id="创建虚拟用户的口令库"><a href="#创建虚拟用户的口令库" class="headerlink" title="创建虚拟用户的口令库"></a>创建虚拟用户的口令库</h3><p>需要使用db_load命令根据原始口令文件(<code>/etc/vsftpd/passwd.txt</code>)生成db口令库文件，原始文件中奇数行为用户名，偶数行为密码</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">db_load -T -t hash -f /etc/vsftpd/passwd.txt /etc/vsftpd/passwd.db</span><br><span class="line">chmod 600 /etc/vsftpd/passwd.db</span><br></pre></td></tr></table></figure>
-<p>修改pam认证文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd,只保留以下2行<br>或者重新创建文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd_vu,并在<code>vsftpd.conf</code>中配置<code>pam_service_name=vsftpd_vu</code>)</p>
-<figure class="highlight shell"><figcaption><span>vsftpd_vu</span></figcaption><table><tr><td class="code"><pre><span class="line">auth required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd</span><br><span class="line">account required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd  </span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><code>db=/etc/vsftpd/passwd</code> 为<code>db_load</code>生产的文件，不要带后缀 <code>.db</code><br>如果认证发生错误，可检查日志文件：<code>/var/log/secure</code></p>
-</blockquote>
-<h3 id="配置-vsftpd-启用虚拟用户"><a href="#配置-vsftpd-启用虚拟用户" class="headerlink" title="配置 vsftpd 启用虚拟用户"></a>配置 vsftpd 启用虚拟用户</h3><p>修改vsftpd配置文件，默认为<code>/etc/vsftpd/vsftpd.conf</code> <a href="/202207231311/" title="vsftpd.conf常用配置文件说明">vsftpd.conf常用配置文件说明</a></p>
-<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">使用虚拟用户功能，必须允许本地用户</span></span><br><span class="line">local_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">启用虚拟用户配置，所有非匿名用户登录将视为游客，将被映射为guest_username</span>     </span><br><span class="line">guest_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">主配置文件中必需有，否则报错</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">500 OOPS: vsftpd: cannot locate user specified <span class="keyword">in</span> <span class="string">&#x27;guest_username&#x27;</span>:ftp</span></span><br><span class="line">guest_username=virtftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户独立配置文件目录,每个虚拟用户有一个同名的配置文件于此目录下</span></span><br><span class="line">user_config_dir=/etc/vsftpd/virtual_user_conf          </span><br><span class="line">                        </span><br></pre></td></tr></table></figure>
-
-<h3 id="配置虚拟用户配置文件"><a href="#配置虚拟用户配置文件" class="headerlink" title="配置虚拟用户配置文件"></a>配置虚拟用户配置文件</h3><p>虚拟用户配置文件位于 <code>vsftpd.conf</code> 配置 <code>user_config_dir</code> 指定的目录下，每个用户一个配置文件，配置文件和用户名同名<br>用户名，配置文件名，必须和口令文件中的用户名保持一致  </p>
-<figure class="highlight shell"><figcaption><span>user1</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定虚拟用户根目录</span></span><br><span class="line">local_root=/home/ftpsite/user1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户是和本地用户有相同权限;NO：虚拟用户和匿名用户权限相同</span>        </span><br><span class="line">virtual_use_local_privs=YES         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户对应的系统用户</span></span><br><span class="line">guest_username=virtftp   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户将被锁定在自己的宿主目录</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chroot_local_user=YES</span>    </span><br><span class="line">         </span><br><span class="line">write_enable=YES                               </span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">lock_upload_files=NO</span></span><br><span class="line">anon_umask=022</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">download_enable=NO</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_upload_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_mkdir_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_other_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_uploads=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_username=nono</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">allow_anon_ssl=YES</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_logins_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_data_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">cmds_allowed=CWD,LIST,MDTM,MKD,NLST,PASS,PASV,PORT,PWD,QUIT,RMD,RETR,SIZE,STOR,TYPE,USER,ACCT,APPE,CDUP,HELP,MODE,NOOP,REIN,STAT,STOU,STRU,SYST</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="常用配置说明"><a href="#常用配置说明" class="headerlink" title="常用配置说明"></a>常用配置说明</h3><p>virtual_use_local_privs参数说明<br>当<code>virtual_use_local_privs=YES</code>时，虚拟用户和本地用户有相同的权限；<br>当<code>virtual_use_local_privs=NO</code> 时，虚拟用户和匿名用户有相同的权限，默认是NO。<br>当<code>virtual_use_local_privs=YES</code>，<code>write_enable=YES</code>时，虚拟用户具有写权限（上传、下载、删除、重命名）。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=YES</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户不能浏览目录，只能上传文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=NO</code> 时，虚拟用户只能下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户只能上传和下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_mkdir_write_enable=YES</code> 时，虚拟用户只能下载文件和创建文件夹，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_other_write_enable=YES</code> 时，虚拟用户只能下载、删除和重命名文件，无其他权限。  </p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Vsftpd</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>网宿云 cdn 预热脚本</title>
     <url>/202207251026/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>将源站的内容主动预取到 CDN 节点，用户首次访问可直接命中缓存，即提升首次访问速度，又能有效缓解源站压力。</p>
@@ -18754,6 +18714,46 @@ width: 20%;
       </categories>
       <tags>
         <tag>生活日常</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>vsftpd 虚拟用户配置说明</title>
+    <url>/202207251638/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
+<ul>
+<li>Centos 7</li>
+<li>Vsftpd 3.0.2</li>
+</ul>
+<p>vsftpd虚拟用户通过映射系统用户权限的方式，使虚拟用户具有和本地系统用户一样的权限，或者灵活的控制虚拟用户的权限(不和本地用户权限相同，不能高于本地权限)，达到访问权限的灵活控制，同时防止大批vsftpd用户添加到系统账号库中，使系统用户管理变动臃肿。</p>
+<span id="more"></span>
+
+<h3 id="创建虚拟用户映射的系统用户"><a href="#创建虚拟用户映射的系统用户" class="headerlink" title="创建虚拟用户映射的系统用户"></a>创建虚拟用户映射的系统用户</h3><p>系统用户virtftp拥有对ftp的读写权限，假设ftp根目录为&#x2F;data&#x2F;vsftpd&#x2F;<br>创建ftp用户组和用户virtftp，ftp相关系统账号属于ftp组  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd ftp</span><br><span class="line">useradd -d /data/vsftpd -M -s /sbin/nologin -g ftp virtftp</span><br><span class="line">mkdir /data/vsftpd</span><br><span class="line">chown -R virtftp:ftp /data/vsftpd</span><br><span class="line">chmod -R 750 /data/vsftpd</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>ftp根目录属于用户virtftp,用户组为ftp，设置权限750，使virtftp用户拥有读写权限</p>
+</blockquote>
+<h3 id="创建虚拟用户的口令库"><a href="#创建虚拟用户的口令库" class="headerlink" title="创建虚拟用户的口令库"></a>创建虚拟用户的口令库</h3><p>需要使用db_load命令根据原始口令文件(<code>/etc/vsftpd/passwd.txt</code>)生成db口令库文件，原始文件中奇数行为用户名，偶数行为密码</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">db_load -T -t hash -f /etc/vsftpd/passwd.txt /etc/vsftpd/passwd.db</span><br><span class="line">chmod 600 /etc/vsftpd/passwd.db</span><br></pre></td></tr></table></figure>
+<p>修改pam认证文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd,只保留以下2行<br>或者重新创建文件&#x2F;etc&#x2F;pam.d&#x2F;vsftpd_vu,并在<code>vsftpd.conf</code>中配置<code>pam_service_name=vsftpd_vu</code>)</p>
+<figure class="highlight shell"><figcaption><span>vsftpd_vu</span></figcaption><table><tr><td class="code"><pre><span class="line">auth required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd</span><br><span class="line">account required /lib64/security/pam_userdb.so db=/etc/vsftpd/passwd  </span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><code>db=/etc/vsftpd/passwd</code> 为<code>db_load</code>生产的文件，不要带后缀 <code>.db</code><br>如果认证发生错误，可检查日志文件：<code>/var/log/secure</code></p>
+</blockquote>
+<h3 id="配置-vsftpd-启用虚拟用户"><a href="#配置-vsftpd-启用虚拟用户" class="headerlink" title="配置 vsftpd 启用虚拟用户"></a>配置 vsftpd 启用虚拟用户</h3><p>修改vsftpd配置文件，默认为<code>/etc/vsftpd/vsftpd.conf</code> <a href="/202207231311/" title="vsftpd.conf常用配置文件说明">vsftpd.conf常用配置文件说明</a></p>
+<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">使用虚拟用户功能，必须允许本地用户</span></span><br><span class="line">local_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">启用虚拟用户配置，所有非匿名用户登录将视为游客，将被映射为guest_username</span>     </span><br><span class="line">guest_enable=YES     </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">主配置文件中必需有，否则报错</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">500 OOPS: vsftpd: cannot locate user specified <span class="keyword">in</span> <span class="string">&#x27;guest_username&#x27;</span>:ftp</span></span><br><span class="line">guest_username=virtftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户独立配置文件目录,每个虚拟用户有一个同名的配置文件于此目录下</span></span><br><span class="line">user_config_dir=/etc/vsftpd/virtual_user_conf          </span><br><span class="line">                        </span><br></pre></td></tr></table></figure>
+
+<h3 id="配置虚拟用户配置文件"><a href="#配置虚拟用户配置文件" class="headerlink" title="配置虚拟用户配置文件"></a>配置虚拟用户配置文件</h3><p>虚拟用户配置文件位于 <code>vsftpd.conf</code> 配置 <code>user_config_dir</code> 指定的目录下，每个用户一个配置文件，配置文件和用户名同名<br>用户名，配置文件名，必须和口令文件中的用户名保持一致  </p>
+<figure class="highlight shell"><figcaption><span>user1</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定虚拟用户根目录</span></span><br><span class="line">local_root=/home/ftpsite/user1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户是和本地用户有相同权限;NO：虚拟用户和匿名用户权限相同</span>        </span><br><span class="line">virtual_use_local_privs=YES         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户对应的系统用户</span></span><br><span class="line">guest_username=virtftp   </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">虚拟用户将被锁定在自己的宿主目录</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chroot_local_user=YES</span>    </span><br><span class="line">         </span><br><span class="line">write_enable=YES                               </span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">lock_upload_files=NO</span></span><br><span class="line">anon_umask=022</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">download_enable=NO</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_upload_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_mkdir_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">anon_other_write_enable=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_uploads=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">chown_username=nono</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">allow_anon_ssl=YES</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_logins_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">force_anon_data_ssl=YES</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">cmds_allowed=CWD,LIST,MDTM,MKD,NLST,PASS,PASV,PORT,PWD,QUIT,RMD,RETR,SIZE,STOR,TYPE,USER,ACCT,APPE,CDUP,HELP,MODE,NOOP,REIN,STAT,STOU,STRU,SYST</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="常用配置说明"><a href="#常用配置说明" class="headerlink" title="常用配置说明"></a>常用配置说明</h3><p>virtual_use_local_privs参数说明<br>当<code>virtual_use_local_privs=YES</code>时，虚拟用户和本地用户有相同的权限；<br>当<code>virtual_use_local_privs=NO</code> 时，虚拟用户和匿名用户有相同的权限，默认是NO。<br>当<code>virtual_use_local_privs=YES</code>，<code>write_enable=YES</code>时，虚拟用户具有写权限（上传、下载、删除、重命名）。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=YES</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户不能浏览目录，只能上传文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=NO</code> 时，虚拟用户只能下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_upload_enable=YES</code> 时，虚拟用户只能上传和下载文件，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_mkdir_write_enable=YES</code> 时，虚拟用户只能下载文件和创建文件夹，无其他权限。<br>当<code>virtual_use_local_privs=NO</code>，<code>write_enable=YES</code>，<code>anon_world_readable_only=NO</code>，<code>anon_other_write_enable=YES</code> 时，虚拟用户只能下载、删除和重命名文件，无其他权限。  </p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Vsftpd</tag>
       </tags>
   </entry>
   <entry>
