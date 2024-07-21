@@ -709,58 +709,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.csms.tech/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -855,6 +803,58 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.csms.tech/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.csms.tech/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -1079,37 +1079,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>aliyun 相关配置</title>
-    <url>/202305101732/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="cmd-工具"><a href="#cmd-工具" class="headerlink" title="cmd 工具"></a>cmd 工具</h1><h2 id="ossutil-工具"><a href="#ossutil-工具" class="headerlink" title="ossutil 工具"></a>ossutil 工具</h2><p><a href="https://help.aliyun.com/document_detail/44075.html?spm=a2c4g.120052.0.0.3b587786PQJ64i">阿里云云存储 OSS 相关工具汇总</a></p>
-<p><a href="https://help.aliyun.com/document_detail/50452.htm?spm=a2c4g.44075.0.0.20d17d73gZwhGF#concept-cnr-3d4-vdb">ossutil 概述、安装、配置、常用命令</a></p>
-<h3 id="列出-oss-中的所有对象"><a href="#列出-oss-中的所有对象" class="headerlink" title="列出 oss 中的所有对象"></a>列出 oss 中的所有对象</h3><p>命令格式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[列举账号级别下的资源](https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804)
-">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./ossutil64 ls oss://bucketname[/prefix] [-s] [-d] [--limited-num] [--marker] [--include] [--exclude]  [--version-id-marker] [--all-versions]</span><br></pre></td></tr></table></figure>
-
-<h3 id="查看桶中资源总数及总的存储大小"><a href="#查看桶中资源总数及总的存储大小" class="headerlink" title="查看桶中资源总数及总的存储大小"></a>查看桶中资源总数及总的存储大小</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ossutil64 <span class="built_in">du</span> oss://test-bucket</span></span><br><span class="line">object count:417000     object sum size:73556695567</span><br></pre></td></tr></table></figure>
-
-<h1 id="CDN-加速域名配置缓存共享"><a href="#CDN-加速域名配置缓存共享" class="headerlink" title="CDN 加速域名配置缓存共享"></a>CDN 加速域名配置缓存共享</h1><p><a href="https://s.csms.tech/file/dogjois.pdf">CDN 加速域名配置缓存共享参考文档</a></p>
-<h2 id="CDN-加速域名配置缓存共享验证方法"><a href="#CDN-加速域名配置缓存共享验证方法" class="headerlink" title="CDN 加速域名配置缓存共享验证方法"></a>CDN 加速域名配置缓存共享验证方法</h2><p>比如 A 域名使用 B 域名的共享缓存，测试的时候先访问一条 B 域名中的新资源，使用 B 域名查看对应的缓存状态响应头，第一次访问应该是 <code>X-Cache: MISS</code>，重新访问一次，应该变成 <code>X-Cache: HIT</code>。接下来使用 A 域名访问，如果首次访问结果即为 <code>HIT</code>，说明共享缓存配置成功</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I A/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br></pre></td></tr></table></figure>
-<span id="more"></span>
-
-<h1 id="ossfs-使用"><a href="#ossfs-使用" class="headerlink" title="ossfs 使用"></a>ossfs 使用</h1><p>使用阿里云的 ossfs 工具，可以将 OSS 云存储桶使用基于 FUSE 的形式挂载到本地服务器。</p>
-<p><a href="https://github.com/aliyun/ossfs">ossfs 安装使用官方文档</a></p>
-<h2 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h2><h3 id="fuse-device-not-found-try-‘modprobe-fuse’-first"><a href="#fuse-device-not-found-try-‘modprobe-fuse’-first" class="headerlink" title="fuse: device not found, try ‘modprobe fuse’ first"></a>fuse: device not found, try ‘modprobe fuse’ first</h3><p>需要先在系统安装 <code>fuse</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apt-get install fuse</span><br></pre></td></tr></table></figure>
-
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804">列举账号级别下的资源</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/31837.html">OSS Region和Endpoint对照表</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Aliyun</category>
-      </categories>
-      <tags>
-        <tag>云平台</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Alpine linux apk 命令使用</title>
     <url>/202210201436/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="更新索引"><a href="#更新索引" class="headerlink" title="更新索引"></a>更新索引</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">apk update</span></span><br><span class="line"></span><br><span class="line">fetch https://dl-cdn.alpinelinux.org/alpine/v3.14/main/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch https://dl-cdn.alpinelinux.org/alpine/v3.14/community/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch http://nl.alpinelinux.org/alpine/edge/main/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch http://nl.alpinelinux.org/alpine/edge/testing/x86_64/APKINDEX.tar.gz</span><br><span class="line">fetch http://nl.alpinelinux.org/alpine/edge/community/x86_64/APKINDEX.tar.gz</span><br><span class="line">v3.14.8-65-g0f3285f2cf [https://dl-cdn.alpinelinux.org/alpine/v3.14/main]</span><br><span class="line">v3.14.8-66-ge9853dea68 [https://dl-cdn.alpinelinux.org/alpine/v3.14/community]</span><br><span class="line">v20220809-6223-gb7f2956912 [http://nl.alpinelinux.org/alpine/edge/main]</span><br><span class="line">v20220809-6223-gb7f2956912 [http://nl.alpinelinux.org/alpine/edge/testing]</span><br><span class="line">v20220809-6223-gb7f2956912 [http://nl.alpinelinux.org/alpine/edge/community]</span><br><span class="line">OK: 38705 distinct packages available</span><br><span class="line"></span><br></pre></td></tr></table></figure>
@@ -1143,6 +1112,37 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>Alpine</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>aliyun 相关配置</title>
+    <url>/202305101732/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="cmd-工具"><a href="#cmd-工具" class="headerlink" title="cmd 工具"></a>cmd 工具</h1><h2 id="ossutil-工具"><a href="#ossutil-工具" class="headerlink" title="ossutil 工具"></a>ossutil 工具</h2><p><a href="https://help.aliyun.com/document_detail/44075.html?spm=a2c4g.120052.0.0.3b587786PQJ64i">阿里云云存储 OSS 相关工具汇总</a></p>
+<p><a href="https://help.aliyun.com/document_detail/50452.htm?spm=a2c4g.44075.0.0.20d17d73gZwhGF#concept-cnr-3d4-vdb">ossutil 概述、安装、配置、常用命令</a></p>
+<h3 id="列出-oss-中的所有对象"><a href="#列出-oss-中的所有对象" class="headerlink" title="列出 oss 中的所有对象"></a>列出 oss 中的所有对象</h3><p>命令格式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[列举账号级别下的资源](https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804)
+">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">./ossutil64 ls oss://bucketname[/prefix] [-s] [-d] [--limited-num] [--marker] [--include] [--exclude]  [--version-id-marker] [--all-versions]</span><br></pre></td></tr></table></figure>
+
+<h3 id="查看桶中资源总数及总的存储大小"><a href="#查看桶中资源总数及总的存储大小" class="headerlink" title="查看桶中资源总数及总的存储大小"></a>查看桶中资源总数及总的存储大小</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ossutil64 <span class="built_in">du</span> oss://test-bucket</span></span><br><span class="line">object count:417000     object sum size:73556695567</span><br></pre></td></tr></table></figure>
+
+<h1 id="CDN-加速域名配置缓存共享"><a href="#CDN-加速域名配置缓存共享" class="headerlink" title="CDN 加速域名配置缓存共享"></a>CDN 加速域名配置缓存共享</h1><p><a href="https://s.csms.tech/file/dogjois.pdf">CDN 加速域名配置缓存共享参考文档</a></p>
+<h2 id="CDN-加速域名配置缓存共享验证方法"><a href="#CDN-加速域名配置缓存共享验证方法" class="headerlink" title="CDN 加速域名配置缓存共享验证方法"></a>CDN 加速域名配置缓存共享验证方法</h2><p>比如 A 域名使用 B 域名的共享缓存，测试的时候先访问一条 B 域名中的新资源，使用 B 域名查看对应的缓存状态响应头，第一次访问应该是 <code>X-Cache: MISS</code>，重新访问一次，应该变成 <code>X-Cache: HIT</code>。接下来使用 A 域名访问，如果首次访问结果即为 <code>HIT</code>，说明共享缓存配置成功</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: MISS TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I B/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v -I A/test.png</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: B</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">&lt; HTTP/1.1 200 OK</span></span><br><span class="line">HTTP/1.1 200 OK</span><br><span class="line">&lt; Server: Tengine</span><br><span class="line">Server: Tengine</span><br><span class="line">&lt; Content-Type: binary/octet-stream</span><br><span class="line">Content-Type: binary/octet-stream</span><br><span class="line">...</span><br><span class="line">&lt; X-Cache: HIT TCP_MISS dirn:-2:-2</span><br><span class="line">X-Cache: HIT TCP_MISS dirn:-2:-2</span><br></pre></td></tr></table></figure>
+<span id="more"></span>
+
+<h1 id="ossfs-使用"><a href="#ossfs-使用" class="headerlink" title="ossfs 使用"></a>ossfs 使用</h1><p>使用阿里云的 ossfs 工具，可以将 OSS 云存储桶使用基于 FUSE 的形式挂载到本地服务器。</p>
+<p><a href="https://github.com/aliyun/ossfs">ossfs 安装使用官方文档</a></p>
+<h2 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h2><h3 id="fuse-device-not-found-try-‘modprobe-fuse’-first"><a href="#fuse-device-not-found-try-‘modprobe-fuse’-first" class="headerlink" title="fuse: device not found, try ‘modprobe fuse’ first"></a>fuse: device not found, try ‘modprobe fuse’ first</h3><p>需要先在系统安装 <code>fuse</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apt-get install fuse</span><br></pre></td></tr></table></figure>
+
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/120052.htm?spm=a2c4g.50452.0.0.70267a47ABgZAh#concept-303804">列举账号级别下的资源</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://help.aliyun.com/document_detail/31837.html">OSS Region和Endpoint对照表</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Aliyun</category>
+      </categories>
+      <tags>
+        <tag>云平台</tag>
       </tags>
   </entry>
   <entry>
@@ -3438,67 +3438,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Django HTTP 请求及响应常见用法总结</title>
-    <url>/202308081340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3</li>
-<li>Django 4</li>
-</ul>
-<h1 id="request-常用参数及方法"><a href="#request-常用参数及方法" class="headerlink" title="request 常用参数及方法"></a>request 常用参数及方法</h1><ul>
-<li><p><code>request.method</code> : 返回当前请求的 HTTP 方法（GET、POST、PUT、DELETE 等）。</p>
-</li>
-<li><p><code>request.path</code> : 返回请求的路径部分（不包括域名和查询参数）。</p>
-</li>
-<li><p><code>request.GET</code> : 包含所有 GET 请求参数的字典。</p>
-</li>
-<li><p><code>request.GET.get(&#39;param_name&#39;)</code> : 用于从 GET 请求中获取指定参数的值。</p>
-</li>
-<li><p><code>request.POST</code> : 包含所有 POST 请求参数的字典。</p>
-</li>
-<li><p><code>request.POST.get(&#39;param_name&#39;)</code> : 用于从 POST 请求中获取指定参数的值。</p>
-</li>
-<li><p><code>request.FILES</code> : 包含所有上传文件的字典。</p>
-</li>
-<li><p><code>request.COOKIES</code> : 包含所有请求的 Cookie 的字典。</p>
-</li>
-<li><p><code>request.session</code> : 一个表示当前会话的对象，可以用于访问和存储会话数据。</p>
-</li>
-<li><p><code>request.user</code> : 表示当前登录用户的对象。</p>
-</li>
-<li><p><code>request.body</code> : 访问请求的主体内容（即请求的正文部分）。主体内容通常用于传输 POST 或 PUT 请求中的数据，如表单数据、JSON 数据等。</p>
-</li>
-<li><p><code>request.META</code> : 包含有关请求的所有元数据的字典，如请求的 IP 地址、浏览器信息等。</p>
-</li>
-<li><p><code>request.is_secure()</code> : 返回一个布尔值，表示请求是否通过 HTTPS。</p>
-</li>
-<li><p><code>request.is_ajax()</code> : 返回一个布尔值，表示请求是否为 AJAX 请求。</p>
-</li>
-<li><p><code>request.get_full_path()</code> : 返回包含完整路径和查询参数的字符串。</p>
-</li>
-<li><p><code>request.build_absolute_uri()</code> : 根据当前请求构建完整的绝对 URL。</p>
-</li>
-<li><p><code>request.get_host()</code> : 返回请求的主机部分。</p>
-</li>
-<li><p><code>request.get_port()</code> : 返回请求的端口号。</p>
-</li>
-<li><p><code>request.get_raw_uri()</code> : 返回原始的请求 URI。</p>
-</li>
-<li><p><code>request.get_signed_cookie()</code> : 用于获取已签名的 Cookie 值。</p>
-</li>
-<li><p><code>request.get_host()</code> : 返回请求的主机部分。</p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Django</tag>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>django logging 模块</title>
     <url>/202208151622/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -3731,6 +3670,67 @@ width: 20%;
 <h2 id="Django-简单使用示例"><a href="#Django-简单使用示例" class="headerlink" title="Django 简单使用示例"></a>Django 简单使用示例</h2><p>以下配置为 Django 中使用 <code>logging</code> 模块的简单示例，配置后在 Django 项目代码中直接使用 <code>logging</code> 方法即可写入日志</p>
 <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">LOGGING = &#123;</span><br><span class="line">    <span class="string">&#x27;version&#x27;</span>: <span class="number">1</span>,</span><br><span class="line">    <span class="string">&#x27;disable_existing_loggers&#x27;</span>: <span class="literal">False</span>,</span><br><span class="line">    <span class="string">&#x27;formatters&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;verbose&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;format&#x27;</span>: <span class="string">&#x27;[%(asctime)s][%(levelname)s][%(pathname)s %(module)s %(lineno)s %(process)d %(thread)d] %(message)s&#x27;</span></span><br><span class="line">        &#125;</span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="string">&#x27;handlers&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;file&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;level&#x27;</span>: <span class="string">&#x27;INFO&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;class&#x27;</span>: <span class="string">&#x27;logging.handlers.RotatingFileHandler&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;filename&#x27;</span>: <span class="string">&#x27;default.log&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;maxBytes&#x27;</span>: <span class="number">1024</span> * <span class="number">1024</span> * <span class="number">5</span>,</span><br><span class="line">            <span class="string">&#x27;backupCount&#x27;</span>: <span class="number">5</span>,</span><br><span class="line">            <span class="string">&#x27;formatter&#x27;</span>: <span class="string">&#x27;verbose&#x27;</span>,</span><br><span class="line">        &#125;,</span><br><span class="line">        <span class="string">&#x27;console&#x27;</span>: &#123;</span><br><span class="line">            <span class="string">&#x27;class&#x27;</span>: <span class="string">&#x27;logging.StreamHandler&#x27;</span>,</span><br><span class="line">            <span class="string">&#x27;formatter&#x27;</span>: <span class="string">&#x27;verbose&#x27;</span>,</span><br><span class="line">        &#125;,</span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="string">&#x27;root&#x27;</span>: &#123;</span><br><span class="line">        <span class="string">&#x27;handlers&#x27;</span>: [<span class="string">&#x27;file&#x27;</span>, <span class="string">&#x27;console&#x27;</span>],</span><br><span class="line">        <span class="string">&#x27;level&#x27;</span>: <span class="string">&#x27;DEBUG&#x27;</span>,</span><br><span class="line">    &#125;,</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.djangoproject.com/zh-hans/4.0/topics/logging/">django logging 模块官网说明</a></p>
+]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Django</tag>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Django HTTP 请求及响应常见用法总结</title>
+    <url>/202308081340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3</li>
+<li>Django 4</li>
+</ul>
+<h1 id="request-常用参数及方法"><a href="#request-常用参数及方法" class="headerlink" title="request 常用参数及方法"></a>request 常用参数及方法</h1><ul>
+<li><p><code>request.method</code> : 返回当前请求的 HTTP 方法（GET、POST、PUT、DELETE 等）。</p>
+</li>
+<li><p><code>request.path</code> : 返回请求的路径部分（不包括域名和查询参数）。</p>
+</li>
+<li><p><code>request.GET</code> : 包含所有 GET 请求参数的字典。</p>
+</li>
+<li><p><code>request.GET.get(&#39;param_name&#39;)</code> : 用于从 GET 请求中获取指定参数的值。</p>
+</li>
+<li><p><code>request.POST</code> : 包含所有 POST 请求参数的字典。</p>
+</li>
+<li><p><code>request.POST.get(&#39;param_name&#39;)</code> : 用于从 POST 请求中获取指定参数的值。</p>
+</li>
+<li><p><code>request.FILES</code> : 包含所有上传文件的字典。</p>
+</li>
+<li><p><code>request.COOKIES</code> : 包含所有请求的 Cookie 的字典。</p>
+</li>
+<li><p><code>request.session</code> : 一个表示当前会话的对象，可以用于访问和存储会话数据。</p>
+</li>
+<li><p><code>request.user</code> : 表示当前登录用户的对象。</p>
+</li>
+<li><p><code>request.body</code> : 访问请求的主体内容（即请求的正文部分）。主体内容通常用于传输 POST 或 PUT 请求中的数据，如表单数据、JSON 数据等。</p>
+</li>
+<li><p><code>request.META</code> : 包含有关请求的所有元数据的字典，如请求的 IP 地址、浏览器信息等。</p>
+</li>
+<li><p><code>request.is_secure()</code> : 返回一个布尔值，表示请求是否通过 HTTPS。</p>
+</li>
+<li><p><code>request.is_ajax()</code> : 返回一个布尔值，表示请求是否为 AJAX 请求。</p>
+</li>
+<li><p><code>request.get_full_path()</code> : 返回包含完整路径和查询参数的字符串。</p>
+</li>
+<li><p><code>request.build_absolute_uri()</code> : 根据当前请求构建完整的绝对 URL。</p>
+</li>
+<li><p><code>request.get_host()</code> : 返回请求的主机部分。</p>
+</li>
+<li><p><code>request.get_port()</code> : 返回请求的端口号。</p>
+</li>
+<li><p><code>request.get_raw_uri()</code> : 返回原始的请求 URI。</p>
+</li>
+<li><p><code>request.get_signed_cookie()</code> : 用于获取已签名的 Cookie 值。</p>
+</li>
+<li><p><code>request.get_host()</code> : 返回请求的主机部分。</p>
+</li>
+</ul>
 ]]></content>
       <categories>
         <category>Python</category>
