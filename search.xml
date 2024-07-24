@@ -10908,154 +10908,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes 网络</title>
-    <url>/202212020941/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 3.10.0-1160</li>
-<li>Docker Engine - Community 23.0.3</li>
-<li>kubernetes 1.21.2-0</li>
-<li>kubernetes-cni-0.8.7-0</li>
-</ul>
-<p>Kubernetes 对任何网络实现都规定了以下要求： <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[万字长文，带你搞懂 Kubernetes 网络模型](https://www.51cto.com/article/714336.html)">[1]</span></a></sup></p>
-<ul>
-<li><p><strong>所有 Pod 都可以在不使用网络地址转换 (NAT) 的情况下与所有其他 Pod 通信。</strong></p>
-<p>  容器之间直接通信，不需要额外的 NAT，不存在源地址伪装的情况</p>
-</li>
-<li><p><strong>所有节点都可以在没有 NAT 的情况下与所有 Pod 通信。</strong></p>
-<p>  Node 与容器直接通信，不需要额外的 NAT</p>
-</li>
-<li><p><strong>Pod 认为自己的 IP 与其他人认为的 IP 相同。</strong></p>
-</li>
-</ul>
-<h1 id="CNI"><a href="#CNI" class="headerlink" title="CNI"></a>CNI</h1><p>CNI 是 Kubernetes 容器网络的标准，CNI 是 Kubernetes 和底层网络插件之间的一个抽象层，为 Kubernetes 屏蔽了底层网络实现的负责度，同时解耦了 Kubernetes 和具体的网络插件实现。</p>
-<h2 id="安装-CNI"><a href="#安装-CNI" class="headerlink" title="安装 CNI"></a>安装 CNI</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum install kubernetes-cni</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep kube</span></span><br><span class="line">kubeadm-1.21.2-0.x86_64</span><br><span class="line">kubectl-1.21.2-0.x86_64</span><br><span class="line">kubelet-1.21.2-0.x86_64</span><br><span class="line">kubernetes-cni-0.8.7-0.x86_64</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -ql kubernetes-cni-0.8.7-0</span></span><br><span class="line">/opt/cni</span><br><span class="line">/opt/cni/bin</span><br><span class="line">/opt/cni/bin/bandwidth</span><br><span class="line">/opt/cni/bin/bridge</span><br><span class="line">/opt/cni/bin/dhcp</span><br><span class="line">/opt/cni/bin/firewall</span><br><span class="line">/opt/cni/bin/flannel</span><br><span class="line">/opt/cni/bin/host-device</span><br><span class="line">/opt/cni/bin/host-local</span><br><span class="line">/opt/cni/bin/ipvlan</span><br><span class="line">/opt/cni/bin/loopback</span><br><span class="line">/opt/cni/bin/macvlan</span><br><span class="line">/opt/cni/bin/portmap</span><br><span class="line">/opt/cni/bin/ptp</span><br><span class="line">/opt/cni/bin/sbr</span><br><span class="line">/opt/cni/bin/static</span><br><span class="line">/opt/cni/bin/tuning</span><br><span class="line">/opt/cni/bin/vlan</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>Kubernetes 要使用 CNI，需要在 kubelet 启动时配置启动参数 <code>--network-plugin=cni</code>（默认配置，可使用 <code>systemctl status kubelet -l</code> 查看启动参数）。</p>
-<p>kubelet 从 <code>--cni-config-dir</code> （默认为 <code>/etc/cni/net.d/</code>）中读取网络插件的配置文件，并使用该文件中的 CNI 配置来配置每个 Pod 网络。如果该目录 （<code>/etc/cni/net.d/</code>）中有多个配置文件，则使用文件名字典序列中的第一个文件。</p>
-<p>CNI 插件的二进制文件放置的目录是通过 kubelet 的 <code>--cni-bin-dir</code> 参数指定，默认为 <code>/opt/cni/bin/</code></p>
-<span id="more"></span>
-
-<h1 id="flannel"><a href="#flannel" class="headerlink" title="flannel"></a>flannel</h1><p>flannel 最早由 CoreOS 开发，它是容器编排系统中最成熟的网络插件之一。随着 CNI 概念的兴起，flannel 也是最早实现 CNI 标准的网络插件，CNI 标准也是由 CoreOS 提出的。flannel 的功能非常明确，主要解决以下容器跨接点访问的问题</p>
-<ul>
-<li><strong>容器 IP 地址的重复问题</strong>。由于 Docker 等容器管理工具只是利用 Linux 内核的 network namespace 实现了网络隔离，各个节点上的容器 IP 由各个节点自动分配，可能出现重复。为了解决这个问题，flannel 设计了一种全局的 IP 地址分配机制，即使用 etcd 存储网段和节点 IP 之间的映射关系，然后配置 docker 只在当前节点对应的网段里面为容器分配 IP。</li>
-<li><strong>容器 IP 地址的路由问题</strong>。flannel 使用多种后端（底层）技术（如 overlay 网络、Host-Gateway 网络等）解决了容器跨节点的直接通信问题。</li>
-</ul>
-<p>flannel 在架构上分为<strong>管理面</strong>和<strong>数据面</strong>。</p>
-<ul>
-<li><strong>管理面</strong>主要是 <code>etcd</code>。用于存储各个节点的 IP 及其上容器应该分配的网段</li>
-<li><strong>数据面</strong>是每个节点上运行一个 <code>flanneld</code> 进程，负责从管理面读取节点 IP 及对应的网段信息，并根据这些信息对容器跨接点通信的数据包进行路由转发。</li>
-</ul>
-<p>集群内所有的 flannel 节点共享一个大网段，比如 <code>10.0.0.0/16</code>，flanneld 启动后便会读取 etcd 中的信息，得知其他节点的 IP 及其使用的子网段，然后向 etcd 申请本节点可使用的子网段（在大网段中划分一个子网段），比如 10.0.0.1&#x2F;24，并将该信息上报记录到 etcd。</p>
-<p>flannel 目前已经支持的底层网络实现（backend）包括：</p>
-<ul>
-<li><code>UDP</code></li>
-<li><code>VXLAN</code></li>
-<li><code>Host-Gateway</code></li>
-<li><code>Alloc</code></li>
-<li><code>AWS VPC</code></li>
-<li><code>GCE 路由</code></li>
-</ul>
-<p>其中，性能最好的是 <code>Host-Gateway</code>。<code>AWS VPC</code> 和 <code>GCE 路由</code>都需要 L2 网络支持，并且最好是接入云服务。<code>Alloc</code> 只为本机创建子网，多个节点上的子网之间不能通信。</p>
-<h2 id="flannel-backend-详解"><a href="#flannel-backend-详解" class="headerlink" title="flannel backend 详解"></a>flannel backend 详解</h2><p>flannel 通过在每个节点上启动 <code>flanneld</code> 进程，负责每个节点上的子网划分，并将相关配置（如节点的 IP，划分的子网网段等）上报保存到 etcd，而具体的网络报文转发交给具体的 backend 实现。</p>
-<p><code>flanneld</code> 可以在启动时通过配置文件指定不同的 backend 进行跨节点的容器之间的网络报文的路由转发，目前比较成熟的 backend 有  <code>UDP</code>、 <code>VXLAN</code> 、<code>Host-Gateway</code>，也有 <code>AWS VPC</code>、<code>GCE 路由</code> 等专门针对云服务的 backend。目前 <code>VXLAN</code> 是官方最推崇的 backend 实现，<code>Host-Gateway</code> 是网络性能最好的 backend 实现，但是需要所有节点在同一个二层网络中互通。<code>UDP</code> 性能相对较差，建议用于测试及比较老的不支持 VXLAN 的 Linux 内核。</p>
-<h3 id="UDP"><a href="#UDP" class="headerlink" title="UDP"></a>UDP</h3><p>UDP 模式基于 <a href="/202304241633/" title="Linux tun 设备">Linux tun 设备</a>。</p>
-<p>当采用 UDP 模式时，<code>flanneld</code> 启动时会通过打开 <code>/dev/net/tun</code> 的方式生成一个 tun 设备。当 <code>flanneld</code> 进程运行之后，查看系统上的网卡信息，可以看到多了 <code>flannel0</code> 的网卡，通过命令 <code>ip -d link show flannel0</code>，可以看到其类型为 <code>tun</code> 设备。此模式下 <code>flanneld</code> 进程监听 8285 端口。</p>
-<h4 id="flannel-UDP-模式跨主机通信流程详解"><a href="#flannel-UDP-模式跨主机通信流程详解" class="headerlink" title="flannel UDP 模式跨主机通信流程详解"></a>flannel UDP 模式跨主机通信流程详解</h4><p>本说明使用架构图形如下<br><img src="https://i.csms.tech/img_140.png"></p>
-<p>以 ICMP 报文为例，<code>container A</code> 和 <code>container B</code> 的通信过程如下</p>
-<ol>
-<li><p><code>container A</code> 发起 ICMP 请求报文，根据 <code>container A</code> 中的路由信息，报文被发送到网关 <code>10.244.1.1</code>，对应设备为 <code>Host A</code> 主机上面的 <code>cni0</code> 网卡。此时报文内容如下<br>  <img src="https://i.csms.tech/img_141.png"></p>
-</li>
-<li><p>到达 cni0 的报文，目的 IP 为 <code>10.244.2.149</code>，内核根据 <code>host A</code> 上的路由信息（<code>10.244.0.0 0.0.0.0 255.255.0.0 U 0 0 0 flannel0</code>），应该将报文发送到 <code>flannel0</code> 网卡。</p>
-</li>
-<li><p><code>flannel0</code> 是个 tun  设备，数据会被 <code>flanneld</code> 接受，<code>flanneld</code> 会对数据包进行 UDP 封装。</p>
-<ul>
-<li>报文会被添加上 UDP 头部，其源端口为 <code>host A</code> 上的随机端口，目标端口为 8285</li>
-<li>添加 IP 头部，源 IP 为本节点出口 IP （eth0：172.16.130.140），目标 IP 为目标容器所在节点的 IP（eth0：172.16.130.146）。<blockquote>
-<p><code>flanneld</code> 进程是如何知道目标容器所在节点的 IP 地址？<strong>是通过 etcd 中的记录，<code>flanneld</code> 进程很容易根据目标容器的 IP 子网段，获取到对应节点的 IP</strong><br>  <img src="https://i.csms.tech/img_142.png"></p>
-</blockquote>
-</li>
-</ul>
-</li>
-<li><p><code>flanneld</code> 进程封装后的报文重新进入内核协议栈，内核根据主机上的路由信息，从主机 eth0 网卡发送出去，到达了目标主机 <code>host B</code></p>
-</li>
-<li><p><code>host B</code> 主机内核接收到此网络数据报文，通过 UDP 端口号 8285 将数据包交给监听在此端口上的 <code>flanneld</code> 进程。</p>
-</li>
-<li><p><code>host B</code> 主机上的 <code>flanneld</code> 进程对数据报文解封，获取到下图所示的报文，在网络层，源 IP 为容器 A 的 IP：10.244.1.96，目标 IP 为容器 B 的 IP：10.244.2.194。解封后的数据报文重新进入内核路由，根据主机 B 的主机路由表（<code>10.244.2.0 0.0.0.0 255.255.255.0 U 0 0 0 cni0</code>），报文被路由到 cni0<br> <img src="https://i.csms.tech/img_143.png"></p>
-</li>
-<li><p>cni0 网桥将数据包根据 MAC 地址（可以 ARP 寻址得到）将报文转发到容 B。</p>
-</li>
-<li><p>回程报文将按照上面的数据流原路返回。</p>
-</li>
-</ol>
-<p>纵观以上整个过程，<code>flanneld</code> 进程在其中主要有以下作用</p>
-<ul>
-<li>UDP 封包解封包，根据目标容器的 IP，将其转发到正确的主机节点（IP）</li>
-<li>主机节点上动态更新路由表，根据 etcd 的数据刷新本节点路由表</li>
-</ul>
-<p>容器 A 和容器 B 虽然物理上网络未相连，但是逻辑上确是在一个三层网络，这种在物理网络之上构建的上层网络称之为 <strong>overlay 网络或者隧道网络</strong></p>
-<p><strong>flannel UDP 模式的缺点</strong></p>
-<ul>
-<li>数据报文先通过 tun 设备从内核态复制到了用户态 <code>flanneld</code> 进行封装，然后再传输到了内核，仅一次网络传输就进行了 2 次用户态到内核态的切换，效率不高。</li>
-<li>因为报文封装的关系，flannel0 网卡的 MTU 要比主机 eth0 网卡小 28 个字节。</li>
-</ul>
-<h3 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h3><p><code>flanneld</code> 进程配置为 <code>vxlan</code> 类型的 backend ，<code>flanneld</code> 进程启动时会在主机上创建名为 <code>flannel.1</code> 的网卡（VTEP），网卡命名格式遵循 <code>flannel.[VNI]</code>，VNI 默认为 1。</p>
-<p>通过以下命令查看 VTEP 设备 <code>flannel.1</code> 的信息。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN mode DEFAULT group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.244.4.0/32 scope global flannel.1</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::8832:fcff:fe1d:b888/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    </span><br></pre></td></tr></table></figure>
-<p>从以上信息可以看到，<code>flannel.1</code> 类型为 <code>vxlan</code>，local IP 为 172.31.16.124，使用的是 UDP 端口 8472</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span> </span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">udp        0      0 0.0.0.0:8472            0.0.0.0:*                           -</span><br></pre></td></tr></table></figure>
-<p>以上使用 <code>netstat -anutp</code> 命令的输出中，<code>PID/Program name</code> 显示的是 <code>-</code>，说明 8472 这个 UDP 端口不是由用户态的程序监听，而是 <strong>flannel 的 VXLAN 模式工作在内核态</strong>。</p>
-<p>Kubernetes 中，VXLAN 模式的 <code>flanneld</code> 的工作流程：</p>
-<ol>
-<li><p><code>flanneld</code> 启动时，先确保 <code>flannel.1</code> 存在，若已存在则跳过，并将 VTEP 设备的相关信息（ip，节点 IP，MAC 地址等）上报到 etcd 中</p>
-</li>
-<li><p>当 flannel 网络中的其他节点加入集群并向 etcd 上报注册时，各个节点的 <code>flanneld</code> 会从 etcd 得到通知，并依次执行下面的步骤</p>
-</li>
-<li><p>在本节点添加一条新网段的路由信息，主要是让 Pod 中的流量能路由到 <code>flannel.1</code></p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ route -n</span><br><span class="line"> Kernel IP routing table</span><br><span class="line"> Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line"> 0.0.0.0         172.31.16.1     0.0.0.0         UG    100    0        0 eth0</span><br><span class="line"> 10.244.0.0      10.244.0.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.1.0      10.244.1.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.2.0      10.244.2.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.3.0      10.244.3.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.4.0      0.0.0.0         255.255.255.0   U     0      0        0 cni0</span><br><span class="line"> 172.17.0.0      0.0.0.0         255.255.0.0     U     0      0        0 docker0</span><br><span class="line"> 172.31.16.0     0.0.0.0         255.255.240.0   U     100    0        0 eth0</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>在本节点添加一条新增节点的 VTEP 设备的静态 ARP 缓存</p>
-</li>
-</ol>
-<h4 id="flannel-VXLAN-模式跨主机通信流程详解"><a href="#flannel-VXLAN-模式跨主机通信流程详解" class="headerlink" title="flannel VXLAN 模式跨主机通信流程详解"></a>flannel VXLAN 模式跨主机通信流程详解</h4><p>flannel VXLAN 模式时容器跨节点网络通信实现流程<br><img src="https://i.csms.tech/img_144.png"></p>
-<ol>
-<li>同 UDP Backend 模式，容器 A 当中的 IP 包通过容器 A 内的路由表被发送到 cni0</li>
-<li>到达 cni0 当中的 IP 包通过匹配 host A 当中的路由表发现通往 10.244.2.194 的 IP 包应该交给 flannel.1 接口</li>
-<li>flannel.1 作为一个 VTEP 设备，收到报文后将按照 VTEP 的配置进行封包，首先通过 etcd 得知 10.244.2.194 属于节点 B，并得到节点 B 的 IP，通过节点 A 当中的转发表得到节点 B 对应的 VTEP 的 MAC，根据 flannel.1 设备创建时的设置的参数（VNI、local IP、Port）进行 VXLAN 封包</li>
-<li>通过 host A 跟 host B 之间的网络连接，VXLAN 包到达 host B 的 eth1 接口</li>
-<li>通过端口 8472，VXLAN 包被转发给 VTEP 设备 flannel.1 进行解包</li>
-<li>解封装后的 IP 包匹配 host B 当中的路由表（10.244.2.0），内核将 IP 包转发给 cni0</li>
-<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
-</ol>
-<p>在 VXLAN 模式下，数据包的封装解封装及路由转发都是由内核完成，<code>flanneld</code> 不再进行数据包的封装和路由转发，仅动态设置主机的路由表项、ARP 表及 FDB 表项。其效率相比 UDP 模式高效。</p>
-<h3 id="host-gw"><a href="#host-gw" class="headerlink" title="host-gw"></a>host-gw</h3><p>要配置使用 <code>host-gw</code> 模式，将 Backend 中的 <code>type</code> 改为 <code>host-gw</code> 即可。</p>
-<p>使用 <code>host-gw</code> Backend 的 Flannel 网络的网络包传输过程如下图所示：<br><img src="https://i.csms.tech/img_145.png"></p>
-<ol>
-<li>同 UDP、VXLAN 模式一致，通过容器 A 的路由表， IP 包到达 cni0</li>
-<li>到达 cni0 的 IP 包匹配到 host A 当中的路由规则（10.244.2.0），并且网关为 172.16.130.164，即 host B，所以内核将 IP 包发送给 host B（172.16.130.164）</li>
-<li>IP 包通过物理网络到达 host B 的 eth1</li>
-<li>到达 host B eth1 的 IP 包匹配到 host B 当中的路由表（10.244.2.0），IP 包被转发给 cni0</li>
-<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
-</ol>
-<p><code>host-gw</code> 模式其中一个局限性就是，由于是通过节点上的路由表来实现各个节点之间的跨节点网络通信，那么就得保证两个节点是可以直接路由过去的。按照内核当中的路由规则，网关必须在跟主机当中至少一个 IP 处于同一网段，故造成的结果就是采用 <code>host-gw</code> 这种 Backend 方式时集群中所有的节点必须处于同一个网络当中，这对于集群规模比较大时需要对节点进行网段划分的话会存在一定的局限性。另外一个则是随着集群当中节点规模的增大，<code>flanneld</code> 需要维护主机上成千上万条路由表的动态更新也是一个不小的压力。</p>
-<p>采用 <code>host-gw</code> 模式后 <code>flanneld</code> 的唯一作用就是负责主机上路由表的动态更新。</p>
-<h2 id="Kubernetes-中-flannel-相关配置"><a href="#Kubernetes-中-flannel-相关配置" class="headerlink" title="Kubernetes 中 flannel 相关配置"></a>Kubernetes 中 flannel 相关配置</h2><p>CNI 调用 flannel 插件是通过其配置文件 <code>/etc/cni/net.d/10-flannel.conflist</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /etc/cni/net.d/10-flannel.conflist</span> </span><br><span class="line">&#123;</span><br><span class="line">  &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">  &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">  &quot;plugins&quot;: [</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">      &quot;delegate&quot;: &#123;</span><br><span class="line">        &quot;hairpinMode&quot;: true,</span><br><span class="line">        &quot;isDefaultGateway&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;,</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">      &quot;capabilities&quot;: &#123;</span><br><span class="line">        &quot;portMappings&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  ]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>flannel 安装好启动之后，查看 flannel 的配置，可以看到配置的网段信息。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /run/flannel/subnet.env</span> </span><br><span class="line">FLANNEL_NETWORK=10.244.0.0/16</span><br><span class="line">FLANNEL_SUBNET=10.244.0.1/24</span><br><span class="line">FLANNEL_MTU=8951</span><br><span class="line">FLANNEL_IPMASQ=true</span><br></pre></td></tr></table></figure>
-
-<p>在 Kubernetes 中，要查看 flannel 详细的配置，可以查看以下 configmap</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit configmap -n kube-flannel kube-flannel-cfg</span></span><br><span class="line">data:</span><br><span class="line">  cni-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">      &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">      &quot;plugins&quot;: [</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">          &quot;delegate&quot;: &#123;</span><br><span class="line">            &quot;hairpinMode&quot;: true,</span><br><span class="line">            &quot;isDefaultGateway&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;,</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">          &quot;capabilities&quot;: &#123;</span><br><span class="line">            &quot;portMappings&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;</span><br><span class="line">      ]</span><br><span class="line">    &#125;</span><br><span class="line">  net-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">      &quot;Backend&quot;: &#123;</span><br><span class="line">        &quot;Type&quot;: &quot;vxlan&quot;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>从中可以看到 flannel 使用的大网段 <code>10.244.0.0/16</code>，以及其使用的底层（后端）网络通信的实现技术（<code>Backend</code>）</p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.51cto.com/article/714336.html">万字长文，带你搞懂 Kubernetes 网络模型</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.infoq.cn/article/qduqfhrisblob7textxe">Kubernetes 网络模型进阶</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Kubernetes Volume 使用方法</title>
     <url>/202211291450/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常用-Volume-类型"><a href="#常用-Volume-类型" class="headerlink" title="常用 Volume 类型"></a>常用 Volume 类型</h1><p>以下是几种可用卷类型：</p>
@@ -14932,180 +14784,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>linux tcp_wrappers 详解</title>
-    <url>/202208171106/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos 7</li>
-</ul>
-<p><code>TCP_wrappers</code> 主要是工作在应用层的一个安全工具，使用访问控制列表（<code>ACL</code>）来防止主机名和主机地址的欺骗，用于过滤对 <code>类 Unix</code> 系统的网络访问。  </p>
-<p>在一个安全的系统中，<code>Linux</code> 自身具有两层安全的防火墙。第一层是通过 IP&#x2F;Port 过滤机制的 <code>iptables</code> 来实现，第二层，也就是 <code>TCP_wrappers</code> 了，它主要是通过对系统中的某些服务进行开放与关闭，允许和禁止来有效保证系统安全运行。<br>可以简单理解为 <code>Linux</code> 系统访问控制的流程：  </p>
-<blockquote>
-<p>Client -&gt; iptables -&gt; TCP_wrappers -&gt; Server 的访问控制</p>
-</blockquote>
-<ul>
-<li>iptables ：基于源 IP&#x2F;端口、目的 IP&#x2F;端口进行访问控制</li>
-<li>TCP_wrappers：基于服务自身运行情况进行访问控制</li>
-<li>Server：基于服务器本身行为包括文件、目录等权限进行访问控制</li>
-</ul>
-<span id="more"></span>
-
-<h3 id="TCP-wrappers-的工作原理"><a href="#TCP-wrappers-的工作原理" class="headerlink" title="TCP_wrappers 的工作原理"></a>TCP_wrappers 的工作原理</h3><p><code>TCP_wrappers</code> 通过访问控制列表来提供保护机制，同时依赖 <code>/etc/hosts.allow</code> 和 <code>/etc/hosts.deny</code> 配置文件所设定的规则转交给相应的守护进程进行处理，同时记录请求过程。</p>
-<p><code>TCP_wrappers</code> 在对报文做过滤操作的过程中，会链接到 <code>TCP_wrappers</code> 的函数库， <code>TCP_wrappers</code> 的主要功能是来自于 <code>libwrap.a</code> 这个静态库。</p>
-<p>服务是否可以使用 <code>TCP_wrappers</code> 进行安全防护，取决于服务程序在编译时是否针对 <code>libwrap</code> 进行编译，如果库文件中有 <code>libwrap.so</code> 文件，就可以实现访问控制</p>
-<p>可以通过下面的命令来确定要过滤的服务是否已经链接到了 <code>libwrap</code> 这个函数库中</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ldd /usr/sbin/sshd | grep libwrap</span></span><br><span class="line">	libwrap.so.0 =&gt; /lib64/libwrap.so.0 (0x00007f283cdf1000)</span><br></pre></td></tr></table></figure>
-
-<p>当客户端的 IP 通过了安全系统中第一层（iptables 防火墙），想要进一步访问服务器资源时，系统就会由 <code>TCP_wrappers</code> 来对请求进行分析处理，根据服务设定的规则来查看这个请求是否存在于 <code>/etc/hosts.allow</code> 列表中，如果存在就接受；如果不存在就继续对比 <code>/etc/hosts/deny</code> 列表，如果存在于 <code>hosts.deny</code> 中就拒绝 IP 请求，反之则接受请求。  </p>
-<p><strong>判断规则的文件顺序必须严格按照先 <code>hosts.allow</code> 再 <code>hosts.deny</code> 的顺序进行判断。同时，<code>TCP_wrappers</code> 不会缓存 <code>hosts.allow</code> 和 <code>hosts.deny</code> 中的规则，所以针对 <code>hosts.allow</code> 和 <code>hosts.deny</code> 中规则的更改是立即生效的。</strong></p>
-<h3 id="TCP-wrappers-的配置"><a href="#TCP-wrappers-的配置" class="headerlink" title="TCP_wrappers 的配置"></a>TCP_wrappers 的配置</h3><p><code>TCP_wrappers</code> 实现防火墙的功能主要是依靠 <code>/etc/hosts.allow</code> 和 <code>/etc/hosts.deny</code> 这两个文件的。<code>/etc/hosts.allow</code> 主要是定义允许访问，<code>/etc/hosts.deny</code> 用来定义拒绝访问。  </p>
-<p>配置文件中的配置格式如下，格式说明可以参考 <code>man 5 hosts_options</code></p>
-<figure class="highlight shell"><figcaption><span>/etc/hosts.allow</span></figcaption><table><tr><td class="code"><pre><span class="line">daemon_list[@host] : client_list : option : option ...</span><br></pre></td></tr></table></figure>
-
-<p>其中：</p>
-<ul>
-<li><code>daemon_list</code> ： 服务名，例如：sshd、vsftpd、sendmail 等，多个服务之间使用逗号分割。</li>
-<li><code>client_list</code> : IP 或 IP 段或主机名。（列表中存在多个服务或者主机的时候用 , 逗号分隔开）</li>
-<li><code>option</code> : 包括对匹配规则的 <code>action</code>， 最主要的有 <code>allow</code> 或 <code>deny</code>（这个可以忽略不写）</li>
-</ul>
-<p>例如，配置限制 <code>192.168.0.0/16</code> 网段不能 <code>ssh</code> 到本机的 <code>sshd</code> 服务</p>
-<figure class="highlight shell"><figcaption><span>/etc/hosts.deny</span></figcaption><table><tr><td class="code"><pre><span class="line">sshd:192.168.</span><br></pre></td></tr></table></figure>
-<p>如上配置后，指定网段不能 <code>ssh</code> 到本机  </p>
-<p>配置后有问题，可以查看日志文件 <code>/var/log/secure</code>，如配置有问题，日志中会记录相关日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /var/log/secure</span></span><br><span class="line">sshd[7699]: error: /etc/hosts.allow, line 12: bad option name: &quot;%d&quot;&quot;</span><br></pre></td></tr></table></figure>
-
-<h4 id="配置文件中-daemon-list-常用格式"><a href="#配置文件中-daemon-list-常用格式" class="headerlink" title="配置文件中 daemon_list 常用格式"></a>配置文件中 daemon_list 常用格式</h4><table>
-<thead>
-<tr>
-<th>格式</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>ALL</code></td>
-<td>完全匹配，适配所有接受 <code>TCP_wrappers</code> 防护的服务</td>
-<td></td>
-</tr>
-<tr>
-<td><code>service1</code><br/><code>service1,service2</code><br/><code>service1@172.16.1.2</code></td>
-<td>指定服务<br/>多个服务使用逗号分割<br/>针对本机的某个 ip 做限制</td>
-<td><code>sshd,vsftpd:192.168.1.:allow</code></td>
-</tr>
-</tbody></table>
-<h4 id="配置文件中-client-list-常用格式"><a href="#配置文件中-client-list-常用格式" class="headerlink" title="配置文件中 client_list 常用格式"></a>配置文件中 client_list 常用格式</h4><table>
-<thead>
-<tr>
-<th>格式</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>ALL</code></td>
-<td>完全匹配，适配所有客户端</td>
-<td></td>
-</tr>
-<tr>
-<td><code>.HOSTNAME</code></td>
-<td>适配整个域</td>
-<td><code>sshd:.csms.tech:allow</code>，允许 <a href="https://csms.tech/"><code>csms.tech</code></a> 内的所有主机访问</td>
-</tr>
-<tr>
-<td><code>192.168.</code><br/><code>192.168.0.0/255.255.0.0</code><br/><code>192.168.0.0/16</code></td>
-<td>适配整个网段，会匹配到 <code>192.168.0.0/16</code> 网段</td>
-<td></td>
-</tr>
-<tr>
-<td><code>172.16. EXCEPT 172.16.100.0/24</code></td>
-<td>排除部分客户端</td>
-<td><code>172.16. EXCEPT 172.16.100.0/24 EXCEPT 172.16.10.1</code></td>
-</tr>
-</tbody></table>
-<h4 id="配置文件中-option-常用格式"><a href="#配置文件中-option-常用格式" class="headerlink" title="配置文件中 option 常用格式"></a>配置文件中 option 常用格式</h4><table>
-<thead>
-<tr>
-<th>格式</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>allow</code></td>
-<td>主要用在 <code>/etc/hosts.deny</code> 定义 <code>允许</code> 规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>deny</code></td>
-<td>主要用在 <code>/etc/hosts.allow</code> 定义 <code>拒绝</code> 规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>spawn</code></td>
-<td>启动一个外部程序(<code>shell</code>)完成指定的命令</td>
-<td></td>
-</tr>
-<tr>
-<td><code>twist</code></td>
-<td>替换客户端的请求成我们指定的命令，会导致服务拒绝，即使写在 <code>/etc/hosts.allow</code></td>
-<td></td>
-</tr>
-</tbody></table>
-<h5 id="spawn-示例"><a href="#spawn-示例" class="headerlink" title="spawn 示例"></a>spawn 示例</h5><p>在 <code>/etc/hosts.allow</code> 中添加以下内容</p>
-<figure class="highlight shell"><figcaption><span>/etc/hosts.allow</span></figcaption><table><tr><td class="code"><pre><span class="line">sshd: ALL :\</span><br><span class="line">         spawn echo $(date +%%F) login attempt from %c to %s,%d &gt;&gt;/var/log/sshd.log</span><br></pre></td></tr></table></figure>
-<p>以上配置，会在客户端 ssh 登录时记录日志  </p>
-<p>其中，可以变量包含以下</p>
-<table>
-<thead>
-<tr>
-<th>变量</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>%a</code></td>
-<td>客户端的 IP 地址</td>
-</tr>
-<tr>
-<td><code>%A</code></td>
-<td>服务端的 IP 地址</td>
-</tr>
-<tr>
-<td><code>%d	</code></td>
-<td>守护进程的名字</td>
-</tr>
-<tr>
-<td><code>%h</code></td>
-<td>客户端的主机名</td>
-</tr>
-<tr>
-<td><code>%H</code></td>
-<td>服务端的主机名</td>
-</tr>
-<tr>
-<td><code>%p</code></td>
-<td>守护进程的 pid</td>
-</tr>
-<tr>
-<td><code>%u</code></td>
-<td>客户端的用户名</td>
-</tr>
-</tbody></table>
-<h5 id="twist-示例"><a href="#twist-示例" class="headerlink" title="twist 示例"></a>twist 示例</h5><p>在 <code>/etc/hosts.allow</code> 中添加以下内容</p>
-<figure class="highlight shell"><figcaption><span>/etc/hosts.allow</span></figcaption><table><tr><td class="code"><pre><span class="line">vsftpd: 172.16.0.1 :twist /bin/echo “connection prohibited”</span><br></pre></td></tr></table></figure>
-
-<p>以上配置会将客户端的请求替换成 <code>twist</code> 指定的命令，因此客户端无法使用指定的服务，即使配置在 <code>/etc/hosts.allow</code> 中</p>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://m-zhoujie2.gitbooks.io/-linux-devops-2/content/chapter3-5.html">TCP wrappers</a></p>
-<p><a href="https://www.cnblogs.com/duzhaoqi/p/7607801.html">TCP_Wrappers</a></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>tcp_wrappers</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>tcpdump 抓包命令使用</title>
     <url>/202210241503/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="tcpdump-命令格式说明"><a href="#tcpdump-命令格式说明" class="headerlink" title="tcpdump 命令格式说明"></a>tcpdump 命令格式说明</h1><p><img src="https://i.csms.tech/img_67.png"></p>
@@ -15827,99 +15505,177 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 主从复制相关原理简述</title>
-    <url>/2207211114/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h2 id="Mysql-主从同步基本原理"><a href="#Mysql-主从同步基本原理" class="headerlink" title="Mysql 主从同步基本原理"></a>Mysql 主从同步基本原理</h2></blockquote>
-<p>复制的基本过程如下：  </p>
-<ol>
-<li><p>Slave上面的IO进程连接上Master，并请求从指定日志文件的指定位置（或者从最开始的日志）之后的日志内容；</p>
-</li>
-<li><p>Master接收到来自Slave的IO进程的请求后，通过负责复制的IO进程,根据请求信息,读取指定日志指定位置之后的日志信息，返回给Slave 的IO进程。返回信息中除了日志所包含的信息之外，还包括本次返回的信息已经到Master端的bin-log文件的名称以及bin-log的位置；</p>
-</li>
-<li><p>Slave的IO进程接收到信息后，将接收到的日志内容依次添加到Slave端的relay-log文件的最末端，并将读取到的Master端的 bin-log的文件名和位置记录到master-info文件中，以便在下一次读取的时候能够清楚的告诉Master“我需要从某个bin-log的哪个位置开始往后的日志内容，请发给我”；</p>
-</li>
-<li><p>Slave的Sql进程检测到relay-log中新增加了内容后，会马上解析relay-log的内容，获得在Master端真实执行的那些可执行的内容，并在自身执行。</p>
-</li>
-</ol>
-<p>双主情况下，禁止同时写入，建议还是按照主从的方式工作，防止数据冲突。双主场景下，主要是切换主备方便。</p>
+    <title>linux tcp_wrappers 详解</title>
+    <url>/202208171106/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos 7</li>
+</ul>
+<p><code>TCP_wrappers</code> 主要是工作在应用层的一个安全工具，使用访问控制列表（<code>ACL</code>）来防止主机名和主机地址的欺骗，用于过滤对 <code>类 Unix</code> 系统的网络访问。  </p>
+<p>在一个安全的系统中，<code>Linux</code> 自身具有两层安全的防火墙。第一层是通过 IP&#x2F;Port 过滤机制的 <code>iptables</code> 来实现，第二层，也就是 <code>TCP_wrappers</code> 了，它主要是通过对系统中的某些服务进行开放与关闭，允许和禁止来有效保证系统安全运行。<br>可以简单理解为 <code>Linux</code> 系统访问控制的流程：  </p>
+<blockquote>
+<p>Client -&gt; iptables -&gt; TCP_wrappers -&gt; Server 的访问控制</p>
+</blockquote>
+<ul>
+<li>iptables ：基于源 IP&#x2F;端口、目的 IP&#x2F;端口进行访问控制</li>
+<li>TCP_wrappers：基于服务自身运行情况进行访问控制</li>
+<li>Server：基于服务器本身行为包括文件、目录等权限进行访问控制</li>
+</ul>
 <span id="more"></span>
 
-<blockquote>
-<h2 id="Mysql-复制方式"><a href="#Mysql-复制方式" class="headerlink" title="Mysql 复制方式"></a>Mysql 复制方式</h2></blockquote>
-<blockquote>
-<h3 id="异步复制（Asynchronous-replication）"><a href="#异步复制（Asynchronous-replication）" class="headerlink" title="异步复制（Asynchronous replication）"></a>异步复制（Asynchronous replication）</h3></blockquote>
-<p>MySQL默认的复制即是异步的，主库在执行完客户端提交的事务后会立即将结果返给给客户端，并不关心从库是否已经接收并处理，这样就会有一个问题，主如果crash掉了，此时主上已经提交的事务可能并没有传到从上，如果此时，强行将从提升为主，可能导致新主上的数据不完整。</p>
-<blockquote>
-<h3 id="全同步复制（Fully-synchronous-replication）"><a href="#全同步复制（Fully-synchronous-replication）" class="headerlink" title="全同步复制（Fully synchronous replication）"></a>全同步复制（Fully synchronous replication）</h3></blockquote>
-<p>指当主库执行完一个事务，所有的从库都执行了该事务才返回给客户端。因为需要等待所有从库执行完该事务才能返回，所以全同步复制的性能必然会收到严重的影响。</p>
-<blockquote>
-<h3 id="半同步复制（Semisynchronous-replication）"><a href="#半同步复制（Semisynchronous-replication）" class="headerlink" title="半同步复制（Semisynchronous replication）"></a>半同步复制（Semisynchronous replication）</h3></blockquote>
-<p>介于异步复制和全同步复制之间，主库在执行完客户端提交的事务后不是立刻返回给客户端，而是等待至少一个从库接收到并写到relay log中才返回给客户端。相对于异步复制，半同步复制提高了数据的安全性，同时它也造成了一定程度的延迟，这个延迟最少是一个TCP&#x2F;IP往返的时间。所以，半同步复制最好在低延时的网络中使用。半同步复制失败(配置超时时间)，自动转为异步复制  </p>
-<h4 id="半同步复制配置步骤"><a href="#半同步复制配置步骤" class="headerlink" title="半同步复制配置步骤"></a>半同步复制配置步骤</h4><ol>
-<li><p>加载使用的插件<br>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_master SONAME &#x27;semisync_master.so&#x27;;</span><br></pre></td></tr></table></figure>
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_slave SONAME &#x27;semisync_slave.so&#x27;;</span><br></pre></td></tr></table></figure>
-<p>通过 <code>show plugins;</code> 可查看已加载的插件</p>
-</li>
-<li><p>启动半同步复制<br>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_master_enabled = 1;</span><br></pre></td></tr></table></figure>
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_slave_enabled = 1;</span><br></pre></td></tr></table></figure>
-<p>执行以下命令重启从库上的IO线程</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">STOP SLAVE IO_THREAD;</span><br><span class="line">START SLAVE IO_THREAD;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>检查半同步复制插件是否在运行<br>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_master_status&#x27;;</span><br></pre></td></tr></table></figure>
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_slave_status&#x27;;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<blockquote>
-<h2 id="Mysql-复制级别说明"><a href="#Mysql-复制级别说明" class="headerlink" title="Mysql 复制级别说明"></a>Mysql 复制级别说明</h2></blockquote>
-<p>不同复制级别的设置会影响到Master端的bin-log记录成不同的形式。<br>配置方式:</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">binlog_format=&#x27;row&#x27;</span><br></pre></td></tr></table></figure>
+<h3 id="TCP-wrappers-的工作原理"><a href="#TCP-wrappers-的工作原理" class="headerlink" title="TCP_wrappers 的工作原理"></a>TCP_wrappers 的工作原理</h3><p><code>TCP_wrappers</code> 通过访问控制列表来提供保护机制，同时依赖 <code>/etc/hosts.allow</code> 和 <code>/etc/hosts.deny</code> 配置文件所设定的规则转交给相应的守护进程进行处理，同时记录请求过程。</p>
+<p><code>TCP_wrappers</code> 在对报文做过滤操作的过程中，会链接到 <code>TCP_wrappers</code> 的函数库， <code>TCP_wrappers</code> 的主要功能是来自于 <code>libwrap.a</code> 这个静态库。</p>
+<p>服务是否可以使用 <code>TCP_wrappers</code> 进行安全防护，取决于服务程序在编译时是否针对 <code>libwrap</code> 进行编译，如果库文件中有 <code>libwrap.so</code> 文件，就可以实现访问控制</p>
+<p>可以通过下面的命令来确定要过滤的服务是否已经链接到了 <code>libwrap</code> 这个函数库中</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ldd /usr/sbin/sshd | grep libwrap</span></span><br><span class="line">	libwrap.so.0 =&gt; /lib64/libwrap.so.0 (0x00007f283cdf1000)</span><br></pre></td></tr></table></figure>
 
-<blockquote>
-<h3 id="基于sql语句（Statement-level）"><a href="#基于sql语句（Statement-level）" class="headerlink" title="基于sql语句（Statement level）"></a>基于sql语句（Statement level）</h3></blockquote>
-<p>每一条会修改数据的sql都会记录到 master的bin-log中。slave在复制的时候，sql进程会解析成和原来master端执行过的相同的sql来再次执行。</p>
-<p><strong>优点</strong>：statement level下的优点首先就是解决了<a href="#%E5%9F%BA%E4%BA%8E%E4%B8%80%E6%9D%A1%E8%AE%B0%E5%BD%95%EF%BC%88Row-level%EF%BC%89">row level</a>下的缺点，不需要记录每一行数据的变化，减少bin-log日志量，节约IO，提高性能。因为他只需要记录在Master上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
-<p><strong>缺点</strong>：由于他是记录的执行语句，所以，为了让这些语句在slave端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在slave端被执行的时候能够得到和在master端执行时候相同的结果。<br>另外就是，由于Mysql现在发展比较快，很多的新功能不断的加入，使mysql的复制遇到了不小的挑战，复制的时候涉及到越复杂的内容，bug也就越容易出现。在statement level下，目前已经发现的就有不少情况会造成mysql的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep()函数在有些版本中就不能真确复制，在存储过程中使用了last_insert_id()函数，可能会使slave和master上得到不一致的id等等。<br>由于row level是基于每一行来记录的变化，所以不会出现类似的问题。</p>
-<blockquote>
-<h3 id="基于一条记录（Row-level）"><a href="#基于一条记录（Row-level）" class="headerlink" title="基于一条记录（Row level）"></a>基于一条记录（Row level）</h3></blockquote>
-<p>日志中会记录成每一行数据被修改的形式，然后在slave端再对相同的数据进行修改</p>
-<p><strong>优点</strong>： 在row level模式下，bin-log中可以不记录执行的sql语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以row level的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程，或function，以及 trigger的调用和触发无法被正确复制的问题。<br>任何情况都可以被复制，这对复制来说是最安全可靠的；和其他大多数数据库系统的复制技术一样；多数情况下，从服务器上的表如果有主键的话，复制就会快了很多,更少的锁</p>
-<p><strong>缺点</strong>： row level下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条update语句：update product set owner_member_id &#x3D; ‘b’ where owner_member_id &#x3D; ‘a’，执行之后，日志中记录的不是这条update语句所对应的事件（mysql以事件的形式来记录bin-log日志），而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log日志的量就会很大。尤其是当执行alter table之类的语句的时候，产生的日志量是惊人的。因为Mysql对于alter table之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
-<blockquote>
-<h3 id="Mixed"><a href="#Mixed" class="headerlink" title="Mixed"></a>Mixed</h3></blockquote>
-<p>在Mixed模式下，Mysql会根据执行的每一条具体的sql语句,来区分对待记录的日志形式，也就是在Statement和Row之间选择一种。新版本中的Statment level还是和以前一样，仅仅记录执行的语句。而新版本的Mysql中对row level模式也被做了优化，并不是所有的修改都会以row level来记录，像遇到表结构变更的时候就会以statement模式来记录，如果sql语句确实就是update或者delete等修改数据的语句，那么还是会记录所有行的变更。</p>
-<blockquote>
-<h3 id="GTID模式"><a href="#GTID模式" class="headerlink" title="GTID模式"></a>GTID模式</h3></blockquote>
-<p>需要基于row模式，mysql-5.6.2支持,mysql5.6.10后完善</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log_bin=on</span><br><span class="line">binlog_format=&#x27;row&#x27;</span><br><span class="line">gtid_mode=on</span><br><span class="line">enforce-gtid-consistency=on</span><br><span class="line">log-slave-updates=1</span><br></pre></td></tr></table></figure>
-<p>限制：</p>
-<ol>
-<li>不支持非事务引擎(从库报错, stop slave; start slave ; 忽略)</li>
-<li>不支持create table … select语句(主库直接报错)</li>
-<li>不支持一个sql同时更新一个事务引擎和非事务引擎的表</li>
-<li>在一个复制组中,必须要求统一开启gtid或是关闭gtid</li>
-<li>开启gtid需要重启</li>
-<li>开启gtid后,就不在使用原来传统的复制方式</li>
-<li>对于create temporary table和drop temporary table语句不支持</li>
-<li>不支持sql_slave_skip_counter</li>
-</ol>
-<blockquote>
-<h2 id="MySQL（主从）配置相关参数"><a href="#MySQL（主从）配置相关参数" class="headerlink" title="MySQL（主从）配置相关参数"></a>MySQL（主从）配置相关参数</h2></blockquote>
-<p>master相关配置  </p>
-<figure class="highlight shell"><figcaption><span>master my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 1</span><br><span class="line">log-bin = mysql-bin    #要生成的二进制日志文件名称</span><br><span class="line">binlog_format=statement/row/mixed        ###复制实现模式/级别</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-do-db = rtzc_pnc_base       <span class="comment">##要同步的库.应该尽可能的在从库上使用replicate_wild_*，不建议在主库上使用</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-ignore-db = mysql   <span class="comment">#不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#### 一般不再主服务器上过滤，虽然可以减少主的开销，但这样会导致二进制日志不完整</span></span></span><br><span class="line">sync_binlog=0</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#######</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">0      表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span></span><br><span class="line"></span><br><span class="line">innodb_flush_log_at_trx_commit = 1</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##########innodb特有参数</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=0     每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=1     每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，<span class="built_in">log</span> buffer 会被写入到日志文件并刷写到磁盘。这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=2    当取值为 2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">replicate-wild-ignore-table=db.*               <span class="comment">###应该在从库上尽可能的使用replicate_wild_</span></span></span><br><span class="line"></span><br><span class="line">max_binlog_size</span><br><span class="line">expire_logs_days = 7          ##日志保存天数</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>当客户端的 IP 通过了安全系统中第一层（iptables 防火墙），想要进一步访问服务器资源时，系统就会由 <code>TCP_wrappers</code> 来对请求进行分析处理，根据服务设定的规则来查看这个请求是否存在于 <code>/etc/hosts.allow</code> 列表中，如果存在就接受；如果不存在就继续对比 <code>/etc/hosts/deny</code> 列表，如果存在于 <code>hosts.deny</code> 中就拒绝 IP 请求，反之则接受请求。  </p>
+<p><strong>判断规则的文件顺序必须严格按照先 <code>hosts.allow</code> 再 <code>hosts.deny</code> 的顺序进行判断。同时，<code>TCP_wrappers</code> 不会缓存 <code>hosts.allow</code> 和 <code>hosts.deny</code> 中的规则，所以针对 <code>hosts.allow</code> 和 <code>hosts.deny</code> 中规则的更改是立即生效的。</strong></p>
+<h3 id="TCP-wrappers-的配置"><a href="#TCP-wrappers-的配置" class="headerlink" title="TCP_wrappers 的配置"></a>TCP_wrappers 的配置</h3><p><code>TCP_wrappers</code> 实现防火墙的功能主要是依靠 <code>/etc/hosts.allow</code> 和 <code>/etc/hosts.deny</code> 这两个文件的。<code>/etc/hosts.allow</code> 主要是定义允许访问，<code>/etc/hosts.deny</code> 用来定义拒绝访问。  </p>
+<p>配置文件中的配置格式如下，格式说明可以参考 <code>man 5 hosts_options</code></p>
+<figure class="highlight shell"><figcaption><span>/etc/hosts.allow</span></figcaption><table><tr><td class="code"><pre><span class="line">daemon_list[@host] : client_list : option : option ...</span><br></pre></td></tr></table></figure>
 
-<p>slave相关配置</p>
-<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 2</span><br><span class="line">relay-log = mysql-relay-bin</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-db = rtzc_pnc_base     <span class="comment">##应该在从库上尽可能的使用replicate_wild_*，并不会减少主往从复制数据占用带宽</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-table = db.table      <span class="comment">##表级过滤</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#replicate-ignore-table = db.table</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_ignore_db=<span class="built_in">test</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_do_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_ignore_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">slave-skip-errors = 1032,1062     <span class="comment">###跳过某些同步错误号</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">log-slave-updates=1          <span class="comment">###从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span></span></span><br><span class="line">log-bin = mysql-bin</span><br><span class="line"></span><br><span class="line">expire_logs_days = 7</span><br><span class="line"></span><br><span class="line">read-only         ###从库Slave中使用read-only参数，确保从库数据不被非法更新。</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">innodb_read_only = 1         <span class="comment">###控制root用户，慎用</span></span></span><br></pre></td></tr></table></figure>]]></content>
+<p>其中：</p>
+<ul>
+<li><code>daemon_list</code> ： 服务名，例如：sshd、vsftpd、sendmail 等，多个服务之间使用逗号分割。</li>
+<li><code>client_list</code> : IP 或 IP 段或主机名。（列表中存在多个服务或者主机的时候用 , 逗号分隔开）</li>
+<li><code>option</code> : 包括对匹配规则的 <code>action</code>， 最主要的有 <code>allow</code> 或 <code>deny</code>（这个可以忽略不写）</li>
+</ul>
+<p>例如，配置限制 <code>192.168.0.0/16</code> 网段不能 <code>ssh</code> 到本机的 <code>sshd</code> 服务</p>
+<figure class="highlight shell"><figcaption><span>/etc/hosts.deny</span></figcaption><table><tr><td class="code"><pre><span class="line">sshd:192.168.</span><br></pre></td></tr></table></figure>
+<p>如上配置后，指定网段不能 <code>ssh</code> 到本机  </p>
+<p>配置后有问题，可以查看日志文件 <code>/var/log/secure</code>，如配置有问题，日志中会记录相关日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /var/log/secure</span></span><br><span class="line">sshd[7699]: error: /etc/hosts.allow, line 12: bad option name: &quot;%d&quot;&quot;</span><br></pre></td></tr></table></figure>
+
+<h4 id="配置文件中-daemon-list-常用格式"><a href="#配置文件中-daemon-list-常用格式" class="headerlink" title="配置文件中 daemon_list 常用格式"></a>配置文件中 daemon_list 常用格式</h4><table>
+<thead>
+<tr>
+<th>格式</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ALL</code></td>
+<td>完全匹配，适配所有接受 <code>TCP_wrappers</code> 防护的服务</td>
+<td></td>
+</tr>
+<tr>
+<td><code>service1</code><br/><code>service1,service2</code><br/><code>service1@172.16.1.2</code></td>
+<td>指定服务<br/>多个服务使用逗号分割<br/>针对本机的某个 ip 做限制</td>
+<td><code>sshd,vsftpd:192.168.1.:allow</code></td>
+</tr>
+</tbody></table>
+<h4 id="配置文件中-client-list-常用格式"><a href="#配置文件中-client-list-常用格式" class="headerlink" title="配置文件中 client_list 常用格式"></a>配置文件中 client_list 常用格式</h4><table>
+<thead>
+<tr>
+<th>格式</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ALL</code></td>
+<td>完全匹配，适配所有客户端</td>
+<td></td>
+</tr>
+<tr>
+<td><code>.HOSTNAME</code></td>
+<td>适配整个域</td>
+<td><code>sshd:.csms.tech:allow</code>，允许 <a href="https://csms.tech/"><code>csms.tech</code></a> 内的所有主机访问</td>
+</tr>
+<tr>
+<td><code>192.168.</code><br/><code>192.168.0.0/255.255.0.0</code><br/><code>192.168.0.0/16</code></td>
+<td>适配整个网段，会匹配到 <code>192.168.0.0/16</code> 网段</td>
+<td></td>
+</tr>
+<tr>
+<td><code>172.16. EXCEPT 172.16.100.0/24</code></td>
+<td>排除部分客户端</td>
+<td><code>172.16. EXCEPT 172.16.100.0/24 EXCEPT 172.16.10.1</code></td>
+</tr>
+</tbody></table>
+<h4 id="配置文件中-option-常用格式"><a href="#配置文件中-option-常用格式" class="headerlink" title="配置文件中 option 常用格式"></a>配置文件中 option 常用格式</h4><table>
+<thead>
+<tr>
+<th>格式</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>allow</code></td>
+<td>主要用在 <code>/etc/hosts.deny</code> 定义 <code>允许</code> 规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>deny</code></td>
+<td>主要用在 <code>/etc/hosts.allow</code> 定义 <code>拒绝</code> 规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>spawn</code></td>
+<td>启动一个外部程序(<code>shell</code>)完成指定的命令</td>
+<td></td>
+</tr>
+<tr>
+<td><code>twist</code></td>
+<td>替换客户端的请求成我们指定的命令，会导致服务拒绝，即使写在 <code>/etc/hosts.allow</code></td>
+<td></td>
+</tr>
+</tbody></table>
+<h5 id="spawn-示例"><a href="#spawn-示例" class="headerlink" title="spawn 示例"></a>spawn 示例</h5><p>在 <code>/etc/hosts.allow</code> 中添加以下内容</p>
+<figure class="highlight shell"><figcaption><span>/etc/hosts.allow</span></figcaption><table><tr><td class="code"><pre><span class="line">sshd: ALL :\</span><br><span class="line">         spawn echo $(date +%%F) login attempt from %c to %s,%d &gt;&gt;/var/log/sshd.log</span><br></pre></td></tr></table></figure>
+<p>以上配置，会在客户端 ssh 登录时记录日志  </p>
+<p>其中，可以变量包含以下</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>%a</code></td>
+<td>客户端的 IP 地址</td>
+</tr>
+<tr>
+<td><code>%A</code></td>
+<td>服务端的 IP 地址</td>
+</tr>
+<tr>
+<td><code>%d	</code></td>
+<td>守护进程的名字</td>
+</tr>
+<tr>
+<td><code>%h</code></td>
+<td>客户端的主机名</td>
+</tr>
+<tr>
+<td><code>%H</code></td>
+<td>服务端的主机名</td>
+</tr>
+<tr>
+<td><code>%p</code></td>
+<td>守护进程的 pid</td>
+</tr>
+<tr>
+<td><code>%u</code></td>
+<td>客户端的用户名</td>
+</tr>
+</tbody></table>
+<h5 id="twist-示例"><a href="#twist-示例" class="headerlink" title="twist 示例"></a>twist 示例</h5><p>在 <code>/etc/hosts.allow</code> 中添加以下内容</p>
+<figure class="highlight shell"><figcaption><span>/etc/hosts.allow</span></figcaption><table><tr><td class="code"><pre><span class="line">vsftpd: 172.16.0.1 :twist /bin/echo “connection prohibited”</span><br></pre></td></tr></table></figure>
+
+<p>以上配置会将客户端的请求替换成 <code>twist</code> 指定的命令，因此客户端无法使用指定的服务，即使配置在 <code>/etc/hosts.allow</code> 中</p>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://m-zhoujie2.gitbooks.io/-linux-devops-2/content/chapter3-5.html">TCP wrappers</a></p>
+<p><a href="https://www.cnblogs.com/duzhaoqi/p/7607801.html">TCP_Wrappers</a></p>
+]]></content>
       <categories>
-        <category>Mysql</category>
+        <category>Linux</category>
       </categories>
       <tags>
-        <tag>Mysql</tag>
+        <tag>Linux</tag>
+        <tag>tcp_wrappers</tag>
       </tags>
   </entry>
   <entry>
@@ -19768,6 +19524,154 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 网络</title>
+    <url>/202212020941/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 3.10.0-1160</li>
+<li>Docker Engine - Community 23.0.3</li>
+<li>kubernetes 1.21.2-0</li>
+<li>kubernetes-cni-0.8.7-0</li>
+</ul>
+<p>Kubernetes 对任何网络实现都规定了以下要求： <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[万字长文，带你搞懂 Kubernetes 网络模型](https://www.51cto.com/article/714336.html)">[1]</span></a></sup></p>
+<ul>
+<li><p><strong>所有 Pod 都可以在不使用网络地址转换 (NAT) 的情况下与所有其他 Pod 通信。</strong></p>
+<p>  容器之间直接通信，不需要额外的 NAT，不存在源地址伪装的情况</p>
+</li>
+<li><p><strong>所有节点都可以在没有 NAT 的情况下与所有 Pod 通信。</strong></p>
+<p>  Node 与容器直接通信，不需要额外的 NAT</p>
+</li>
+<li><p><strong>Pod 认为自己的 IP 与其他人认为的 IP 相同。</strong></p>
+</li>
+</ul>
+<h1 id="CNI"><a href="#CNI" class="headerlink" title="CNI"></a>CNI</h1><p>CNI 是 Kubernetes 容器网络的标准，CNI 是 Kubernetes 和底层网络插件之间的一个抽象层，为 Kubernetes 屏蔽了底层网络实现的负责度，同时解耦了 Kubernetes 和具体的网络插件实现。</p>
+<h2 id="安装-CNI"><a href="#安装-CNI" class="headerlink" title="安装 CNI"></a>安装 CNI</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum install kubernetes-cni</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep kube</span></span><br><span class="line">kubeadm-1.21.2-0.x86_64</span><br><span class="line">kubectl-1.21.2-0.x86_64</span><br><span class="line">kubelet-1.21.2-0.x86_64</span><br><span class="line">kubernetes-cni-0.8.7-0.x86_64</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -ql kubernetes-cni-0.8.7-0</span></span><br><span class="line">/opt/cni</span><br><span class="line">/opt/cni/bin</span><br><span class="line">/opt/cni/bin/bandwidth</span><br><span class="line">/opt/cni/bin/bridge</span><br><span class="line">/opt/cni/bin/dhcp</span><br><span class="line">/opt/cni/bin/firewall</span><br><span class="line">/opt/cni/bin/flannel</span><br><span class="line">/opt/cni/bin/host-device</span><br><span class="line">/opt/cni/bin/host-local</span><br><span class="line">/opt/cni/bin/ipvlan</span><br><span class="line">/opt/cni/bin/loopback</span><br><span class="line">/opt/cni/bin/macvlan</span><br><span class="line">/opt/cni/bin/portmap</span><br><span class="line">/opt/cni/bin/ptp</span><br><span class="line">/opt/cni/bin/sbr</span><br><span class="line">/opt/cni/bin/static</span><br><span class="line">/opt/cni/bin/tuning</span><br><span class="line">/opt/cni/bin/vlan</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>Kubernetes 要使用 CNI，需要在 kubelet 启动时配置启动参数 <code>--network-plugin=cni</code>（默认配置，可使用 <code>systemctl status kubelet -l</code> 查看启动参数）。</p>
+<p>kubelet 从 <code>--cni-config-dir</code> （默认为 <code>/etc/cni/net.d/</code>）中读取网络插件的配置文件，并使用该文件中的 CNI 配置来配置每个 Pod 网络。如果该目录 （<code>/etc/cni/net.d/</code>）中有多个配置文件，则使用文件名字典序列中的第一个文件。</p>
+<p>CNI 插件的二进制文件放置的目录是通过 kubelet 的 <code>--cni-bin-dir</code> 参数指定，默认为 <code>/opt/cni/bin/</code></p>
+<span id="more"></span>
+
+<h1 id="flannel"><a href="#flannel" class="headerlink" title="flannel"></a>flannel</h1><p>flannel 最早由 CoreOS 开发，它是容器编排系统中最成熟的网络插件之一。随着 CNI 概念的兴起，flannel 也是最早实现 CNI 标准的网络插件，CNI 标准也是由 CoreOS 提出的。flannel 的功能非常明确，主要解决以下容器跨接点访问的问题</p>
+<ul>
+<li><strong>容器 IP 地址的重复问题</strong>。由于 Docker 等容器管理工具只是利用 Linux 内核的 network namespace 实现了网络隔离，各个节点上的容器 IP 由各个节点自动分配，可能出现重复。为了解决这个问题，flannel 设计了一种全局的 IP 地址分配机制，即使用 etcd 存储网段和节点 IP 之间的映射关系，然后配置 docker 只在当前节点对应的网段里面为容器分配 IP。</li>
+<li><strong>容器 IP 地址的路由问题</strong>。flannel 使用多种后端（底层）技术（如 overlay 网络、Host-Gateway 网络等）解决了容器跨节点的直接通信问题。</li>
+</ul>
+<p>flannel 在架构上分为<strong>管理面</strong>和<strong>数据面</strong>。</p>
+<ul>
+<li><strong>管理面</strong>主要是 <code>etcd</code>。用于存储各个节点的 IP 及其上容器应该分配的网段</li>
+<li><strong>数据面</strong>是每个节点上运行一个 <code>flanneld</code> 进程，负责从管理面读取节点 IP 及对应的网段信息，并根据这些信息对容器跨接点通信的数据包进行路由转发。</li>
+</ul>
+<p>集群内所有的 flannel 节点共享一个大网段，比如 <code>10.0.0.0/16</code>，flanneld 启动后便会读取 etcd 中的信息，得知其他节点的 IP 及其使用的子网段，然后向 etcd 申请本节点可使用的子网段（在大网段中划分一个子网段），比如 10.0.0.1&#x2F;24，并将该信息上报记录到 etcd。</p>
+<p>flannel 目前已经支持的底层网络实现（backend）包括：</p>
+<ul>
+<li><code>UDP</code></li>
+<li><code>VXLAN</code></li>
+<li><code>Host-Gateway</code></li>
+<li><code>Alloc</code></li>
+<li><code>AWS VPC</code></li>
+<li><code>GCE 路由</code></li>
+</ul>
+<p>其中，性能最好的是 <code>Host-Gateway</code>。<code>AWS VPC</code> 和 <code>GCE 路由</code>都需要 L2 网络支持，并且最好是接入云服务。<code>Alloc</code> 只为本机创建子网，多个节点上的子网之间不能通信。</p>
+<h2 id="flannel-backend-详解"><a href="#flannel-backend-详解" class="headerlink" title="flannel backend 详解"></a>flannel backend 详解</h2><p>flannel 通过在每个节点上启动 <code>flanneld</code> 进程，负责每个节点上的子网划分，并将相关配置（如节点的 IP，划分的子网网段等）上报保存到 etcd，而具体的网络报文转发交给具体的 backend 实现。</p>
+<p><code>flanneld</code> 可以在启动时通过配置文件指定不同的 backend 进行跨节点的容器之间的网络报文的路由转发，目前比较成熟的 backend 有  <code>UDP</code>、 <code>VXLAN</code> 、<code>Host-Gateway</code>，也有 <code>AWS VPC</code>、<code>GCE 路由</code> 等专门针对云服务的 backend。目前 <code>VXLAN</code> 是官方最推崇的 backend 实现，<code>Host-Gateway</code> 是网络性能最好的 backend 实现，但是需要所有节点在同一个二层网络中互通。<code>UDP</code> 性能相对较差，建议用于测试及比较老的不支持 VXLAN 的 Linux 内核。</p>
+<h3 id="UDP"><a href="#UDP" class="headerlink" title="UDP"></a>UDP</h3><p>UDP 模式基于 <a href="/202304241633/" title="Linux tun 设备">Linux tun 设备</a>。</p>
+<p>当采用 UDP 模式时，<code>flanneld</code> 启动时会通过打开 <code>/dev/net/tun</code> 的方式生成一个 tun 设备。当 <code>flanneld</code> 进程运行之后，查看系统上的网卡信息，可以看到多了 <code>flannel0</code> 的网卡，通过命令 <code>ip -d link show flannel0</code>，可以看到其类型为 <code>tun</code> 设备。此模式下 <code>flanneld</code> 进程监听 8285 端口。</p>
+<h4 id="flannel-UDP-模式跨主机通信流程详解"><a href="#flannel-UDP-模式跨主机通信流程详解" class="headerlink" title="flannel UDP 模式跨主机通信流程详解"></a>flannel UDP 模式跨主机通信流程详解</h4><p>本说明使用架构图形如下<br><img src="https://i.csms.tech/img_140.png"></p>
+<p>以 ICMP 报文为例，<code>container A</code> 和 <code>container B</code> 的通信过程如下</p>
+<ol>
+<li><p><code>container A</code> 发起 ICMP 请求报文，根据 <code>container A</code> 中的路由信息，报文被发送到网关 <code>10.244.1.1</code>，对应设备为 <code>Host A</code> 主机上面的 <code>cni0</code> 网卡。此时报文内容如下<br>  <img src="https://i.csms.tech/img_141.png"></p>
+</li>
+<li><p>到达 cni0 的报文，目的 IP 为 <code>10.244.2.149</code>，内核根据 <code>host A</code> 上的路由信息（<code>10.244.0.0 0.0.0.0 255.255.0.0 U 0 0 0 flannel0</code>），应该将报文发送到 <code>flannel0</code> 网卡。</p>
+</li>
+<li><p><code>flannel0</code> 是个 tun  设备，数据会被 <code>flanneld</code> 接受，<code>flanneld</code> 会对数据包进行 UDP 封装。</p>
+<ul>
+<li>报文会被添加上 UDP 头部，其源端口为 <code>host A</code> 上的随机端口，目标端口为 8285</li>
+<li>添加 IP 头部，源 IP 为本节点出口 IP （eth0：172.16.130.140），目标 IP 为目标容器所在节点的 IP（eth0：172.16.130.146）。<blockquote>
+<p><code>flanneld</code> 进程是如何知道目标容器所在节点的 IP 地址？<strong>是通过 etcd 中的记录，<code>flanneld</code> 进程很容易根据目标容器的 IP 子网段，获取到对应节点的 IP</strong><br>  <img src="https://i.csms.tech/img_142.png"></p>
+</blockquote>
+</li>
+</ul>
+</li>
+<li><p><code>flanneld</code> 进程封装后的报文重新进入内核协议栈，内核根据主机上的路由信息，从主机 eth0 网卡发送出去，到达了目标主机 <code>host B</code></p>
+</li>
+<li><p><code>host B</code> 主机内核接收到此网络数据报文，通过 UDP 端口号 8285 将数据包交给监听在此端口上的 <code>flanneld</code> 进程。</p>
+</li>
+<li><p><code>host B</code> 主机上的 <code>flanneld</code> 进程对数据报文解封，获取到下图所示的报文，在网络层，源 IP 为容器 A 的 IP：10.244.1.96，目标 IP 为容器 B 的 IP：10.244.2.194。解封后的数据报文重新进入内核路由，根据主机 B 的主机路由表（<code>10.244.2.0 0.0.0.0 255.255.255.0 U 0 0 0 cni0</code>），报文被路由到 cni0<br> <img src="https://i.csms.tech/img_143.png"></p>
+</li>
+<li><p>cni0 网桥将数据包根据 MAC 地址（可以 ARP 寻址得到）将报文转发到容 B。</p>
+</li>
+<li><p>回程报文将按照上面的数据流原路返回。</p>
+</li>
+</ol>
+<p>纵观以上整个过程，<code>flanneld</code> 进程在其中主要有以下作用</p>
+<ul>
+<li>UDP 封包解封包，根据目标容器的 IP，将其转发到正确的主机节点（IP）</li>
+<li>主机节点上动态更新路由表，根据 etcd 的数据刷新本节点路由表</li>
+</ul>
+<p>容器 A 和容器 B 虽然物理上网络未相连，但是逻辑上确是在一个三层网络，这种在物理网络之上构建的上层网络称之为 <strong>overlay 网络或者隧道网络</strong></p>
+<p><strong>flannel UDP 模式的缺点</strong></p>
+<ul>
+<li>数据报文先通过 tun 设备从内核态复制到了用户态 <code>flanneld</code> 进行封装，然后再传输到了内核，仅一次网络传输就进行了 2 次用户态到内核态的切换，效率不高。</li>
+<li>因为报文封装的关系，flannel0 网卡的 MTU 要比主机 eth0 网卡小 28 个字节。</li>
+</ul>
+<h3 id="VXLAN"><a href="#VXLAN" class="headerlink" title="VXLAN"></a>VXLAN</h3><p><code>flanneld</code> 进程配置为 <code>vxlan</code> 类型的 backend ，<code>flanneld</code> 进程启动时会在主机上创建名为 <code>flannel.1</code> 的网卡（VTEP），网卡命名格式遵循 <code>flannel.[VNI]</code>，VNI 默认为 1。</p>
+<p>通过以下命令查看 VTEP 设备 <code>flannel.1</code> 的信息。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d <span class="built_in">link</span> show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN mode DEFAULT group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535</span><br><span class="line">    </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip -d add show flannel.1</span></span><br><span class="line">6: flannel.1: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 8951 qdisc noqueue state UNKNOWN group default </span><br><span class="line">    link/ether 8a:32:fc:1d:b8:88 brd ff:ff:ff:ff:ff:ff promiscuity 0 </span><br><span class="line">    vxlan id 1 local 172.31.16.124 dev eth0 srcport 0 0 dstport 8472 nolearning ageing 300 udpcsum noudp6zerocsumtx noudp6zerocsumrx numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 </span><br><span class="line">    inet 10.244.4.0/32 scope global flannel.1</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    inet6 fe80::8832:fcff:fe1d:b888/64 scope link </span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">    </span><br></pre></td></tr></table></figure>
+<p>从以上信息可以看到，<code>flannel.1</code> 类型为 <code>vxlan</code>，local IP 为 172.31.16.124，使用的是 UDP 端口 8472</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span> </span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">udp        0      0 0.0.0.0:8472            0.0.0.0:*                           -</span><br></pre></td></tr></table></figure>
+<p>以上使用 <code>netstat -anutp</code> 命令的输出中，<code>PID/Program name</code> 显示的是 <code>-</code>，说明 8472 这个 UDP 端口不是由用户态的程序监听，而是 <strong>flannel 的 VXLAN 模式工作在内核态</strong>。</p>
+<p>Kubernetes 中，VXLAN 模式的 <code>flanneld</code> 的工作流程：</p>
+<ol>
+<li><p><code>flanneld</code> 启动时，先确保 <code>flannel.1</code> 存在，若已存在则跳过，并将 VTEP 设备的相关信息（ip，节点 IP，MAC 地址等）上报到 etcd 中</p>
+</li>
+<li><p>当 flannel 网络中的其他节点加入集群并向 etcd 上报注册时，各个节点的 <code>flanneld</code> 会从 etcd 得到通知，并依次执行下面的步骤</p>
+</li>
+<li><p>在本节点添加一条新网段的路由信息，主要是让 Pod 中的流量能路由到 <code>flannel.1</code></p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ route -n</span><br><span class="line"> Kernel IP routing table</span><br><span class="line"> Destination     Gateway         Genmask         Flags Metric Ref    Use Iface</span><br><span class="line"> 0.0.0.0         172.31.16.1     0.0.0.0         UG    100    0        0 eth0</span><br><span class="line"> 10.244.0.0      10.244.0.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.1.0      10.244.1.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.2.0      10.244.2.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.3.0      10.244.3.0      255.255.255.0   UG    0      0        0 flannel.1</span><br><span class="line"> 10.244.4.0      0.0.0.0         255.255.255.0   U     0      0        0 cni0</span><br><span class="line"> 172.17.0.0      0.0.0.0         255.255.0.0     U     0      0        0 docker0</span><br><span class="line"> 172.31.16.0     0.0.0.0         255.255.240.0   U     100    0        0 eth0</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在本节点添加一条新增节点的 VTEP 设备的静态 ARP 缓存</p>
+</li>
+</ol>
+<h4 id="flannel-VXLAN-模式跨主机通信流程详解"><a href="#flannel-VXLAN-模式跨主机通信流程详解" class="headerlink" title="flannel VXLAN 模式跨主机通信流程详解"></a>flannel VXLAN 模式跨主机通信流程详解</h4><p>flannel VXLAN 模式时容器跨节点网络通信实现流程<br><img src="https://i.csms.tech/img_144.png"></p>
+<ol>
+<li>同 UDP Backend 模式，容器 A 当中的 IP 包通过容器 A 内的路由表被发送到 cni0</li>
+<li>到达 cni0 当中的 IP 包通过匹配 host A 当中的路由表发现通往 10.244.2.194 的 IP 包应该交给 flannel.1 接口</li>
+<li>flannel.1 作为一个 VTEP 设备，收到报文后将按照 VTEP 的配置进行封包，首先通过 etcd 得知 10.244.2.194 属于节点 B，并得到节点 B 的 IP，通过节点 A 当中的转发表得到节点 B 对应的 VTEP 的 MAC，根据 flannel.1 设备创建时的设置的参数（VNI、local IP、Port）进行 VXLAN 封包</li>
+<li>通过 host A 跟 host B 之间的网络连接，VXLAN 包到达 host B 的 eth1 接口</li>
+<li>通过端口 8472，VXLAN 包被转发给 VTEP 设备 flannel.1 进行解包</li>
+<li>解封装后的 IP 包匹配 host B 当中的路由表（10.244.2.0），内核将 IP 包转发给 cni0</li>
+<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
+</ol>
+<p>在 VXLAN 模式下，数据包的封装解封装及路由转发都是由内核完成，<code>flanneld</code> 不再进行数据包的封装和路由转发，仅动态设置主机的路由表项、ARP 表及 FDB 表项。其效率相比 UDP 模式高效。</p>
+<h3 id="host-gw"><a href="#host-gw" class="headerlink" title="host-gw"></a>host-gw</h3><p>要配置使用 <code>host-gw</code> 模式，将 Backend 中的 <code>type</code> 改为 <code>host-gw</code> 即可。</p>
+<p>使用 <code>host-gw</code> Backend 的 Flannel 网络的网络包传输过程如下图所示：<br><img src="https://i.csms.tech/img_145.png"></p>
+<ol>
+<li>同 UDP、VXLAN 模式一致，通过容器 A 的路由表， IP 包到达 cni0</li>
+<li>到达 cni0 的 IP 包匹配到 host A 当中的路由规则（10.244.2.0），并且网关为 172.16.130.164，即 host B，所以内核将 IP 包发送给 host B（172.16.130.164）</li>
+<li>IP 包通过物理网络到达 host B 的 eth1</li>
+<li>到达 host B eth1 的 IP 包匹配到 host B 当中的路由表（10.244.2.0），IP 包被转发给 cni0</li>
+<li>cni0 将 IP 包转发给连接在 cni0 上的容器 B</li>
+</ol>
+<p><code>host-gw</code> 模式其中一个局限性就是，由于是通过节点上的路由表来实现各个节点之间的跨节点网络通信，那么就得保证两个节点是可以直接路由过去的。按照内核当中的路由规则，网关必须在跟主机当中至少一个 IP 处于同一网段，故造成的结果就是采用 <code>host-gw</code> 这种 Backend 方式时集群中所有的节点必须处于同一个网络当中，这对于集群规模比较大时需要对节点进行网段划分的话会存在一定的局限性。另外一个则是随着集群当中节点规模的增大，<code>flanneld</code> 需要维护主机上成千上万条路由表的动态更新也是一个不小的压力。</p>
+<p>采用 <code>host-gw</code> 模式后 <code>flanneld</code> 的唯一作用就是负责主机上路由表的动态更新。</p>
+<h2 id="Kubernetes-中-flannel-相关配置"><a href="#Kubernetes-中-flannel-相关配置" class="headerlink" title="Kubernetes 中 flannel 相关配置"></a>Kubernetes 中 flannel 相关配置</h2><p>CNI 调用 flannel 插件是通过其配置文件 <code>/etc/cni/net.d/10-flannel.conflist</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /etc/cni/net.d/10-flannel.conflist</span> </span><br><span class="line">&#123;</span><br><span class="line">  &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">  &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">  &quot;plugins&quot;: [</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">      &quot;delegate&quot;: &#123;</span><br><span class="line">        &quot;hairpinMode&quot;: true,</span><br><span class="line">        &quot;isDefaultGateway&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;,</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">      &quot;capabilities&quot;: &#123;</span><br><span class="line">        &quot;portMappings&quot;: true</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line">  ]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>flannel 安装好启动之后，查看 flannel 的配置，可以看到配置的网段信息。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> /run/flannel/subnet.env</span> </span><br><span class="line">FLANNEL_NETWORK=10.244.0.0/16</span><br><span class="line">FLANNEL_SUBNET=10.244.0.1/24</span><br><span class="line">FLANNEL_MTU=8951</span><br><span class="line">FLANNEL_IPMASQ=true</span><br></pre></td></tr></table></figure>
+
+<p>在 Kubernetes 中，要查看 flannel 详细的配置，可以查看以下 configmap</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit configmap -n kube-flannel kube-flannel-cfg</span></span><br><span class="line">data:</span><br><span class="line">  cni-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;name&quot;: &quot;cbr0&quot;,</span><br><span class="line">      &quot;cniVersion&quot;: &quot;0.3.1&quot;,</span><br><span class="line">      &quot;plugins&quot;: [</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;flannel&quot;,</span><br><span class="line">          &quot;delegate&quot;: &#123;</span><br><span class="line">            &quot;hairpinMode&quot;: true,</span><br><span class="line">            &quot;isDefaultGateway&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;,</span><br><span class="line">        &#123;</span><br><span class="line">          &quot;type&quot;: &quot;portmap&quot;,</span><br><span class="line">          &quot;capabilities&quot;: &#123;</span><br><span class="line">            &quot;portMappings&quot;: true</span><br><span class="line">          &#125;</span><br><span class="line">        &#125;</span><br><span class="line">      ]</span><br><span class="line">    &#125;</span><br><span class="line">  net-conf.json: |</span><br><span class="line">    &#123;</span><br><span class="line">      &quot;Network&quot;: &quot;10.244.0.0/16&quot;,</span><br><span class="line">      &quot;Backend&quot;: &#123;</span><br><span class="line">        &quot;Type&quot;: &quot;vxlan&quot;</span><br><span class="line">      &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>从中可以看到 flannel 使用的大网段 <code>10.244.0.0/16</code>，以及其使用的底层（后端）网络通信的实现技术（<code>Backend</code>）</p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.51cto.com/article/714336.html">万字长文，带你搞懂 Kubernetes 网络模型</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.infoq.cn/article/qduqfhrisblob7textxe">Kubernetes 网络模型进阶</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>sftp 服务常用配置说明</title>
     <url>/202207301332/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认ssh启用了sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置sshd以限制sftp登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
@@ -19800,6 +19704,102 @@ width: 20%;
       </categories>
       <tags>
         <tag>sftp</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Mysql 主从复制相关原理简述</title>
+    <url>/2207211114/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h2 id="Mysql-主从同步基本原理"><a href="#Mysql-主从同步基本原理" class="headerlink" title="Mysql 主从同步基本原理"></a>Mysql 主从同步基本原理</h2></blockquote>
+<p>复制的基本过程如下：  </p>
+<ol>
+<li><p>Slave上面的IO进程连接上Master，并请求从指定日志文件的指定位置（或者从最开始的日志）之后的日志内容；</p>
+</li>
+<li><p>Master接收到来自Slave的IO进程的请求后，通过负责复制的IO进程,根据请求信息,读取指定日志指定位置之后的日志信息，返回给Slave 的IO进程。返回信息中除了日志所包含的信息之外，还包括本次返回的信息已经到Master端的bin-log文件的名称以及bin-log的位置；</p>
+</li>
+<li><p>Slave的IO进程接收到信息后，将接收到的日志内容依次添加到Slave端的relay-log文件的最末端，并将读取到的Master端的 bin-log的文件名和位置记录到master-info文件中，以便在下一次读取的时候能够清楚的告诉Master“我需要从某个bin-log的哪个位置开始往后的日志内容，请发给我”；</p>
+</li>
+<li><p>Slave的Sql进程检测到relay-log中新增加了内容后，会马上解析relay-log的内容，获得在Master端真实执行的那些可执行的内容，并在自身执行。</p>
+</li>
+</ol>
+<p>双主情况下，禁止同时写入，建议还是按照主从的方式工作，防止数据冲突。双主场景下，主要是切换主备方便。</p>
+<span id="more"></span>
+
+<blockquote>
+<h2 id="Mysql-复制方式"><a href="#Mysql-复制方式" class="headerlink" title="Mysql 复制方式"></a>Mysql 复制方式</h2></blockquote>
+<blockquote>
+<h3 id="异步复制（Asynchronous-replication）"><a href="#异步复制（Asynchronous-replication）" class="headerlink" title="异步复制（Asynchronous replication）"></a>异步复制（Asynchronous replication）</h3></blockquote>
+<p>MySQL默认的复制即是异步的，主库在执行完客户端提交的事务后会立即将结果返给给客户端，并不关心从库是否已经接收并处理，这样就会有一个问题，主如果crash掉了，此时主上已经提交的事务可能并没有传到从上，如果此时，强行将从提升为主，可能导致新主上的数据不完整。</p>
+<blockquote>
+<h3 id="全同步复制（Fully-synchronous-replication）"><a href="#全同步复制（Fully-synchronous-replication）" class="headerlink" title="全同步复制（Fully synchronous replication）"></a>全同步复制（Fully synchronous replication）</h3></blockquote>
+<p>指当主库执行完一个事务，所有的从库都执行了该事务才返回给客户端。因为需要等待所有从库执行完该事务才能返回，所以全同步复制的性能必然会收到严重的影响。</p>
+<blockquote>
+<h3 id="半同步复制（Semisynchronous-replication）"><a href="#半同步复制（Semisynchronous-replication）" class="headerlink" title="半同步复制（Semisynchronous replication）"></a>半同步复制（Semisynchronous replication）</h3></blockquote>
+<p>介于异步复制和全同步复制之间，主库在执行完客户端提交的事务后不是立刻返回给客户端，而是等待至少一个从库接收到并写到relay log中才返回给客户端。相对于异步复制，半同步复制提高了数据的安全性，同时它也造成了一定程度的延迟，这个延迟最少是一个TCP&#x2F;IP往返的时间。所以，半同步复制最好在低延时的网络中使用。半同步复制失败(配置超时时间)，自动转为异步复制  </p>
+<h4 id="半同步复制配置步骤"><a href="#半同步复制配置步骤" class="headerlink" title="半同步复制配置步骤"></a>半同步复制配置步骤</h4><ol>
+<li><p>加载使用的插件<br>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_master SONAME &#x27;semisync_master.so&#x27;;</span><br></pre></td></tr></table></figure>
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_slave SONAME &#x27;semisync_slave.so&#x27;;</span><br></pre></td></tr></table></figure>
+<p>通过 <code>show plugins;</code> 可查看已加载的插件</p>
+</li>
+<li><p>启动半同步复制<br>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_master_enabled = 1;</span><br></pre></td></tr></table></figure>
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_slave_enabled = 1;</span><br></pre></td></tr></table></figure>
+<p>执行以下命令重启从库上的IO线程</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">STOP SLAVE IO_THREAD;</span><br><span class="line">START SLAVE IO_THREAD;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>检查半同步复制插件是否在运行<br>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_master_status&#x27;;</span><br></pre></td></tr></table></figure>
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_slave_status&#x27;;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<blockquote>
+<h2 id="Mysql-复制级别说明"><a href="#Mysql-复制级别说明" class="headerlink" title="Mysql 复制级别说明"></a>Mysql 复制级别说明</h2></blockquote>
+<p>不同复制级别的设置会影响到Master端的bin-log记录成不同的形式。<br>配置方式:</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">binlog_format=&#x27;row&#x27;</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<h3 id="基于sql语句（Statement-level）"><a href="#基于sql语句（Statement-level）" class="headerlink" title="基于sql语句（Statement level）"></a>基于sql语句（Statement level）</h3></blockquote>
+<p>每一条会修改数据的sql都会记录到 master的bin-log中。slave在复制的时候，sql进程会解析成和原来master端执行过的相同的sql来再次执行。</p>
+<p><strong>优点</strong>：statement level下的优点首先就是解决了<a href="#%E5%9F%BA%E4%BA%8E%E4%B8%80%E6%9D%A1%E8%AE%B0%E5%BD%95%EF%BC%88Row-level%EF%BC%89">row level</a>下的缺点，不需要记录每一行数据的变化，减少bin-log日志量，节约IO，提高性能。因为他只需要记录在Master上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
+<p><strong>缺点</strong>：由于他是记录的执行语句，所以，为了让这些语句在slave端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在slave端被执行的时候能够得到和在master端执行时候相同的结果。<br>另外就是，由于Mysql现在发展比较快，很多的新功能不断的加入，使mysql的复制遇到了不小的挑战，复制的时候涉及到越复杂的内容，bug也就越容易出现。在statement level下，目前已经发现的就有不少情况会造成mysql的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep()函数在有些版本中就不能真确复制，在存储过程中使用了last_insert_id()函数，可能会使slave和master上得到不一致的id等等。<br>由于row level是基于每一行来记录的变化，所以不会出现类似的问题。</p>
+<blockquote>
+<h3 id="基于一条记录（Row-level）"><a href="#基于一条记录（Row-level）" class="headerlink" title="基于一条记录（Row level）"></a>基于一条记录（Row level）</h3></blockquote>
+<p>日志中会记录成每一行数据被修改的形式，然后在slave端再对相同的数据进行修改</p>
+<p><strong>优点</strong>： 在row level模式下，bin-log中可以不记录执行的sql语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以row level的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程，或function，以及 trigger的调用和触发无法被正确复制的问题。<br>任何情况都可以被复制，这对复制来说是最安全可靠的；和其他大多数数据库系统的复制技术一样；多数情况下，从服务器上的表如果有主键的话，复制就会快了很多,更少的锁</p>
+<p><strong>缺点</strong>： row level下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条update语句：update product set owner_member_id &#x3D; ‘b’ where owner_member_id &#x3D; ‘a’，执行之后，日志中记录的不是这条update语句所对应的事件（mysql以事件的形式来记录bin-log日志），而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log日志的量就会很大。尤其是当执行alter table之类的语句的时候，产生的日志量是惊人的。因为Mysql对于alter table之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
+<blockquote>
+<h3 id="Mixed"><a href="#Mixed" class="headerlink" title="Mixed"></a>Mixed</h3></blockquote>
+<p>在Mixed模式下，Mysql会根据执行的每一条具体的sql语句,来区分对待记录的日志形式，也就是在Statement和Row之间选择一种。新版本中的Statment level还是和以前一样，仅仅记录执行的语句。而新版本的Mysql中对row level模式也被做了优化，并不是所有的修改都会以row level来记录，像遇到表结构变更的时候就会以statement模式来记录，如果sql语句确实就是update或者delete等修改数据的语句，那么还是会记录所有行的变更。</p>
+<blockquote>
+<h3 id="GTID模式"><a href="#GTID模式" class="headerlink" title="GTID模式"></a>GTID模式</h3></blockquote>
+<p>需要基于row模式，mysql-5.6.2支持,mysql5.6.10后完善</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log_bin=on</span><br><span class="line">binlog_format=&#x27;row&#x27;</span><br><span class="line">gtid_mode=on</span><br><span class="line">enforce-gtid-consistency=on</span><br><span class="line">log-slave-updates=1</span><br></pre></td></tr></table></figure>
+<p>限制：</p>
+<ol>
+<li>不支持非事务引擎(从库报错, stop slave; start slave ; 忽略)</li>
+<li>不支持create table … select语句(主库直接报错)</li>
+<li>不支持一个sql同时更新一个事务引擎和非事务引擎的表</li>
+<li>在一个复制组中,必须要求统一开启gtid或是关闭gtid</li>
+<li>开启gtid需要重启</li>
+<li>开启gtid后,就不在使用原来传统的复制方式</li>
+<li>对于create temporary table和drop temporary table语句不支持</li>
+<li>不支持sql_slave_skip_counter</li>
+</ol>
+<blockquote>
+<h2 id="MySQL（主从）配置相关参数"><a href="#MySQL（主从）配置相关参数" class="headerlink" title="MySQL（主从）配置相关参数"></a>MySQL（主从）配置相关参数</h2></blockquote>
+<p>master相关配置  </p>
+<figure class="highlight shell"><figcaption><span>master my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 1</span><br><span class="line">log-bin = mysql-bin    #要生成的二进制日志文件名称</span><br><span class="line">binlog_format=statement/row/mixed        ###复制实现模式/级别</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-do-db = rtzc_pnc_base       <span class="comment">##要同步的库.应该尽可能的在从库上使用replicate_wild_*，不建议在主库上使用</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-ignore-db = mysql   <span class="comment">#不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#### 一般不再主服务器上过滤，虽然可以减少主的开销，但这样会导致二进制日志不完整</span></span></span><br><span class="line">sync_binlog=0</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#######</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">0      表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span></span><br><span class="line"></span><br><span class="line">innodb_flush_log_at_trx_commit = 1</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##########innodb特有参数</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=0     每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=1     每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，<span class="built_in">log</span> buffer 会被写入到日志文件并刷写到磁盘。这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=2    当取值为 2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">replicate-wild-ignore-table=db.*               <span class="comment">###应该在从库上尽可能的使用replicate_wild_</span></span></span><br><span class="line"></span><br><span class="line">max_binlog_size</span><br><span class="line">expire_logs_days = 7          ##日志保存天数</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>slave相关配置</p>
+<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 2</span><br><span class="line">relay-log = mysql-relay-bin</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-db = rtzc_pnc_base     <span class="comment">##应该在从库上尽可能的使用replicate_wild_*，并不会减少主往从复制数据占用带宽</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-table = db.table      <span class="comment">##表级过滤</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#replicate-ignore-table = db.table</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_ignore_db=<span class="built_in">test</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_do_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_ignore_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">slave-skip-errors = 1032,1062     <span class="comment">###跳过某些同步错误号</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">log-slave-updates=1          <span class="comment">###从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span></span></span><br><span class="line">log-bin = mysql-bin</span><br><span class="line"></span><br><span class="line">expire_logs_days = 7</span><br><span class="line"></span><br><span class="line">read-only         ###从库Slave中使用read-only参数，确保从库数据不被非法更新。</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">innodb_read_only = 1         <span class="comment">###控制root用户，慎用</span></span></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
