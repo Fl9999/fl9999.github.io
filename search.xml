@@ -5226,6 +5226,65 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>ELK 常见错误</title>
+    <url>/202312151503/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
+<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
+<p>要解决这个问题，可以考虑以下几个选项：</p>
+<ol>
+<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
+<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
+<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
+   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>获取  Elasticsearch 集群的最大分片数限制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
+</li>
+<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
+</li>
+</ol>
+<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>使用以下 filebeat 配置文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
+<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
+
+<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
+<ul>
+<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
+</li>
+<li><p><em><strong>ILM 配置问题</strong></em> </p>
+<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
+ <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>elasticsearch 安装使用及常见错误集锦</title>
     <url>/202303301601/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -5348,65 +5407,6 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/targz.html#targz-running">安装运行 Elasticsearch</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>ELK 常见错误</title>
-    <url>/202312151503/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
-<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
-<p>要解决这个问题，可以考虑以下几个选项：</p>
-<ol>
-<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
-<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
-<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
-   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>获取  Elasticsearch 集群的最大分片数限制</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
-</li>
-<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
-</li>
-</ol>
-<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>使用以下 filebeat 配置文件</p>
-<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
-<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
-
-<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
-<ul>
-<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
-</li>
-<li><p><em><strong>ILM 配置问题</strong></em> </p>
-<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
- <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
-</ul>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -11685,49 +11685,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>kubernetes Service 详解</title>
-    <url>/202305030923/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Kubernetes 的 Service 代表的是 Kubernetes 后端服务的入口，它主要包含服务的访问 IP（虚拟 IP）和端口，工作在 L4.</p>
-<p>Service 只存储服务的入口信息（IP:PORT），不存储后端 Pod 信息，Service 是通过 <a href="https://csms.tech/202209241108/#标签和选择算符"><code>Label Selector</code></a> 选择与之匹配的后端 Pod。当被 Service 选择的后端 Pod 运行且能正常向外提供服务时，Kubernetes 的 <code>Endpoint Controller</code> 会生成一个新的 Endpoint 对象，指向此 Pod 的 IP:PORT。Service 接收到访问请求，会将请求转发到对应的 Endpoint。同时，Service 的访问 IP 和 Endpoint&#x2F;Pod 的 IP 都会在 Kubernetes 的 DNS 服务里面进行注册以记录域名和 IP 的对应关系，因此用户可以在集群中通过域名的方式访问 Service 和 Pod。</p>
-<p>用户创建 Service 后，Kubernetes 会从集群的可用服务 IP 池中为 Service 分配一个稳定的集群内访问 IP，称为 <strong>Cluster IP</strong>。Kubernetes 还会通过注册 DNS 条目为 <strong>Cluster IP</strong> 分配 <strong>域名</strong>（主机名）。<strong>Cluster IP</strong> 和 <strong>域名</strong> 在集群内是独一无二的，并且在服务的整个生命周期中保持不变，直到将 Service 从集群中删除，Kubernetes 才会释放 <strong>Cluster IP</strong> 和 <strong>域名</strong> 。通过此方法，Service 作为代理，向客户端提供了稳定不变的访问后端服务的入口。</p>
-<p>Service 除了作为 <strong>代理</strong> 功能，同时也提供了 <strong>负载均衡</strong> 和 <strong>高可用</strong>。当后端的 Pod 有多个时，默认会通过 <strong>轮询</strong> 将请求流量均匀分布到多个 Pod 上，当某个 Pod 不可用是，Service 不会将请求调度到问题节点。</p>
-<p>Kubernetes 使用节点上运行的 <code>kube-proxy</code> 组件管理各 Service 和后端 Pod 的连接。<code>kube-proxy</code> 是一个基于出战流量的 <strong>负载均衡控制器</strong>，它监控 Kubernetes API Service 并持续将 Service IP （ClusterIP）映射到运行状况良好的后端 Pod，具体实现是通过主机上的 <code>iptables/IPVS</code> 的规则。访问 Service 的 IP 会被这些（路由）规则直接 DNAT 到后端 Pod 的 IP。</p>
-<p><a href="https://csms.tech/202209241108/#Service">Service 配置语法参考</a></p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 3.10.0-1160</li>
-<li>Kubernetes v1.24.7</li>
-</ul>
-<h1 id="kube-proxy-iptables-模式下的规则解析"><a href="#kube-proxy-iptables-模式下的规则解析" class="headerlink" title="kube-proxy iptables 模式下的规则解析"></a>kube-proxy iptables 模式下的规则解析</h1><p>kube-proxy 默认使用 <code>iptables</code> 模式实现 Service 的代理转发和负载均衡。<a href="https://csms.tech/202209131536/#获取节点上的-kube-proxy-代理模式">检查 <code>kube-proxy</code> 使用的代理模式</a></p>
-<p>本示例使用相关信息如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span> </span><br><span class="line">NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)     AGE</span><br><span class="line">api-service      ClusterIP   10.106.126.96    &lt;none&gt;        10302/TCP   145d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get endpoints api-service</span></span><br><span class="line">NAME          ENDPOINTS                               AGE</span><br><span class="line">api-service   10.244.3.138:10302,10.244.4.120:10302   145d</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>针对 <code>api-service</code>，后端的 Pod 就绪后，生成了 ENDPOINTS，kube-proxy 会为该服务创建以下 iptables 规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-A PREROUTING -m comment --comment &quot;kubernetes service portals&quot; -j KUBE-SERVICES</span><br><span class="line"></span><br><span class="line">-A KUBE-SERVICES -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-SVC-DVTQLPR6DVOLBZS4</span><br><span class="line"></span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 ! -s 10.244.0.0/16 -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.3.138:10302&quot; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-JXBL7O23XHVFQV2I</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.4.120:10302&quot; -j KUBE-SEP-BBPDSOPRICLINLPY</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -s 10.244.3.138/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.3.138:10302</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -s 10.244.4.120/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.4.120:10302</span><br><span class="line"></span><br><span class="line">-A POSTROUTING -m comment --comment &quot;flanneld masq&quot; -j FLANNEL-POSTRTG</span><br><span class="line">-A POSTROUTING -m comment --comment &quot;kubernetes postrouting rules&quot; -j KUBE-POSTROUTING-A FLANNEL-POSTRTG -m mark --mark 0x4000/0x4000 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 ! -d 224.0.0.0/4 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.3.0/24 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line"></span><br><span class="line">-A KUBE-POSTROUTING -m mark ! --mark 0x4000/0x4000 -j RETURN</span><br><span class="line">-A KUBE-POSTROUTING -j MARK --set-xmark 0x4000/0x0</span><br><span class="line">-A KUBE-POSTROUTING -m comment --comment &quot;kubernetes service traffic requiring SNAT&quot; -j MASQUERADE</span><br></pre></td></tr></table></figure>
-<p>具体工作流程如下：</p>
-<ol>
-<li>所有进入 <code>PREROUTING</code> 链的流量会被跳转到 <code>KUBE-SERVICES</code> 自定义链</li>
-<li>本示例中请求 <code>api-service</code> 的访问数据包（目的地址为 <code>10.106.126.96:10302</code>）在 <code>PREROUTING</code> 链中被 <code>-d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302</code> 匹配到，根据规则跳转到自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code></li>
-<li>在自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code> 中，实现了负载均衡，一半的流量会被跳转到链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code>，另一半的流量会被跳转到 <code>KUBE-SEP-BBPDSOPRICLINLPY</code></li>
-<li>在自定义链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code> 和 <code>KUBE-SEP-BBPDSOPRICLINLPY</code> 中，流量分别被 DNAT 分配到了后端的 Pod（就绪的 Endpoints）。</li>
-<li>Pod 处理完数据请求，向客户端返回请求结果时，在 <code>POSTROUTING</code> 链上要对数据包做 SNAT 处理，以确保客户端接收到的数据包的源地址是其发送请求时的目标地址。</li>
-</ol>
-<p>通过以上 kube-proxy 管理的规则，Service 实现了对后端 Pod 的服务代理及负载均衡功能。</p>
-<p>综上所述，iptables 模式最主要的链是 <code>KUBE-SERVICES</code> 、<code>KUBE-SVC-*</code>、<code>KUBE-SEP-*</code></p>
-<ul>
-<li><code>KUBE-SERVICES</code> - 访问集群服务的数据包入口，它会根据匹配到的目标 IP:PORT 将数据包分发到相应的链 <code>KUBE-SVC-*</code></li>
-<li><code>KUBE-SVC-*</code> - 相当于一个负载均衡器，它会将数据包平均分配到 <code>KUBE-SEP-*</code> 链。每个 <code>KUBE-SVC-*</code> 链后面的 <code>KUBE-SEP-*</code> 链的数量和 Service 后端就绪的 Pod 数量一致。</li>
-<li><code>KUBE-SEP-*</code> - 通过 DNAT 将数据包的目的地址（IP:PORT）修改为后端就绪的 Pod 的 IP:PORT，从而将流量转发到相应的 Pod</li>
-</ul>
-<p><code>kube-proxy</code> 的 iptables 模式因为使用 DNAT 转发数据包，存在一定的性能损耗，另外，当集群中的 Service 数量上万时，节点上的 iptables rules 会非常庞大，对管理是个不小的负担，性能也会大打折扣。</p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes 理论知识点汇总</title>
     <url>/202401101016/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -12598,6 +12555,49 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">...</span><br><span class="line">Capacity:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  524276716Ki</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             32068748Ki</span><br><span class="line">  pods:               110</span><br><span class="line">Allocatable:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  483173420666</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             31966348Ki</span><br><span class="line">  pods:               110</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/reference/kubernetes-api/workload-resources/pod-v1/#%E8%B5%84%E6%BA%90">resources</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types">资源类型</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>kubernetes Service 详解</title>
+    <url>/202305030923/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Kubernetes 的 Service 代表的是 Kubernetes 后端服务的入口，它主要包含服务的访问 IP（虚拟 IP）和端口，工作在 L4.</p>
+<p>Service 只存储服务的入口信息（IP:PORT），不存储后端 Pod 信息，Service 是通过 <a href="https://csms.tech/202209241108/#标签和选择算符"><code>Label Selector</code></a> 选择与之匹配的后端 Pod。当被 Service 选择的后端 Pod 运行且能正常向外提供服务时，Kubernetes 的 <code>Endpoint Controller</code> 会生成一个新的 Endpoint 对象，指向此 Pod 的 IP:PORT。Service 接收到访问请求，会将请求转发到对应的 Endpoint。同时，Service 的访问 IP 和 Endpoint&#x2F;Pod 的 IP 都会在 Kubernetes 的 DNS 服务里面进行注册以记录域名和 IP 的对应关系，因此用户可以在集群中通过域名的方式访问 Service 和 Pod。</p>
+<p>用户创建 Service 后，Kubernetes 会从集群的可用服务 IP 池中为 Service 分配一个稳定的集群内访问 IP，称为 <strong>Cluster IP</strong>。Kubernetes 还会通过注册 DNS 条目为 <strong>Cluster IP</strong> 分配 <strong>域名</strong>（主机名）。<strong>Cluster IP</strong> 和 <strong>域名</strong> 在集群内是独一无二的，并且在服务的整个生命周期中保持不变，直到将 Service 从集群中删除，Kubernetes 才会释放 <strong>Cluster IP</strong> 和 <strong>域名</strong> 。通过此方法，Service 作为代理，向客户端提供了稳定不变的访问后端服务的入口。</p>
+<p>Service 除了作为 <strong>代理</strong> 功能，同时也提供了 <strong>负载均衡</strong> 和 <strong>高可用</strong>。当后端的 Pod 有多个时，默认会通过 <strong>轮询</strong> 将请求流量均匀分布到多个 Pod 上，当某个 Pod 不可用是，Service 不会将请求调度到问题节点。</p>
+<p>Kubernetes 使用节点上运行的 <code>kube-proxy</code> 组件管理各 Service 和后端 Pod 的连接。<code>kube-proxy</code> 是一个基于出战流量的 <strong>负载均衡控制器</strong>，它监控 Kubernetes API Service 并持续将 Service IP （ClusterIP）映射到运行状况良好的后端 Pod，具体实现是通过主机上的 <code>iptables/IPVS</code> 的规则。访问 Service 的 IP 会被这些（路由）规则直接 DNAT 到后端 Pod 的 IP。</p>
+<p><a href="https://csms.tech/202209241108/#Service">Service 配置语法参考</a></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 3.10.0-1160</li>
+<li>Kubernetes v1.24.7</li>
+</ul>
+<h1 id="kube-proxy-iptables-模式下的规则解析"><a href="#kube-proxy-iptables-模式下的规则解析" class="headerlink" title="kube-proxy iptables 模式下的规则解析"></a>kube-proxy iptables 模式下的规则解析</h1><p>kube-proxy 默认使用 <code>iptables</code> 模式实现 Service 的代理转发和负载均衡。<a href="https://csms.tech/202209131536/#获取节点上的-kube-proxy-代理模式">检查 <code>kube-proxy</code> 使用的代理模式</a></p>
+<p>本示例使用相关信息如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span> </span><br><span class="line">NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)     AGE</span><br><span class="line">api-service      ClusterIP   10.106.126.96    &lt;none&gt;        10302/TCP   145d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get endpoints api-service</span></span><br><span class="line">NAME          ENDPOINTS                               AGE</span><br><span class="line">api-service   10.244.3.138:10302,10.244.4.120:10302   145d</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>针对 <code>api-service</code>，后端的 Pod 就绪后，生成了 ENDPOINTS，kube-proxy 会为该服务创建以下 iptables 规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-A PREROUTING -m comment --comment &quot;kubernetes service portals&quot; -j KUBE-SERVICES</span><br><span class="line"></span><br><span class="line">-A KUBE-SERVICES -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-SVC-DVTQLPR6DVOLBZS4</span><br><span class="line"></span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 ! -s 10.244.0.0/16 -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.3.138:10302&quot; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-JXBL7O23XHVFQV2I</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.4.120:10302&quot; -j KUBE-SEP-BBPDSOPRICLINLPY</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -s 10.244.3.138/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.3.138:10302</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -s 10.244.4.120/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.4.120:10302</span><br><span class="line"></span><br><span class="line">-A POSTROUTING -m comment --comment &quot;flanneld masq&quot; -j FLANNEL-POSTRTG</span><br><span class="line">-A POSTROUTING -m comment --comment &quot;kubernetes postrouting rules&quot; -j KUBE-POSTROUTING-A FLANNEL-POSTRTG -m mark --mark 0x4000/0x4000 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 ! -d 224.0.0.0/4 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.3.0/24 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line"></span><br><span class="line">-A KUBE-POSTROUTING -m mark ! --mark 0x4000/0x4000 -j RETURN</span><br><span class="line">-A KUBE-POSTROUTING -j MARK --set-xmark 0x4000/0x0</span><br><span class="line">-A KUBE-POSTROUTING -m comment --comment &quot;kubernetes service traffic requiring SNAT&quot; -j MASQUERADE</span><br></pre></td></tr></table></figure>
+<p>具体工作流程如下：</p>
+<ol>
+<li>所有进入 <code>PREROUTING</code> 链的流量会被跳转到 <code>KUBE-SERVICES</code> 自定义链</li>
+<li>本示例中请求 <code>api-service</code> 的访问数据包（目的地址为 <code>10.106.126.96:10302</code>）在 <code>PREROUTING</code> 链中被 <code>-d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302</code> 匹配到，根据规则跳转到自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code></li>
+<li>在自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code> 中，实现了负载均衡，一半的流量会被跳转到链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code>，另一半的流量会被跳转到 <code>KUBE-SEP-BBPDSOPRICLINLPY</code></li>
+<li>在自定义链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code> 和 <code>KUBE-SEP-BBPDSOPRICLINLPY</code> 中，流量分别被 DNAT 分配到了后端的 Pod（就绪的 Endpoints）。</li>
+<li>Pod 处理完数据请求，向客户端返回请求结果时，在 <code>POSTROUTING</code> 链上要对数据包做 SNAT 处理，以确保客户端接收到的数据包的源地址是其发送请求时的目标地址。</li>
+</ol>
+<p>通过以上 kube-proxy 管理的规则，Service 实现了对后端 Pod 的服务代理及负载均衡功能。</p>
+<p>综上所述，iptables 模式最主要的链是 <code>KUBE-SERVICES</code> 、<code>KUBE-SVC-*</code>、<code>KUBE-SEP-*</code></p>
+<ul>
+<li><code>KUBE-SERVICES</code> - 访问集群服务的数据包入口，它会根据匹配到的目标 IP:PORT 将数据包分发到相应的链 <code>KUBE-SVC-*</code></li>
+<li><code>KUBE-SVC-*</code> - 相当于一个负载均衡器，它会将数据包平均分配到 <code>KUBE-SEP-*</code> 链。每个 <code>KUBE-SVC-*</code> 链后面的 <code>KUBE-SEP-*</code> 链的数量和 Service 后端就绪的 Pod 数量一致。</li>
+<li><code>KUBE-SEP-*</code> - 通过 DNAT 将数据包的目的地址（IP:PORT）修改为后端就绪的 Pod 的 IP:PORT，从而将流量转发到相应的 Pod</li>
+</ul>
+<p><code>kube-proxy</code> 的 iptables 模式因为使用 DNAT 转发数据包，存在一定的性能损耗，另外，当集群中的 Service 数量上万时，节点上的 iptables rules 会非常庞大，对管理是个不小的负担，性能也会大打折扣。</p>
+]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
@@ -14620,6 +14620,37 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux sudo 使用介绍</title>
+    <url>/202308311739/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
+<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
+<p>主要配置文件内容如下</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
+
+<p>各列值含义说明：</p>
+<ul>
+<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
+<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
+<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
+</ul>
+<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
+<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
+<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
+<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
+<p>若要禁止此行为，删除此文件即可。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>linux 系统状态查看</title>
     <url>/202301171137/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -14658,37 +14689,6 @@ width: 20%;
 </ul>
 <h2 id="内存使用量统计"><a href="#内存使用量统计" class="headerlink" title="内存使用量统计"></a>内存使用量统计</h2><p>查看使用内存排名前十的进程：</p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ps aux | sort -k4,4nr | head -n 10</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux sudo 使用介绍</title>
-    <url>/202308311739/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
-<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
-<p>主要配置文件内容如下</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
-
-<p>各列值含义说明：</p>
-<ul>
-<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
-<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
-<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
-</ul>
-<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
-<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
-<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
-<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
-<p>若要禁止此行为，删除此文件即可。</p>
 ]]></content>
       <categories>
         <category>Linux</category>
@@ -16718,6 +16718,79 @@ width: 20%;
       </categories>
       <tags>
         <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>php 编译安装配置</title>
+    <url>/202207301722/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos 7</li>
+<li>Php 7.2</li>
+</ul>
+<span id="more"></span>
+
+<h3 id="编译安装"><a href="#编译安装" class="headerlink" title="编译安装"></a>编译安装</h3><p>安装依赖包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y gcc libxml2-devel libjpeg-turbo-devel libpng-devel libxslt libxslt-devel libjpeg libjpeg-devel libpng libpng-devel freetype freetype-devel libxml2 libxml2-devel zlib zlib-devel curl curl-devel openssl openssl-devel  bzip2  bzip2-devel  libxslt libxslt-devel  libjpeg libjpeg-devel libpng libpng-devel freetype freetype-devel libxml2 libxml2-devel zlib zlib-devel curl curl-devel openssl openssl-devel perl perl-devel httpd-devel readline-devel autoconf</span><br></pre></td></tr></table></figure>
+<p>下载安装包，编译安装</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://am1.php.net/distributions/php-7.2.0.tar.bz2</span><br><span class="line">tar -xf php-7.2.0.tar.bz2</span><br><span class="line">cd php-7.2.0</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/php7/ \</span><br><span class="line">--with-fpm-user=nginx \</span><br><span class="line">--with-curl  --with-gd --with-gettext --with-iconv-dir --with-kerberos --with-libdir=lib64 \</span><br><span class="line">--with-libxml-dir --with-mysqli --with-openssl --with-pcre-regex --with-pdo-mysql \</span><br><span class="line">--with-pdo-sqlite --with-pear --with-png-dir --with-xmlrpc --with-xsl --with-zlib \</span><br><span class="line">--enable-fpm --enable-bcmath -enable-inline-optimization  --enable-mbregex --enable-mbstring \</span><br><span class="line">--enable-opcache --enable-pcntl --enable-shmop --enable-soap --enable-sockets --enable-sysvsem \</span><br><span class="line">--enable-xml --enable-zip --enable-pcntl --with-curl  --enable-ftp --enable-session --enable-xml \</span><br><span class="line">--with-freetype-dir --with-jpeg-dir --enable-calendar --enable-exif --with-readline --enable-sysvshm --enable-wddx</span><br><span class="line"></span><br><span class="line">make</span><br><span class="line"></span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<p>安装完成后，拷贝配置文件：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp php.ini-production /usr/local/php7/etc/php.ini</span><br><span class="line">cd /usr/local/php7/etc</span><br><span class="line">mv php-fpm.conf.default php-fpm.conf</span><br></pre></td></tr></table></figure>
+<p>php编译好之后，提供了一个php-fpm的程序作为服务管理程序，位置在编译后的源码目录：<code>php-7.2.0/sapi/fpm/</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp php-fpm.service /usr/lib/systemd/system/</span><br><span class="line">systemctl daemon-reload</span><br><span class="line">systemctl start php-fpm</span><br></pre></td></tr></table></figure>
+
+<h3 id="php-常用扩展安装方法"><a href="#php-常用扩展安装方法" class="headerlink" title="php 常用扩展安装方法"></a>php 常用扩展安装方法</h3><p>php 扩展优先选择使用 <code>pecl</code> 命令安装，需要特殊配置时再选择编译安装， <code>pecl</code> 安装 <code>redis</code> 扩展示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pecl install redis</span><br></pre></td></tr></table></figure>
+
+<h4 id="yac-扩展安装"><a href="#yac-扩展安装" class="headerlink" title="yac 扩展安装"></a>yac 扩展安装</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">git clone https://github.com/laruence/yac</span><br><span class="line">cd yac</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make &amp;&amp; make install</span><br></pre></td></tr></table></figure>
+
+<h4 id="composer-安装"><a href="#composer-安装" class="headerlink" title="composer 安装"></a>composer 安装</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">php -r &quot;readfile(&#x27;https://getcomposer.org/installer&#x27;);&quot; | php</span><br><span class="line">mv composer.phar /usr/local/bin/composer</span><br></pre></td></tr></table></figure>
+
+<h4 id="inotify-安装"><a href="#inotify-安装" class="headerlink" title="inotify 安装"></a>inotify 安装</h4><p>扩展<a href="http://pecl.php.net/package/inotify">下载地址</a><br>比如安装2.0.0版本</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://pecl.php.net/get/inotify-2.0.0.tgz</span><br><span class="line">tar -xf inotify-2.0.0.tgz</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config --enable-inotify</span><br><span class="line">make &amp;&amp; make install</span><br></pre></td></tr></table></figure>
+
+<h4 id="memcache-扩展安装"><a href="#memcache-扩展安装" class="headerlink" title="memcache 扩展安装"></a>memcache 扩展安装</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y install libmemcached libmemcached-devel     ##先按照依赖，否则make报错</span><br><span class="line">git clone https://github.com/php-memcached-dev/php-memcached.git php-memcache</span><br><span class="line">cd php-memcache/</span><br><span class="line">git checkout php7</span><br><span class="line">phpize</span><br><span class="line">./configure --enable-memcached --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+<p><code>php.ini</code> 中添加配置 <code>extension=memcached.so</code></p>
+<h4 id="gd-扩展安装"><a href="#gd-扩展安装" class="headerlink" title="gd 扩展安装"></a>gd 扩展安装</h4><p>进入到php的源码目录下的ext&#x2F;gd目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd php-7.2.0/ext/gd</span><br><span class="line">yum -y install libjpeglibjpeg-devel libpng libpng-devel freetype freetype-devel</span><br><span class="line">make clean</span><br><span class="line">phpize</span><br><span class="line">./configure --with-png-dir --with-freetype-dir --with-jpeg-dir --with-gd --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make &amp;&amp; make install</span><br></pre></td></tr></table></figure>
+<p><code>php.ini</code> 中添加配置 <code>extension=gd.so</code></p>
+<h4 id="mongodb-扩展安装"><a href="#mongodb-扩展安装" class="headerlink" title="mongodb 扩展安装"></a>mongodb 扩展安装</h4><p>扩展<a href="http://pecl.php.net/package/mongodb">下载地址</a>  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://pecl.php.net/get/mongodb-1.14.0.tgz</span><br><span class="line">tar -xf mongodb-1.14.0.tgz</span><br><span class="line">cd mongodb-1.14.0</span><br><span class="line">/usr/local/php7/bin/phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<h4 id="imagick-扩展安装"><a href="#imagick-扩展安装" class="headerlink" title="imagick 扩展安装"></a>imagick 扩展安装</h4><p>首先安装ImageMagick</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://imagemagick.org/download/ImageMagick.tar.gz</span><br><span class="line">tar -xf ImageMagick.tar.gz</span><br><span class="line">cd ImageMagick</span><br><span class="line">./configure</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+<p>安装 <code>imagick</code> 扩展</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://pecl.php.net/get/imagick-3.4.4.tgz</span><br><span class="line">/usr/local/php7/bin/phpize </span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<h4 id="trie-filter-扩展安装"><a href="#trie-filter-扩展安装" class="headerlink" title="trie_filter 扩展安装"></a>trie_filter 扩展安装</h4><p>安装依赖 <code>libdatrie</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -O ftp://linux.thai.net/pub/ThaiLinux/software/libthai/libdatrie-0.2.4.tar.gz</span><br><span class="line">tar zxvf libdatrie-0.2.4.tar.gz</span><br><span class="line">cd libdatrie-0.2.4</span><br><span class="line">make clean</span><br><span class="line">./configure --prefix=/usr/local/libdatrie</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+<p>安装扩展 <code>trie_filter</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/jiopuud/trie_filter/archive/master.zip</span><br><span class="line">unzip master.zip</span><br><span class="line">cd trie_filter-master</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config --with-trie_filter=/usr/local/libdatrie</span><br><span class="line">make</span><br><span class="line">make install</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h4 id="swoole-扩展安装"><a href="#swoole-扩展安装" class="headerlink" title="swoole 扩展安装"></a>swoole 扩展安装</h4><p>安装依赖 <code>hiredis</code>（可选操作）<br><a href="https://github.com/redis/hiredis/releases">下载链接</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+<p>安装 <code>woole</code> 扩展<br><a href="https://github.com/swoole/swoole-src/releases">下载地址</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tar -xf swoole-src-1.9.15.tar.gz</span><br><span class="line">cd swoole-src-1.9.15</span><br><span class="line">phpize</span><br><span class="line">./configure --enable-openssl --enable-async-redis --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><code>--enable-async-redis</code> 依赖<code>hiredis</code>， 需要先安装 <code>hiredis</code><br>编译安装过程中，可能出现找不到动态链接库的问题，可将 <code>/usr/local/lib</code> 添加到共享的动态库，<br>编辑 <code>ldconfig</code> 配置文件 <code>/etc/ld.so.conf</code>，追加以下内容</p>
+<figure class="highlight shell"><figcaption><span>/etc/ld.so.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">/usr/local/lib</span><br></pre></td></tr></table></figure>
+<p>修改 <code>ldconfig</code> 配置后，执行以下命令使新配置生效</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ldconfig</span><br></pre></td></tr></table></figure>
+</blockquote>
+<h4 id="phpredis-扩展安装"><a href="#phpredis-扩展安装" class="headerlink" title="phpredis 扩展安装"></a>phpredis 扩展安装</h4><p><a href="https://github.com/phpredis/phpredis/releases">下载地址</a>  </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd phpredis/</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
+
+<h3 id="php-fpm-常见配置"><a href="#php-fpm-常见配置" class="headerlink" title="php-fpm 常见配置"></a>php-fpm 常见配置</h3><h4 id="php-fpm-日志相关配置"><a href="#php-fpm-日志相关配置" class="headerlink" title="php-fpm 日志相关配置"></a>php-fpm 日志相关配置</h4><p><code>php-fpm</code> 全局错误日志配置默认位于 <code>etc/php-fpm.conf</code></p>
+<figure class="highlight shell"><figcaption><span>etc/php-fpm.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">;;;;;;;;;;;;;;;;;;</span><br><span class="line">; Global Options ;</span><br><span class="line">;;;;;;;;;;;;;;;;;;</span><br><span class="line"></span><br><span class="line">[global]</span><br><span class="line">error_log = /var/log/php-fpm/error.log</span><br><span class="line"></span><br><span class="line">; Log level</span><br><span class="line">; Possible Values: alert, error, warning, notice, debug</span><br><span class="line">; Default Value: notice</span><br><span class="line">;log_level = notice</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>php-fpm</code> 默认相关 <code>pool</code> 日志配置主要位于 <code>etc/php-fpm.d/www.conf</code>。默认情况下，<code>pool</code> 中的日志（<code>stdout and stderr</code>） 会被重定向到 <code>/dev/null</code>。</p>
+<p>如果需要将对应 <code>pool</code> 中的日志输出到全局错误日志配置的路径，需要配置 <code>catch_workers_output = yes</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">access.log = /var/log/php/www.access.log</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">慢日志</span></span><br><span class="line">slowlog = /var/log/php/www.log.slow</span><br><span class="line">request_slowlog_timeout = 10</span><br><span class="line"></span><br><span class="line">; Redirect worker stdout and stderr into main error log. If not set, stdout and</span><br><span class="line">; stderr will be redirected to /dev/null according to FastCGI specs.</span><br><span class="line">; Note: on highloaded environement, this can cause some delay in the page</span><br><span class="line">; process time (several ms).</span><br><span class="line">; Default Value: no</span><br><span class="line">;catch_workers_output = yes</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">以下配置是对 php.ini 的补充，会在定义的 pool （比如 www） 中覆盖 php.ini 中的配置。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">否则为了记录日志，需要修改 php.ini 文件，增加以下配置</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># log_errors = On</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># error_log = &quot;/usr/local/php/var/log/error_log&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># error_reporting=E_ALL&amp;~E_NOTICE</span></span></span><br><span class="line"></span><br><span class="line">php_flag[display_errors] = on</span><br><span class="line">php_admin_value[error_log] = /var/log/php-fpm/www-error.log</span><br><span class="line">php_admin_flag[log_errors] = on</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>php</tag>
       </tags>
   </entry>
   <entry>
@@ -20967,79 +21040,6 @@ width: 20%;
       <tags>
         <tag>Redis</tag>
         <tag>Predixy</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>php 编译安装配置</title>
-    <url>/202207301722/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos 7</li>
-<li>Php 7.2</li>
-</ul>
-<span id="more"></span>
-
-<h3 id="编译安装"><a href="#编译安装" class="headerlink" title="编译安装"></a>编译安装</h3><p>安装依赖包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y gcc libxml2-devel libjpeg-turbo-devel libpng-devel libxslt libxslt-devel libjpeg libjpeg-devel libpng libpng-devel freetype freetype-devel libxml2 libxml2-devel zlib zlib-devel curl curl-devel openssl openssl-devel  bzip2  bzip2-devel  libxslt libxslt-devel  libjpeg libjpeg-devel libpng libpng-devel freetype freetype-devel libxml2 libxml2-devel zlib zlib-devel curl curl-devel openssl openssl-devel perl perl-devel httpd-devel readline-devel autoconf</span><br></pre></td></tr></table></figure>
-<p>下载安装包，编译安装</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://am1.php.net/distributions/php-7.2.0.tar.bz2</span><br><span class="line">tar -xf php-7.2.0.tar.bz2</span><br><span class="line">cd php-7.2.0</span><br><span class="line"></span><br><span class="line">./configure --prefix=/usr/local/php7/ \</span><br><span class="line">--with-fpm-user=nginx \</span><br><span class="line">--with-curl  --with-gd --with-gettext --with-iconv-dir --with-kerberos --with-libdir=lib64 \</span><br><span class="line">--with-libxml-dir --with-mysqli --with-openssl --with-pcre-regex --with-pdo-mysql \</span><br><span class="line">--with-pdo-sqlite --with-pear --with-png-dir --with-xmlrpc --with-xsl --with-zlib \</span><br><span class="line">--enable-fpm --enable-bcmath -enable-inline-optimization  --enable-mbregex --enable-mbstring \</span><br><span class="line">--enable-opcache --enable-pcntl --enable-shmop --enable-soap --enable-sockets --enable-sysvsem \</span><br><span class="line">--enable-xml --enable-zip --enable-pcntl --with-curl  --enable-ftp --enable-session --enable-xml \</span><br><span class="line">--with-freetype-dir --with-jpeg-dir --enable-calendar --enable-exif --with-readline --enable-sysvshm --enable-wddx</span><br><span class="line"></span><br><span class="line">make</span><br><span class="line"></span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
-<p>安装完成后，拷贝配置文件：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp php.ini-production /usr/local/php7/etc/php.ini</span><br><span class="line">cd /usr/local/php7/etc</span><br><span class="line">mv php-fpm.conf.default php-fpm.conf</span><br></pre></td></tr></table></figure>
-<p>php编译好之后，提供了一个php-fpm的程序作为服务管理程序，位置在编译后的源码目录：<code>php-7.2.0/sapi/fpm/</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp php-fpm.service /usr/lib/systemd/system/</span><br><span class="line">systemctl daemon-reload</span><br><span class="line">systemctl start php-fpm</span><br></pre></td></tr></table></figure>
-
-<h3 id="php-常用扩展安装方法"><a href="#php-常用扩展安装方法" class="headerlink" title="php 常用扩展安装方法"></a>php 常用扩展安装方法</h3><p>php 扩展优先选择使用 <code>pecl</code> 命令安装，需要特殊配置时再选择编译安装， <code>pecl</code> 安装 <code>redis</code> 扩展示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pecl install redis</span><br></pre></td></tr></table></figure>
-
-<h4 id="yac-扩展安装"><a href="#yac-扩展安装" class="headerlink" title="yac 扩展安装"></a>yac 扩展安装</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">git clone https://github.com/laruence/yac</span><br><span class="line">cd yac</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make &amp;&amp; make install</span><br></pre></td></tr></table></figure>
-
-<h4 id="composer-安装"><a href="#composer-安装" class="headerlink" title="composer 安装"></a>composer 安装</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">php -r &quot;readfile(&#x27;https://getcomposer.org/installer&#x27;);&quot; | php</span><br><span class="line">mv composer.phar /usr/local/bin/composer</span><br></pre></td></tr></table></figure>
-
-<h4 id="inotify-安装"><a href="#inotify-安装" class="headerlink" title="inotify 安装"></a>inotify 安装</h4><p>扩展<a href="http://pecl.php.net/package/inotify">下载地址</a><br>比如安装2.0.0版本</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://pecl.php.net/get/inotify-2.0.0.tgz</span><br><span class="line">tar -xf inotify-2.0.0.tgz</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config --enable-inotify</span><br><span class="line">make &amp;&amp; make install</span><br></pre></td></tr></table></figure>
-
-<h4 id="memcache-扩展安装"><a href="#memcache-扩展安装" class="headerlink" title="memcache 扩展安装"></a>memcache 扩展安装</h4><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y install libmemcached libmemcached-devel     ##先按照依赖，否则make报错</span><br><span class="line">git clone https://github.com/php-memcached-dev/php-memcached.git php-memcache</span><br><span class="line">cd php-memcache/</span><br><span class="line">git checkout php7</span><br><span class="line">phpize</span><br><span class="line">./configure --enable-memcached --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-<p><code>php.ini</code> 中添加配置 <code>extension=memcached.so</code></p>
-<h4 id="gd-扩展安装"><a href="#gd-扩展安装" class="headerlink" title="gd 扩展安装"></a>gd 扩展安装</h4><p>进入到php的源码目录下的ext&#x2F;gd目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd php-7.2.0/ext/gd</span><br><span class="line">yum -y install libjpeglibjpeg-devel libpng libpng-devel freetype freetype-devel</span><br><span class="line">make clean</span><br><span class="line">phpize</span><br><span class="line">./configure --with-png-dir --with-freetype-dir --with-jpeg-dir --with-gd --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make &amp;&amp; make install</span><br></pre></td></tr></table></figure>
-<p><code>php.ini</code> 中添加配置 <code>extension=gd.so</code></p>
-<h4 id="mongodb-扩展安装"><a href="#mongodb-扩展安装" class="headerlink" title="mongodb 扩展安装"></a>mongodb 扩展安装</h4><p>扩展<a href="http://pecl.php.net/package/mongodb">下载地址</a>  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://pecl.php.net/get/mongodb-1.14.0.tgz</span><br><span class="line">tar -xf mongodb-1.14.0.tgz</span><br><span class="line">cd mongodb-1.14.0</span><br><span class="line">/usr/local/php7/bin/phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
-<h4 id="imagick-扩展安装"><a href="#imagick-扩展安装" class="headerlink" title="imagick 扩展安装"></a>imagick 扩展安装</h4><p>首先安装ImageMagick</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://imagemagick.org/download/ImageMagick.tar.gz</span><br><span class="line">tar -xf ImageMagick.tar.gz</span><br><span class="line">cd ImageMagick</span><br><span class="line">./configure</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-<p>安装 <code>imagick</code> 扩展</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://pecl.php.net/get/imagick-3.4.4.tgz</span><br><span class="line">/usr/local/php7/bin/phpize </span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
-<h4 id="trie-filter-扩展安装"><a href="#trie-filter-扩展安装" class="headerlink" title="trie_filter 扩展安装"></a>trie_filter 扩展安装</h4><p>安装依赖 <code>libdatrie</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -O ftp://linux.thai.net/pub/ThaiLinux/software/libthai/libdatrie-0.2.4.tar.gz</span><br><span class="line">tar zxvf libdatrie-0.2.4.tar.gz</span><br><span class="line">cd libdatrie-0.2.4</span><br><span class="line">make clean</span><br><span class="line">./configure --prefix=/usr/local/libdatrie</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-<p>安装扩展 <code>trie_filter</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/jiopuud/trie_filter/archive/master.zip</span><br><span class="line">unzip master.zip</span><br><span class="line">cd trie_filter-master</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config --with-trie_filter=/usr/local/libdatrie</span><br><span class="line">make</span><br><span class="line">make install</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h4 id="swoole-扩展安装"><a href="#swoole-扩展安装" class="headerlink" title="swoole 扩展安装"></a>swoole 扩展安装</h4><p>安装依赖 <code>hiredis</code>（可选操作）<br><a href="https://github.com/redis/hiredis/releases">下载链接</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-<p>安装 <code>woole</code> 扩展<br><a href="https://github.com/swoole/swoole-src/releases">下载地址</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">tar -xf swoole-src-1.9.15.tar.gz</span><br><span class="line">cd swoole-src-1.9.15</span><br><span class="line">phpize</span><br><span class="line">./configure --enable-openssl --enable-async-redis --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><code>--enable-async-redis</code> 依赖<code>hiredis</code>， 需要先安装 <code>hiredis</code><br>编译安装过程中，可能出现找不到动态链接库的问题，可将 <code>/usr/local/lib</code> 添加到共享的动态库，<br>编辑 <code>ldconfig</code> 配置文件 <code>/etc/ld.so.conf</code>，追加以下内容</p>
-<figure class="highlight shell"><figcaption><span>/etc/ld.so.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">/usr/local/lib</span><br></pre></td></tr></table></figure>
-<p>修改 <code>ldconfig</code> 配置后，执行以下命令使新配置生效</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ldconfig</span><br></pre></td></tr></table></figure>
-</blockquote>
-<h4 id="phpredis-扩展安装"><a href="#phpredis-扩展安装" class="headerlink" title="phpredis 扩展安装"></a>phpredis 扩展安装</h4><p><a href="https://github.com/phpredis/phpredis/releases">下载地址</a>  </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd phpredis/</span><br><span class="line">phpize</span><br><span class="line">./configure --with-php-config=/usr/local/php7/bin/php-config</span><br><span class="line">make</span><br><span class="line">make install</span><br></pre></td></tr></table></figure>
-
-<h3 id="php-fpm-常见配置"><a href="#php-fpm-常见配置" class="headerlink" title="php-fpm 常见配置"></a>php-fpm 常见配置</h3><h4 id="php-fpm-日志相关配置"><a href="#php-fpm-日志相关配置" class="headerlink" title="php-fpm 日志相关配置"></a>php-fpm 日志相关配置</h4><p><code>php-fpm</code> 全局错误日志配置默认位于 <code>etc/php-fpm.conf</code></p>
-<figure class="highlight shell"><figcaption><span>etc/php-fpm.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">;;;;;;;;;;;;;;;;;;</span><br><span class="line">; Global Options ;</span><br><span class="line">;;;;;;;;;;;;;;;;;;</span><br><span class="line"></span><br><span class="line">[global]</span><br><span class="line">error_log = /var/log/php-fpm/error.log</span><br><span class="line"></span><br><span class="line">; Log level</span><br><span class="line">; Possible Values: alert, error, warning, notice, debug</span><br><span class="line">; Default Value: notice</span><br><span class="line">;log_level = notice</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>php-fpm</code> 默认相关 <code>pool</code> 日志配置主要位于 <code>etc/php-fpm.d/www.conf</code>。默认情况下，<code>pool</code> 中的日志（<code>stdout and stderr</code>） 会被重定向到 <code>/dev/null</code>。</p>
-<p>如果需要将对应 <code>pool</code> 中的日志输出到全局错误日志配置的路径，需要配置 <code>catch_workers_output = yes</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">access.log = /var/log/php/www.access.log</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">慢日志</span></span><br><span class="line">slowlog = /var/log/php/www.log.slow</span><br><span class="line">request_slowlog_timeout = 10</span><br><span class="line"></span><br><span class="line">; Redirect worker stdout and stderr into main error log. If not set, stdout and</span><br><span class="line">; stderr will be redirected to /dev/null according to FastCGI specs.</span><br><span class="line">; Note: on highloaded environement, this can cause some delay in the page</span><br><span class="line">; process time (several ms).</span><br><span class="line">; Default Value: no</span><br><span class="line">;catch_workers_output = yes</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">以下配置是对 php.ini 的补充，会在定义的 pool （比如 www） 中覆盖 php.ini 中的配置。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">否则为了记录日志，需要修改 php.ini 文件，增加以下配置</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># log_errors = On</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># error_log = &quot;/usr/local/php/var/log/error_log&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># error_reporting=E_ALL&amp;~E_NOTICE</span></span></span><br><span class="line"></span><br><span class="line">php_flag[display_errors] = on</span><br><span class="line">php_admin_value[error_log] = /var/log/php-fpm/www-error.log</span><br><span class="line">php_admin_flag[log_errors] = on</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>php</tag>
       </tags>
   </entry>
   <entry>
