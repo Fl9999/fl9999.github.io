@@ -11444,329 +11444,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>iptables 服务使用说明</title>
-    <url>/202210241051/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，netfilter 的架构是在整个网络流程的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
-<p>IP 层的 5 个钩子点的位置，对应就是 iptables 的 5 条内置链，分别是</p>
-<ul>
-<li><code>PREROUTING</code></li>
-<li><code>FORWARD</code></li>
-<li><code>INPUT</code></li>
-<li><code>OUTPUT</code></li>
-<li><code>POSTROUTING</code></li>
-</ul>
-<p><img src="https://i.csms.tech/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 netfilter 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过查询本地路由表决定这个数据包的流向</p>
-<ul>
-<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
-<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 netfilter 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
-</ul>
-<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
-<p>除了 5 条内置的链，iptables 还有 5 张表，这 5 张表主要是用来给 iptables 中的规则（rule）分类，系统中所有的 iptables 规则都被划分到不同的表集合中。5 张表分别为</p>
-<ul>
-<li><code>raw</code> - iptables 是有状态的，即 iptables 对数据包有连接追踪 (connection trackong) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
-<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
-<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
-<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(drop)、或拒绝(reject)</li>
-<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
-</ul>
-<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，iptables 不支持自定义表。不是每个链上都能挂表，iptables 表与链的对应关系如下图</p>
-<table>
-<thead>
-<tr>
-<th>-</th>
-<th>PREROUTING</th>
-<th>FORWARD</th>
-<th>INPUT</th>
-<th>OUTPUT</th>
-<th>POSTROUTING</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>raw</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>mangle</code></td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (SNAT)</code></td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (DNAT)</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>filter</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>security</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-</tbody></table>
-<p>iptables 表和链的工作流程图如下</p>
-<p><img src="https://i.csms.tech/img_134.png"></p>
-<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-F ,--flush</code></td>
-<td>清除所有规则，默认规则除外</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-P ,--policy</code></td>
-<td>设置默认规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t ,--table</code></td>
-<td>指定要操作的表，默认为 <code>filter</code> 表</td>
-<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--list ,-L [chain [rulenum]]</code></td>
-<td>列出（指定的链或所有链）的规则</td>
-<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
-</tr>
-<tr>
-<td><code>--verbose	,-v</code></td>
-<td>verbose mode</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--numeric	,-n</code></td>
-<td>不解析协议和端口号，以数字的形式显示</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--line-numbers</code></td>
-<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--jump	,-j</code></td>
-<td>匹配的规则的处理 target</td>
-<td><code>iptables -A INPUT  -j LOG</code></td>
-</tr>
-<tr>
-<td><code>--append  ,-A chain</code></td>
-<td>像指定的链中追加规则</td>
-<td><code>-A INPUT -i lo -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--insert  ,-I chain [rulenum]</code></td>
-<td>向指定的链中指定的位置插入规则</td>
-<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--delete  ,-D chain rulenum</code></td>
-<td>删除指定链中的指定位置的规则</td>
-<td><code>iptables -D INPUT 10 </code></td>
-</tr>
-<tr>
-<td><code>--replace ,-R chain rulenum</code></td>
-<td>更新指定链中的指定位置的规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-S, --list-rules [chain]</code></td>
-<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
-<td></td>
-</tr>
-</tbody></table>
-<span id="more"></span>
-<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>删除指定行号的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
-
-<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
-<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
-<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
-<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
-<p>重启 <code>rsyslog</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
-<li><p><code>journalctl -k</code> 命令查看</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
-</ul>
-<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
-<p>iptables 中日志相关的选项：</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--log-prefix</code></td>
-<td>记录的日志的内容前缀</td>
-<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
-</tr>
-<tr>
-<td><code>--log-level</code></td>
-<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
-<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
-</tr>
-</tbody></table>
-<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
-<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
-
-<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
-
-<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
-
-<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
-
-<h2 id="iptables-配合-ipset-实现批量-IP-控制"><a href="#iptables-配合-ipset-实现批量-IP-控制" class="headerlink" title="iptables 配合 ipset 实现批量 IP 控制"></a>iptables 配合 ipset 实现批量 IP 控制</h2><p><code>ipset</code> 是 Linux 内核中的一个工具，根据创建 ipset 时指定的类型，它可以存储多个 IP 地址、IP 网络（network）、TCP&#x2F;UDP 端口、MAC 地址等，并且支持动态更新其中的内容。<strong>比如配合 <code>iptables</code> 使用时，可以将多个目标 IP 地址或者网络存储于其中并可以动态更新 <code>iptables</code> 规则（更新 <code>ipset</code> 后无需重启 <code>iptables</code> 即可生效）</strong></p>
-<ol>
-<li><p>创建 <code>ipset</code> 并指定 <code>ipset</code> 类型为 <code>hash:ip</code>，更多支持的类型可以通过 <code>ipset -h</code> 查看</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p>添加目标 IP 到 <code>ipset</code>，可以多次添加</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>在 <code>iptables</code> 中使用 <code>ipset</code></p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ipset 作为源 IP 允许访问</span></span><br><span class="line">iptables -A INPUT -m set --match-set allowed_ips src -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">源 IP 不在 ipset 中则不允许访问</span></span><br><span class="line">iptables -A INPUT -m set ! --match-set allowed_ips src -j DROP</span><br></pre></td></tr></table></figure>
-</li>
-<li><p><strong>默认情况下，<code>ipset</code> 属于临时配置，没有持久化，系统重启后内容会丢失</strong>。要配置 <code>ipset</code> 持久化，可以参考以下步骤</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保存 ipset 配置</span></span><br><span class="line">ipset save &gt; /etc/ipset.conf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">恢复 ipset 配置</span></span><br><span class="line">ipset restore &lt; /etc/ipset.conf</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="docker-compose-场景下使用-iptables-进行白名单限制"><a href="#docker-compose-场景下使用-iptables-进行白名单限制" class="headerlink" title="docker compose 场景下使用 iptables 进行白名单限制"></a>docker compose 场景下使用 iptables 进行白名单限制</h2><p>假设有以下 <code>docker-compose.yml</code> 文件</p>
-<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  nextcloud_aio_mastercontainer:</span><br><span class="line">    image: nextcloud/all-in-one:latest</span><br><span class="line">    container_name: nextcloud-aio-mastercontainer</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;8000:80&quot;</span><br><span class="line">      - &quot;8080:8080&quot;</span><br><span class="line">      - &quot;8443:8443&quot;</span><br><span class="line">    volumes:</span><br><span class="line">      - aio_mastercontainer:/mnt/docker-aio-config</span><br><span class="line">      - /var/run/docker.sock:/var/run/docker.sock:ro</span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  aio_mastercontainer:</span><br><span class="line">    driver: local</span><br><span class="line">    driver_opts:</span><br><span class="line">      type: none</span><br><span class="line">      o: bind</span><br><span class="line">      device: ./data/</span><br></pre></td></tr></table></figure>
-
-<p>在 <code>docker compose up</code> 正常启动后， Docker 会根据 <code>docker-compose.yml</code> 中的定义配置 <code>iptables</code> 防火墙规则，以下为上面 <code>docker-compose.yml</code> 定义的数据端口在 <code>iptables</code> 规则中的数据流向分析</p>
-<ol>
-<li>数据报文首先经过 <code>iptables</code> 的 <code>PREROUTING</code> 链，在 <code>PREROUTING</code> 链中会进行 <code>DNAT</code>，位于 <code>nat</code> 表中，查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -t nat -L -v -n</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 4376 packets, 255K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">80051 4690K DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 3891 packets, 233K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 12629 packets, 1082K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 12637 packets, 1083K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    3   200 MASQUERADE  all  --  *      !br-43e659324492  172.21.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8443</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8080</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 RETURN     all  --  br-43e659324492 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8080 to:172.21.0.2:8080</span><br><span class="line">    2   100 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 to:172.21.0.2:80</span><br></pre></td></tr></table></figure>
-<blockquote>
-<ol>
-<li><code>DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</code> : 所有的报文会被跳转到 <code>DOCKER</code> 链进行处理</li>
-<li><code>DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</code> : 只要不是从 <code>br-43e659324492</code> 网卡（本示例中的 <code>docker-compose.yml</code> 使用的网络）进入的数据包，不论目标网卡&#x2F;源 IP&#x2F;目标 IP 为何，只有其目标端口为 <code>8443</code>，则对其进行 DNAT，将其目标 IP 和端口修改为 <code>172.21.0.2:8443</code>（本示例中的容器）。其他 2 条 DNAT 同理。</li>
-</ol>
-</blockquote>
-</li>
-<li><em><strong>在 <code>iptables</code> 的 <code>PREROUTING</code> 链处理完成后，数据流入 <code>iptables</code> 的 <code>FORWARD</code> 链</strong></em>。规则定义位于 <code>filter</code> 表中。查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -L -v -n --line-numbers</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     605K  585M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0       </span><br><span class="line">...    </span><br><span class="line">9      461 33197 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">10     178  4984 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">11   10055  481K REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2      259  186K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      128  179K ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        8   356 DOCKER     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5      123  7065 ACCEPT     all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  br-43e659324492 br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7        0     0 ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">8        0     0 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">9        0     0 ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">10       0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">11       0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 42129 packets, 7533K bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8443</span><br><span class="line">2        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8080</span><br><span class="line">3        2   100 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      123  7065 DOCKER-ISOLATION-STAGE-2  all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      123  7065 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<ol>
-<li>数据流进入 <code>iptables</code> 的 <code>FORWARD</code> 链。</li>
-<li><code>DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 首先会被全部跳转到 <code>DOCKER-USER</code> 链进行处理。</li>
-<li><code>RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 默认情况下，<code>DOCKER-USER</code> 链未作任何处理，数据流跳转回 <code>FORWARD</code> 链中的原位置，继续进入下一个链 <code>DOCKER-ISOLATION-STAGE-1</code></li>
-<li><code>ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0</code> : 数据流到了此处，表示目标网络为本示例中的容器的网络，对数据全部放行接收。数据进入容器。</li>
-</ol>
-</blockquote>
-</li>
-</ol>
-<p>根据以上对数据流向的分析，如果要对进入容器的数据进行源 IP 限制，建议将其放置在 <code>DOCKER-USER</code> 链中。具体实现参考如下：</p>
-<ol>
-<li><p>配置 <code>ipset</code>，用于对多个源 IP 设置白名单</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>配置 <code>iptables</code>，如果源 IP 不在白名单中，则禁止访问特定的端口</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">iptables -t filter -I DOCKER-USER 1 -m set ! --match-set allowed_ips src -m multiport -p tcp --dports 8000,8080,8443 -j DROP -m comment --comment &quot;for Nextcloud&quot;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="docker-场景下的自定义-iptables-规则的持久化问题"><a href="#docker-场景下的自定义-iptables-规则的持久化问题" class="headerlink" title="docker 场景下的自定义 iptables 规则的持久化问题"></a>docker 场景下的自定义 iptables 规则的持久化问题</h2><p>在使用 Docker 或者 Docker Compose 部署应用的场景下，假如需要在 Docker 的基础上对 <code>iptables</code> 防火墙做自定义配置，如示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，此种情况下，要对自定义的防火墙规则做 <strong>持久化</strong> （ <strong><code>iptables</code> 或者 <code>docker</code> 重启后规则自动加载</strong>），可以参考以下几种方法：</p>
-<ol>
-<li><p>将配置写入 <code>iptables</code> 默认配置文件，<code>iptables</code> 重启后自动加载自定义规则，针对 示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，可以在 <code>iptables</code> 配置中写入配置</p>
-  <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT ACCEPT [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [0:0]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 提前定义链 &#x27;DOCKER-USER&#x27;，否则加载配置会报错： iptables-restore: line 24 failed</span></span></span><br><span class="line">:DOCKER-USER - [0:0]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">... 其他规则</span></span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 添加 Docker 自定义规则</span></span></span><br><span class="line">-A DOCKER-USER -m set ! --match-set allowed_ips src -m multiport  -p tcp --dports 3000,8080  -j REJECT</span><br><span class="line"></span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
-<li><p>以 Docker Compose 场景为例。可以创建一个容器，专门用来运行配置 <code>iptables</code> 命令。</p>
-<ol>
-<li><p>创建一个自定义 <code>iptables</code> 容器，此容器主要执行修改 <code>iptables</code> 自定义规则</p>
- <figure class="highlight shell"><figcaption><span>Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM alpine:latest</span><br><span class="line">RUN apk --no-cache add iptables</span><br><span class="line">COPY setup-iptables.sh /usr/local/bin/</span><br><span class="line">RUN chmod +x /usr/local/bin/setup-iptables.sh</span><br><span class="line">ENTRYPOINT [&quot;setup-iptables.sh&quot;]</span><br></pre></td></tr></table></figure></li>
-<li><p>编写 <code>setup-iptables.sh</code> 脚本:</p>
- <figure class="highlight shell"><figcaption><span>setup-iptables.sh</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line">iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>配置 <code>docker-compose.yml</code>，在 <code>docker-compose.yml</code> 中添加上面配置的容器</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  iptables:</span><br><span class="line">    build: .</span><br><span class="line">    network_mode: &quot;host&quot;</span><br><span class="line">    restart: &quot;no&quot;</span><br><span class="line">    deploy:</span><br><span class="line">      restart_policy:</span><br><span class="line">        condition: none</span><br><span class="line">  your_service:</span><br><span class="line">    image: your_image</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    # Other configuration options for your service</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p> <strong>当运行 <code>docker-compose up</code> 时，<code>iptables</code> 服务(容器)会启动并执行 <code>setup-iptables.sh</code> 脚本，将自定义规则添加到 <code>DOCKER-USER</code> 链中。</strong></p>
-<blockquote>
-<p>根据实际需求谨慎编写 <code>setup-iptables.sh</code> 脚本内容，防止 <code>iptables</code> 规则混乱</p>
-</blockquote>
-</li>
-</ol>
-</li>
-<li><p>要在 Docker Compose 中自定义防火墙规则，可以使用 Docker Compose 的 <code>post-up</code> 脚本功能。</p>
-<ol>
-<li><p>创建 <code>docker-compose.yml</code> 文件</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建 <code>docker-compose.override.yml</code> 文件</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.override.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    entrypoint: [&quot;sh&quot;, &quot;-c&quot;, &quot;iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT &amp;&amp; exec myservice&quot;]</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>启动 Docker Compose。  这样， 每次启动服务时，都会在 <code>DOCKER-USER</code> 链中添加指定的防火墙规则。确保 <code>myservice</code> 的入口点脚本正确无误，以防止启动失败。</p>
-<blockquote>
-<p><code>docker-compose up</code> 会时同时加载 <code>docker-compose.yml</code> 和 <code>docker-compose.override.yml</code>。</p>
-<p>Docker Compose 会将 <code>docker-compose.override.yml</code> 中的配置与 <code>docker-compose.yml</code> 中的配置合并。<strong>覆盖相同配置项，新增不同配置项</strong>。</p>
-</blockquote>
-</li>
-</ol>
-<p> 以上 2 个 <code>compose</code> 配置文件也可以合并成一个 <code>docker-compose.yml</code>：<br> <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line">    entrypoint: /path/to/setup-firewall.sh myservice-command</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></p>
-<blockquote>
-<p>这样，<strong>每次启动服务时，都会先执行防火墙规则，然后启动实际服务。</strong></p>
-</blockquote>
-</li>
-</ol>
-<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
-<p>ssh 连接失败后查看日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
-<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
-<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
-<p>将其默认规则改为 <code>ACCEPT</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
-<p>重新使用 ssh 登陆，连接正常。</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>iptables</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>linux logrotate 服务</title>
     <url>/202208191317/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -12580,6 +12257,329 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>iptables 服务使用说明</title>
+    <url>/202210241051/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，netfilter 的架构是在整个网络流程的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
+<p>IP 层的 5 个钩子点的位置，对应就是 iptables 的 5 条内置链，分别是</p>
+<ul>
+<li><code>PREROUTING</code></li>
+<li><code>FORWARD</code></li>
+<li><code>INPUT</code></li>
+<li><code>OUTPUT</code></li>
+<li><code>POSTROUTING</code></li>
+</ul>
+<p><img src="https://i.csms.tech/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 netfilter 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过查询本地路由表决定这个数据包的流向</p>
+<ul>
+<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
+<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 netfilter 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
+</ul>
+<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
+<p>除了 5 条内置的链，iptables 还有 5 张表，这 5 张表主要是用来给 iptables 中的规则（rule）分类，系统中所有的 iptables 规则都被划分到不同的表集合中。5 张表分别为</p>
+<ul>
+<li><code>raw</code> - iptables 是有状态的，即 iptables 对数据包有连接追踪 (connection trackong) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
+<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
+<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
+<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(drop)、或拒绝(reject)</li>
+<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
+</ul>
+<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，iptables 不支持自定义表。不是每个链上都能挂表，iptables 表与链的对应关系如下图</p>
+<table>
+<thead>
+<tr>
+<th>-</th>
+<th>PREROUTING</th>
+<th>FORWARD</th>
+<th>INPUT</th>
+<th>OUTPUT</th>
+<th>POSTROUTING</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>raw</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>mangle</code></td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (SNAT)</code></td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (DNAT)</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>filter</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>security</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+</tbody></table>
+<p>iptables 表和链的工作流程图如下</p>
+<p><img src="https://i.csms.tech/img_134.png"></p>
+<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-F ,--flush</code></td>
+<td>清除所有规则，默认规则除外</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-P ,--policy</code></td>
+<td>设置默认规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-t ,--table</code></td>
+<td>指定要操作的表，默认为 <code>filter</code> 表</td>
+<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--list ,-L [chain [rulenum]]</code></td>
+<td>列出（指定的链或所有链）的规则</td>
+<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
+</tr>
+<tr>
+<td><code>--verbose	,-v</code></td>
+<td>verbose mode</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--numeric	,-n</code></td>
+<td>不解析协议和端口号，以数字的形式显示</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--line-numbers</code></td>
+<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--jump	,-j</code></td>
+<td>匹配的规则的处理 target</td>
+<td><code>iptables -A INPUT  -j LOG</code></td>
+</tr>
+<tr>
+<td><code>--append  ,-A chain</code></td>
+<td>像指定的链中追加规则</td>
+<td><code>-A INPUT -i lo -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--insert  ,-I chain [rulenum]</code></td>
+<td>向指定的链中指定的位置插入规则</td>
+<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--delete  ,-D chain rulenum</code></td>
+<td>删除指定链中的指定位置的规则</td>
+<td><code>iptables -D INPUT 10 </code></td>
+</tr>
+<tr>
+<td><code>--replace ,-R chain rulenum</code></td>
+<td>更新指定链中的指定位置的规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-S, --list-rules [chain]</code></td>
+<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
+<td></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>删除指定行号的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
+
+<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
+<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
+<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
+<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
+<p>重启 <code>rsyslog</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
+<li><p><code>journalctl -k</code> 命令查看</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
+</ul>
+<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
+<p>iptables 中日志相关的选项：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--log-prefix</code></td>
+<td>记录的日志的内容前缀</td>
+<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
+</tr>
+<tr>
+<td><code>--log-level</code></td>
+<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
+<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
+</tr>
+</tbody></table>
+<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
+<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
+
+<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
+
+<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
+
+<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
+
+<h2 id="iptables-配合-ipset-实现批量-IP-控制"><a href="#iptables-配合-ipset-实现批量-IP-控制" class="headerlink" title="iptables 配合 ipset 实现批量 IP 控制"></a>iptables 配合 ipset 实现批量 IP 控制</h2><p><code>ipset</code> 是 Linux 内核中的一个工具，根据创建 ipset 时指定的类型，它可以存储多个 IP 地址、IP 网络（network）、TCP&#x2F;UDP 端口、MAC 地址等，并且支持动态更新其中的内容。<strong>比如配合 <code>iptables</code> 使用时，可以将多个目标 IP 地址或者网络存储于其中并可以动态更新 <code>iptables</code> 规则（更新 <code>ipset</code> 后无需重启 <code>iptables</code> 即可生效）</strong></p>
+<ol>
+<li><p>创建 <code>ipset</code> 并指定 <code>ipset</code> 类型为 <code>hash:ip</code>，更多支持的类型可以通过 <code>ipset -h</code> 查看</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p>添加目标 IP 到 <code>ipset</code>，可以多次添加</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在 <code>iptables</code> 中使用 <code>ipset</code></p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ipset 作为源 IP 允许访问</span></span><br><span class="line">iptables -A INPUT -m set --match-set allowed_ips src -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">源 IP 不在 ipset 中则不允许访问</span></span><br><span class="line">iptables -A INPUT -m set ! --match-set allowed_ips src -j DROP</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><strong>默认情况下，<code>ipset</code> 属于临时配置，没有持久化，系统重启后内容会丢失</strong>。要配置 <code>ipset</code> 持久化，可以参考以下步骤</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保存 ipset 配置</span></span><br><span class="line">ipset save &gt; /etc/ipset.conf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">恢复 ipset 配置</span></span><br><span class="line">ipset restore &lt; /etc/ipset.conf</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="docker-compose-场景下使用-iptables-进行白名单限制"><a href="#docker-compose-场景下使用-iptables-进行白名单限制" class="headerlink" title="docker compose 场景下使用 iptables 进行白名单限制"></a>docker compose 场景下使用 iptables 进行白名单限制</h2><p>假设有以下 <code>docker-compose.yml</code> 文件</p>
+<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  nextcloud_aio_mastercontainer:</span><br><span class="line">    image: nextcloud/all-in-one:latest</span><br><span class="line">    container_name: nextcloud-aio-mastercontainer</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;8000:80&quot;</span><br><span class="line">      - &quot;8080:8080&quot;</span><br><span class="line">      - &quot;8443:8443&quot;</span><br><span class="line">    volumes:</span><br><span class="line">      - aio_mastercontainer:/mnt/docker-aio-config</span><br><span class="line">      - /var/run/docker.sock:/var/run/docker.sock:ro</span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  aio_mastercontainer:</span><br><span class="line">    driver: local</span><br><span class="line">    driver_opts:</span><br><span class="line">      type: none</span><br><span class="line">      o: bind</span><br><span class="line">      device: ./data/</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>docker compose up</code> 正常启动后， Docker 会根据 <code>docker-compose.yml</code> 中的定义配置 <code>iptables</code> 防火墙规则，以下为上面 <code>docker-compose.yml</code> 定义的数据端口在 <code>iptables</code> 规则中的数据流向分析</p>
+<ol>
+<li>数据报文首先经过 <code>iptables</code> 的 <code>PREROUTING</code> 链，在 <code>PREROUTING</code> 链中会进行 <code>DNAT</code>，位于 <code>nat</code> 表中，查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -t nat -L -v -n</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 4376 packets, 255K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">80051 4690K DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 3891 packets, 233K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 12629 packets, 1082K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 12637 packets, 1083K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    3   200 MASQUERADE  all  --  *      !br-43e659324492  172.21.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8443</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8080</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 RETURN     all  --  br-43e659324492 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8080 to:172.21.0.2:8080</span><br><span class="line">    2   100 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 to:172.21.0.2:80</span><br></pre></td></tr></table></figure>
+<blockquote>
+<ol>
+<li><code>DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</code> : 所有的报文会被跳转到 <code>DOCKER</code> 链进行处理</li>
+<li><code>DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</code> : 只要不是从 <code>br-43e659324492</code> 网卡（本示例中的 <code>docker-compose.yml</code> 使用的网络）进入的数据包，不论目标网卡&#x2F;源 IP&#x2F;目标 IP 为何，只有其目标端口为 <code>8443</code>，则对其进行 DNAT，将其目标 IP 和端口修改为 <code>172.21.0.2:8443</code>（本示例中的容器）。其他 2 条 DNAT 同理。</li>
+</ol>
+</blockquote>
+</li>
+<li><em><strong>在 <code>iptables</code> 的 <code>PREROUTING</code> 链处理完成后，数据流入 <code>iptables</code> 的 <code>FORWARD</code> 链</strong></em>。规则定义位于 <code>filter</code> 表中。查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -L -v -n --line-numbers</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     605K  585M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0       </span><br><span class="line">...    </span><br><span class="line">9      461 33197 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">10     178  4984 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">11   10055  481K REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2      259  186K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      128  179K ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        8   356 DOCKER     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5      123  7065 ACCEPT     all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  br-43e659324492 br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7        0     0 ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">8        0     0 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">9        0     0 ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">10       0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">11       0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 42129 packets, 7533K bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8443</span><br><span class="line">2        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8080</span><br><span class="line">3        2   100 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      123  7065 DOCKER-ISOLATION-STAGE-2  all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      123  7065 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<ol>
+<li>数据流进入 <code>iptables</code> 的 <code>FORWARD</code> 链。</li>
+<li><code>DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 首先会被全部跳转到 <code>DOCKER-USER</code> 链进行处理。</li>
+<li><code>RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 默认情况下，<code>DOCKER-USER</code> 链未作任何处理，数据流跳转回 <code>FORWARD</code> 链中的原位置，继续进入下一个链 <code>DOCKER-ISOLATION-STAGE-1</code></li>
+<li><code>ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0</code> : 数据流到了此处，表示目标网络为本示例中的容器的网络，对数据全部放行接收。数据进入容器。</li>
+</ol>
+</blockquote>
+</li>
+</ol>
+<p>根据以上对数据流向的分析，如果要对进入容器的数据进行源 IP 限制，建议将其放置在 <code>DOCKER-USER</code> 链中。具体实现参考如下：</p>
+<ol>
+<li><p>配置 <code>ipset</code>，用于对多个源 IP 设置白名单</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>配置 <code>iptables</code>，如果源 IP 不在白名单中，则禁止访问特定的端口</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">iptables -t filter -I DOCKER-USER 1 -m set ! --match-set allowed_ips src -m multiport -p tcp --dports 8000,8080,8443 -j DROP -m comment --comment &quot;for Nextcloud&quot;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="docker-场景下的自定义-iptables-规则的持久化问题"><a href="#docker-场景下的自定义-iptables-规则的持久化问题" class="headerlink" title="docker 场景下的自定义 iptables 规则的持久化问题"></a>docker 场景下的自定义 iptables 规则的持久化问题</h2><p>在使用 Docker 或者 Docker Compose 部署应用的场景下，假如需要在 Docker 的基础上对 <code>iptables</code> 防火墙做自定义配置，如示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，此种情况下，要对自定义的防火墙规则做 <strong>持久化</strong> （ <strong><code>iptables</code> 或者 <code>docker</code> 重启后规则自动加载</strong>），可以参考以下几种方法：</p>
+<ol>
+<li><p>将配置写入 <code>iptables</code> 默认配置文件，<code>iptables</code> 重启后自动加载自定义规则，针对 示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，可以在 <code>iptables</code> 配置中写入配置</p>
+  <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT ACCEPT [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [0:0]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 提前定义链 &#x27;DOCKER-USER&#x27;，否则加载配置会报错： iptables-restore: line 24 failed</span></span></span><br><span class="line">:DOCKER-USER - [0:0]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">... 其他规则</span></span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 添加 Docker 自定义规则</span></span></span><br><span class="line">-A DOCKER-USER -m set ! --match-set allowed_ips src -m multiport  -p tcp --dports 3000,8080  -j REJECT</span><br><span class="line"></span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
+<li><p>以 Docker Compose 场景为例。可以创建一个容器，专门用来运行配置 <code>iptables</code> 命令。</p>
+<ol>
+<li><p>创建一个自定义 <code>iptables</code> 容器，此容器主要执行修改 <code>iptables</code> 自定义规则</p>
+ <figure class="highlight shell"><figcaption><span>Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM alpine:latest</span><br><span class="line">RUN apk --no-cache add iptables</span><br><span class="line">COPY setup-iptables.sh /usr/local/bin/</span><br><span class="line">RUN chmod +x /usr/local/bin/setup-iptables.sh</span><br><span class="line">ENTRYPOINT [&quot;setup-iptables.sh&quot;]</span><br></pre></td></tr></table></figure></li>
+<li><p>编写 <code>setup-iptables.sh</code> 脚本:</p>
+ <figure class="highlight shell"><figcaption><span>setup-iptables.sh</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line">iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>配置 <code>docker-compose.yml</code>，在 <code>docker-compose.yml</code> 中添加上面配置的容器</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  iptables:</span><br><span class="line">    build: .</span><br><span class="line">    network_mode: &quot;host&quot;</span><br><span class="line">    restart: &quot;no&quot;</span><br><span class="line">    deploy:</span><br><span class="line">      restart_policy:</span><br><span class="line">        condition: none</span><br><span class="line">  your_service:</span><br><span class="line">    image: your_image</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    # Other configuration options for your service</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p> <strong>当运行 <code>docker-compose up</code> 时，<code>iptables</code> 服务(容器)会启动并执行 <code>setup-iptables.sh</code> 脚本，将自定义规则添加到 <code>DOCKER-USER</code> 链中。</strong></p>
+<blockquote>
+<p>根据实际需求谨慎编写 <code>setup-iptables.sh</code> 脚本内容，防止 <code>iptables</code> 规则混乱</p>
+</blockquote>
+</li>
+</ol>
+</li>
+<li><p>要在 Docker Compose 中自定义防火墙规则，可以使用 Docker Compose 的 <code>post-up</code> 脚本功能。</p>
+<ol>
+<li><p>创建 <code>docker-compose.yml</code> 文件</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建 <code>docker-compose.override.yml</code> 文件</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.override.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    entrypoint: [&quot;sh&quot;, &quot;-c&quot;, &quot;iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT &amp;&amp; exec myservice&quot;]</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>启动 Docker Compose。  这样， 每次启动服务时，都会在 <code>DOCKER-USER</code> 链中添加指定的防火墙规则。确保 <code>myservice</code> 的入口点脚本正确无误，以防止启动失败。</p>
+<blockquote>
+<p><code>docker-compose up</code> 会时同时加载 <code>docker-compose.yml</code> 和 <code>docker-compose.override.yml</code>。</p>
+<p>Docker Compose 会将 <code>docker-compose.override.yml</code> 中的配置与 <code>docker-compose.yml</code> 中的配置合并。<strong>覆盖相同配置项，新增不同配置项</strong>。</p>
+</blockquote>
+</li>
+</ol>
+<p> 以上 2 个 <code>compose</code> 配置文件也可以合并成一个 <code>docker-compose.yml</code>：<br> <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line">    entrypoint: /path/to/setup-firewall.sh myservice-command</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></p>
+<blockquote>
+<p>这样，<strong>每次启动服务时，都会先执行防火墙规则，然后启动实际服务。</strong></p>
+</blockquote>
+</li>
+</ol>
+<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
+<p>ssh 连接失败后查看日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
+<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
+<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
+<p>将其默认规则改为 <code>ACCEPT</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
+<p>重新使用 ssh 登陆，连接正常。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>iptables</tag>
       </tags>
   </entry>
   <entry>
