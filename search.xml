@@ -5226,6 +5226,65 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>ELK 常见错误</title>
+    <url>/202312151503/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
+<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
+<p>要解决这个问题，可以考虑以下几个选项：</p>
+<ol>
+<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
+<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
+<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
+   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>获取  Elasticsearch 集群的最大分片数限制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
+<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
+</li>
+<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
+</li>
+</ol>
+<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
+<p>适用版本信息说明</p>
+<ul>
+<li>filebeat 7</li>
+<li>elasticsearch 7</li>
+</ul>
+</blockquote>
+<p>使用以下 filebeat 配置文件</p>
+<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
+<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
+
+<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
+<ul>
+<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
+</li>
+<li><p><em><strong>ILM 配置问题</strong></em> </p>
+<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
+ <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>elasticsearch 安装使用及常见错误集锦</title>
     <url>/202303301601/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -5348,65 +5407,6 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/8.8/setup.html">官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/targz.html#targz-running">安装运行 Elasticsearch</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>ELK 常见错误</title>
-    <url>/202312151503/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="filebeat-上传数据到-elasticsearch-问题汇总"><a href="#filebeat-上传数据到-elasticsearch-问题汇总" class="headerlink" title="filebeat 上传数据到 elasticsearch 问题汇总"></a>filebeat 上传数据到 elasticsearch 问题汇总</h1><h2 id="filebeat-上传数据到-elasticsearch-报错"><a href="#filebeat-上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 上传数据到 elasticsearch 报错"></a>filebeat 上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>filebeat 7.5.2 上传数据到 Elasticsearch 报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -f -u filebeat</span></span><br><span class="line">&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>此错误原因是由于 Elasticsearch 的集群中打开的分片数量超过了集群的最大分片限制。在 Elasticsearch 中，每个索引由多个分片组成，而集群有一个设置的最大分片数限制。这个限制是为了防止分片数过多导致性能问题。</p>
-<p>错误消息 <code>&#123;&quot;type&quot;:&quot;illegal_argument_exception&quot;,&quot;reason&quot;:&quot;Validation Failed: 1: this action would add [2] total shards, but this cluster currently has [6924]/[3000] maximum shards open;&quot;&#125;</code> 显示当前集群已有 6924 个分片，超过了 3000 个的限制。</p>
-<p>要解决这个问题，可以考虑以下几个选项：</p>
-<ol>
-<li><p><em><strong>调整 Elasticsearch 集群设置，增加最大分片数限制</strong></em></p>
-<p> 可以通过更改 Elasticsearch 配置来增加最大分片数的限制。但请注意，这可能会导致性能问题，尤其是如果硬件资源有限的话。</p>
-<p>   这可以通过修改 <code>cluster.max_shards_per_node</code> 设置来实现</p>
-   <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">PUT /_cluster/settings</span><br><span class="line">&#123;</span><br><span class="line">  &quot;persistent&quot;: &#123;</span><br><span class="line">    &quot;cluster.max_shards_per_node&quot;: &quot;新的分片数限制&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>获取  Elasticsearch 集群的最大分片数限制</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">curl -X GET &quot;http://[your_elasticsearch_host]:9200/_cluster/settings?include_defaults=true&amp;pretty&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>删除一些不必要的索引</strong></em> :如果有些索引不再需要，可以删除它们来减少分片数。</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">curl -X DELETE &quot;localhost:9200/my_index&quot;</span><br><span class="line">curl -X DELETE &quot;localhost:9200/logstash-2021.11.*&quot;</span><br></pre></td></tr></table></figure></li>
-<li><p><em><strong>合并一些小索引</strong></em>：如果有很多小的索引，可以考虑将它们合并为更大的索引，以减少总分片数。</p>
-</li>
-<li><p><em><strong>优化现有索引的分片策略</strong></em>：可以优化索引的分片数量，例如，通过减少每个索引的主分片数量。</p>
-</li>
-</ol>
-<h1 id="filebeat-错误"><a href="#filebeat-错误" class="headerlink" title="filebeat 错误"></a>filebeat 错误</h1><h2 id="filebeat-配置上传数据到-elasticsearch-报错"><a href="#filebeat-配置上传数据到-elasticsearch-报错" class="headerlink" title="filebeat 配置上传数据到 elasticsearch 报错"></a>filebeat 配置上传数据到 elasticsearch 报错</h2><blockquote>
-<p>适用版本信息说明</p>
-<ul>
-<li>filebeat 7</li>
-<li>elasticsearch 7</li>
-</ul>
-</blockquote>
-<p>使用以下 filebeat 配置文件</p>
-<figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure>
-<p>filebeat 启动后报错，elasticsearch 上未创建相应的索引，关键错误信息 <code>Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#39;filebeat-7.5.2&#39; exists, but it is not an alias</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -f -u filebeat</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.57.115.214:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.57.115.214:9200)) with 3 reconnect attempt(s)</span><br><span class="line">INFO        elasticsearch/client.go:753        Attempting to connect to Elasticsearch version 7.6.2</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:256        Auto ILM enable success.</span><br><span class="line">INFO        [index-management.ilm]        ilm/std.go:138        do not generate ilm policy: exists=true, overwrite=false</span><br><span class="line">INFO        [index-management]        idxmgmt/std.go:269        ILM policy successfully loaded.</span><br><span class="line">ERROR        pipeline/output.go:100        Failed to connect to backoff(elasticsearch(http://1.56.219.122:9200)): Connection marked as failed because the onConnect callback failed: resource &#x27;filebeat-7.5.2&#x27; exists, but it is not an alias</span><br><span class="line">INFO        pipeline/output.go:93        Attempting to reconnect to backoff(elasticsearch(http://1.56.219.122:9200)) with 3 reconnect attempt(s)</span><br></pre></td></tr></table></figure>
-
-<p>这表明 Filebeat 无法正常连接到 Elasticsearch 集群。出现这个问题的主要原因可能为： </p>
-<ul>
-<li><p><em><strong>索引&#x2F;别名冲突</strong></em>: Filebeat 试图创建或使用一个名为 <code>filebeat-7.5.2</code> 的索引或别名，但这个资源在 Elasticsearch 中已存在且不是一个别名。解决方法为 <em><strong>删除或重命名冲突索引</strong></em></p>
-</li>
-<li><p><em><strong>ILM 配置问题</strong></em> </p>
-<p>使用此配置文件，解决 <em><strong>索引&#x2F;别名冲突</strong></em> 问题后，filebeat 运行正常，但是 Elasticsearch 上未创建配置中的索引 <code>logstash-admin-*</code>，而是将数据上传到了索引 <code>filebeat-7.5.2-*</code>。这个问题是由 <code>ILM</code> 导致，可以禁用 <code>ILM</code>。参考以下配置，禁用 <code>ILM</code> (<code>setup.ilm.enabled: false</code>)</p>
- <figure class="highlight shell"><figcaption><span>/etc/filebeat/filebeat.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">filebeat.inputs:</span><br><span class="line">- type: log</span><br><span class="line">  paths:</span><br><span class="line">    - /home/logs/laravel-2023*</span><br><span class="line">  tags: [&quot;admin-log&quot;]</span><br><span class="line">  close_timeout: 3h</span><br><span class="line">  clean_inactive: 72h</span><br><span class="line">  ignore_older: 70h</span><br><span class="line">  close_inactive: 5m</span><br><span class="line"></span><br><span class="line">output.elasticsearch:</span><br><span class="line">  hosts: [&quot;1.56.219.122:9200&quot;, &quot;1.57.115.214:9200&quot;, &quot;1.52.53.31:9200&quot;]</span><br><span class="line">  username: &quot;elastic&quot;</span><br><span class="line">  password: &quot;passwd&quot;</span><br><span class="line">  index: &quot;logstash-admin-%&#123;+yyyy.MM.dd&#125;&quot;</span><br><span class="line">setup.ilm.enabled: false</span><br><span class="line">setup.template.enabled: true</span><br><span class="line">setup.template.name: &quot;logstash-admin&quot;</span><br><span class="line">setup.template.pattern: &quot;logstash-admin-*&quot;</span><br></pre></td></tr></table></figure></li>
-</ul>
-]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -8472,43 +8472,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>kubernetes ConfigMap 使用说明</title>
-    <url>/202212071353/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kubernetes 1.24</li>
-</ul>
-<p><code>ConfigMap</code> 是 Kubernetes 用来向应用 Pod 中注入配置数据的方法。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 Pod 使用 ConfigMap](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/)">[1]</span></a></sup></p>
-<h1 id="使用-ConfigMap-数据定义容器环境变量"><a href="#使用-ConfigMap-数据定义容器环境变量" class="headerlink" title="使用 ConfigMap 数据定义容器环境变量"></a>使用 ConfigMap 数据定义容器环境变量</h1><h2 id="使用单个-ConfigMap-中的数据定义容器环境变量"><a href="#使用单个-ConfigMap-中的数据定义容器环境变量" class="headerlink" title="使用单个 ConfigMap 中的数据定义容器环境变量"></a>使用单个 ConfigMap 中的数据定义容器环境变量</h2><ol>
-<li>在 <code>ConfigMap</code> 中将环境变量定义为键值对: <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create configmap special-config --from-literal=special.how=very</span><br></pre></td></tr></table></figure></li>
-<li>将 ConfigMap 中定义的 special.how 赋值给 Pod 规约中的 SPECIAL_LEVEL_KEY 环境变量。 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">   </span><br><span class="line">kind: Pod</span><br><span class="line">   </span><br><span class="line">metadata:</span><br><span class="line">   </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">   </span><br><span class="line">spec:</span><br><span class="line">   </span><br><span class="line">  containers:</span><br><span class="line">   </span><br><span class="line">    - name: test-container</span><br><span class="line">   </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">   </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">   </span><br><span class="line">      env:</span><br><span class="line">   </span><br><span class="line">        # 定义环境变量</span><br><span class="line">   </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">   </span><br><span class="line">          valueFrom:</span><br><span class="line">   </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">   </span><br><span class="line">              # ConfigMap 包含你要赋给 SPECIAL_LEVEL_KEY 的值</span><br><span class="line">   </span><br><span class="line">              name: special-config</span><br><span class="line">   </span><br><span class="line">              # 指定与取值相关的键名</span><br><span class="line">   </span><br><span class="line">              key: special.how</span><br><span class="line">   </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
- 现在，Pod 的输出包含环境变量 <code>SPECIAL_LEVEL_KEY=very</code>。</li>
-</ol>
-<span id="more"></span>
-
-<h2 id="使用来自多个-ConfigMap-的数据定义容器环境变量"><a href="#使用来自多个-ConfigMap-的数据定义容器环境变量" class="headerlink" title="使用来自多个 ConfigMap 的数据定义容器环境变量"></a>使用来自多个 ConfigMap 的数据定义容器环境变量</h2><p>创建 <code>ConfigMap</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[使用来自多个 ConfigMap 的数据定义容器环境变量](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps)
-">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  special.how: very</span><br><span class="line">  </span><br><span class="line">---</span><br><span class="line">  </span><br><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: env-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  log_level: INFO</span><br></pre></td></tr></table></figure>
-<p>在 Pod 规约中定义环境变量。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      env:</span><br><span class="line">  </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: special-config</span><br><span class="line">  </span><br><span class="line">              key: special.how</span><br><span class="line">  </span><br><span class="line">        - name: LOG_LEVEL</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: env-config</span><br><span class="line">  </span><br><span class="line">              key: log_level</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
-<h2 id="将-ConfigMap-中的所有键值对配置为容器环境变量"><a href="#将-ConfigMap-中的所有键值对配置为容器环境变量" class="headerlink" title="将 ConfigMap 中的所有键值对配置为容器环境变量"></a>将 ConfigMap 中的所有键值对配置为容器环境变量</h2><p>创建一个包含多个键值对的 ConfigMap。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  SPECIAL_LEVEL: very</span><br><span class="line">  </span><br><span class="line">  SPECIAL_TYPE: charm</span><br></pre></td></tr></table></figure>
-<p>使用 <code>envFrom</code> 将所有 <code>ConfigMap</code> 的数据定义为容器环境变量，<code>ConfigMap</code> 中的键成为 Pod 中的环境变量名称。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      envFrom:</span><br><span class="line">  </span><br><span class="line">      - configMapRef:</span><br><span class="line">  </span><br><span class="line">          name: special-config</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
-
-<h2 id="将-ConfigMap-内容挂载到容器中的文件"><a href="#将-ConfigMap-内容挂载到容器中的文件" class="headerlink" title="将 ConfigMap 内容挂载到容器中的文件"></a>将 ConfigMap 内容挂载到容器中的文件</h2><p>下面是一个将 ConfigMap 以卷的形式进行挂载的 Pod 示例： <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[在 Pod 中将 ConfigMap 当做文件使用](https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8)">[3]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: mypod</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: mypod</span><br><span class="line">    image: redis</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - name: foo</span><br><span class="line">      mountPath: &quot;/etc/foo&quot;</span><br><span class="line">      readOnly: true</span><br><span class="line">  volumes:</span><br><span class="line">  - name: foo</span><br><span class="line">    configMap:</span><br><span class="line">      name: myconfigmap</span><br></pre></td></tr></table></figure>
-
-<p>挂载之后，<code>configMap</code> 中的每个键会变成 <code>spec.containers[].volumeMounts[].mountPath</code> 下面的一个文件名。</p>
-<p>将 <code>configMap</code> 暴露为卷可以达到配置热更新的效果，当 <code>configMap</code> 更新后，卷中引用它的所有文件也会相应更新，进程发现文件被改变后进行重载（需要进程有此功能），无需重新创建 Pod 或者重启容器。</p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/">配置 Pod 使用 ConfigMap</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps">使用来自多个 ConfigMap 的数据定义容器环境变量</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8">在 Pod 中将 ConfigMap 当做文件使用</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes dns</title>
     <url>/202305031339/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8558,6 +8521,43 @@ width: 20%;
 <p>解析到的域名（主机）是 <code>$&#123;service name&#125;.$&#123;service namespace&#125;.svc.cluster.local</code><br>如果是 <code>headless</code> 类型的 Service ，解析到的域名（主机）是 Pod 的 域名。</p>
 </blockquote>
 ]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>kubernetes ConfigMap 使用说明</title>
+    <url>/202212071353/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.24</li>
+</ul>
+<p><code>ConfigMap</code> 是 Kubernetes 用来向应用 Pod 中注入配置数据的方法。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 Pod 使用 ConfigMap](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/)">[1]</span></a></sup></p>
+<h1 id="使用-ConfigMap-数据定义容器环境变量"><a href="#使用-ConfigMap-数据定义容器环境变量" class="headerlink" title="使用 ConfigMap 数据定义容器环境变量"></a>使用 ConfigMap 数据定义容器环境变量</h1><h2 id="使用单个-ConfigMap-中的数据定义容器环境变量"><a href="#使用单个-ConfigMap-中的数据定义容器环境变量" class="headerlink" title="使用单个 ConfigMap 中的数据定义容器环境变量"></a>使用单个 ConfigMap 中的数据定义容器环境变量</h2><ol>
+<li>在 <code>ConfigMap</code> 中将环境变量定义为键值对: <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create configmap special-config --from-literal=special.how=very</span><br></pre></td></tr></table></figure></li>
+<li>将 ConfigMap 中定义的 special.how 赋值给 Pod 规约中的 SPECIAL_LEVEL_KEY 环境变量。 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">   </span><br><span class="line">kind: Pod</span><br><span class="line">   </span><br><span class="line">metadata:</span><br><span class="line">   </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">   </span><br><span class="line">spec:</span><br><span class="line">   </span><br><span class="line">  containers:</span><br><span class="line">   </span><br><span class="line">    - name: test-container</span><br><span class="line">   </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">   </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">   </span><br><span class="line">      env:</span><br><span class="line">   </span><br><span class="line">        # 定义环境变量</span><br><span class="line">   </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">   </span><br><span class="line">          valueFrom:</span><br><span class="line">   </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">   </span><br><span class="line">              # ConfigMap 包含你要赋给 SPECIAL_LEVEL_KEY 的值</span><br><span class="line">   </span><br><span class="line">              name: special-config</span><br><span class="line">   </span><br><span class="line">              # 指定与取值相关的键名</span><br><span class="line">   </span><br><span class="line">              key: special.how</span><br><span class="line">   </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
+ 现在，Pod 的输出包含环境变量 <code>SPECIAL_LEVEL_KEY=very</code>。</li>
+</ol>
+<span id="more"></span>
+
+<h2 id="使用来自多个-ConfigMap-的数据定义容器环境变量"><a href="#使用来自多个-ConfigMap-的数据定义容器环境变量" class="headerlink" title="使用来自多个 ConfigMap 的数据定义容器环境变量"></a>使用来自多个 ConfigMap 的数据定义容器环境变量</h2><p>创建 <code>ConfigMap</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[使用来自多个 ConfigMap 的数据定义容器环境变量](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps)
+">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  special.how: very</span><br><span class="line">  </span><br><span class="line">---</span><br><span class="line">  </span><br><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: env-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  log_level: INFO</span><br></pre></td></tr></table></figure>
+<p>在 Pod 规约中定义环境变量。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      env:</span><br><span class="line">  </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: special-config</span><br><span class="line">  </span><br><span class="line">              key: special.how</span><br><span class="line">  </span><br><span class="line">        - name: LOG_LEVEL</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: env-config</span><br><span class="line">  </span><br><span class="line">              key: log_level</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
+<h2 id="将-ConfigMap-中的所有键值对配置为容器环境变量"><a href="#将-ConfigMap-中的所有键值对配置为容器环境变量" class="headerlink" title="将 ConfigMap 中的所有键值对配置为容器环境变量"></a>将 ConfigMap 中的所有键值对配置为容器环境变量</h2><p>创建一个包含多个键值对的 ConfigMap。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  SPECIAL_LEVEL: very</span><br><span class="line">  </span><br><span class="line">  SPECIAL_TYPE: charm</span><br></pre></td></tr></table></figure>
+<p>使用 <code>envFrom</code> 将所有 <code>ConfigMap</code> 的数据定义为容器环境变量，<code>ConfigMap</code> 中的键成为 Pod 中的环境变量名称。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      envFrom:</span><br><span class="line">  </span><br><span class="line">      - configMapRef:</span><br><span class="line">  </span><br><span class="line">          name: special-config</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
+
+<h2 id="将-ConfigMap-内容挂载到容器中的文件"><a href="#将-ConfigMap-内容挂载到容器中的文件" class="headerlink" title="将 ConfigMap 内容挂载到容器中的文件"></a>将 ConfigMap 内容挂载到容器中的文件</h2><p>下面是一个将 ConfigMap 以卷的形式进行挂载的 Pod 示例： <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[在 Pod 中将 ConfigMap 当做文件使用](https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8)">[3]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: mypod</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: mypod</span><br><span class="line">    image: redis</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - name: foo</span><br><span class="line">      mountPath: &quot;/etc/foo&quot;</span><br><span class="line">      readOnly: true</span><br><span class="line">  volumes:</span><br><span class="line">  - name: foo</span><br><span class="line">    configMap:</span><br><span class="line">      name: myconfigmap</span><br></pre></td></tr></table></figure>
+
+<p>挂载之后，<code>configMap</code> 中的每个键会变成 <code>spec.containers[].volumeMounts[].mountPath</code> 下面的一个文件名。</p>
+<p>将 <code>configMap</code> 暴露为卷可以达到配置热更新的效果，当 <code>configMap</code> 更新后，卷中引用它的所有文件也会相应更新，进程发现文件被改变后进行重载（需要进程有此功能），无需重新创建 Pod 或者重启容器。</p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/">配置 Pod 使用 ConfigMap</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps">使用来自多个 ConfigMap 的数据定义容器环境变量</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8">在 Pod 中将 ConfigMap 当做文件使用</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
@@ -9833,48 +9833,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>kibana 管理操作</title>
-    <url>/202307281401/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kibana 8.8</li>
-</ul>
-<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
-<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
-<p>space 隔离以下资源：</p>
-<ul>
-<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
-<li>Dashboard</li>
-</ul>
-<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<p>内置 role：</p>
-<ul>
-<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
-</ul>
-<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
-<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
-<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
-<ol>
-<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
-<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
-</ol>
-<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
-<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
-<ol>
-<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
-<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
-</ol>
-<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>ELK</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kibana 配置说明</title>
     <url>/202307251443/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -9941,6 +9899,48 @@ width: 20%;
 <p><em><strong>错误原因</strong></em> <a href="https://csms.tech/202307171638/#安全相关配置">Elasticsearch 启用了安全特性</a>，Kibana 中未配置登陆 Elasticsearch 时的认证信息。<a href="#Elasticsearch-%E6%9C%AC%E5%9C%B0%E7%94%A8%E6%88%B7%E8%AE%A4%E8%AF%81">参考配置 Kibana 通过 Elasticsearch 认证登陆</a></p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/current/settings.html">kibana 官网</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/settings.html">kibana 配置选项列表</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/access.html#status">Access Kibana</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.elastic.co/guide/en/kibana/current/tutorial-secure-access-to-kibana.html">Securing access to Kibana</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>ELK</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>kibana 管理操作</title>
+    <url>/202307281401/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kibana 8.8</li>
+</ul>
+<h1 id="Space-管理"><a href="#Space-管理" class="headerlink" title="Space 管理"></a>Space 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_space">创建 Space 参考</a></p>
+<p><em><strong>space 不能隔离 <code>role</code> 和 <code>user</code>，这属于 Elasticsearch 的安全功能，<code>role</code> 和 <code>user</code> 对整个 Kibana 实例都可见，不与特定的 space 关联。也不能隔离 index，因为这是 Elasticsearch 中的资源</strong></em></p>
+<p>space 隔离以下资源：</p>
+<ul>
+<li><code>data view</code> - 不同 space 中的 <code>data view</code> 互不可见。</li>
+<li>Dashboard</li>
+</ul>
+<h1 id="Roles-管理"><a href="#Roles-管理" class="headerlink" title="Roles 管理"></a>Roles 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<p>内置 role：</p>
+<ul>
+<li><code>view</code> - 此角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建对 Kibana 所有 space 拥有只读权限的用户，只需要将用户绑定到此角色即可。</li>
+</ul>
+<h1 id="Users-管理"><a href="#Users-管理" class="headerlink" title="Users 管理"></a>Users 管理</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html#_create_a_role">创建 role 参考</a></p>
+<h2 id="创建只读用户"><a href="#创建只读用户" class="headerlink" title="创建只读用户"></a>创建只读用户</h2><p>Kibana 内置的 <code>view</code> 角色拥有对所有 Kibana space 的 <em><strong>只读权限</strong></em>。如果想要创建 <strong>对 Kibana 所有 space 拥有只读权限</strong> 的用户，只需要将用户绑定到此角色即可。</p>
+<p>如果需要创建对特定 space 拥有只读权限的用户，可以参考以下步骤：</p>
+<ol>
+<li>创建针对特定 space 具有只读权限的 role，如下图，创建 <code>ops</code> space 拥有只读权限的 role<br> <img src="https://i.csms.tech/img_208.png"></li>
+<li>创建用户并绑定到新建的 role<br> <img src="https://i.csms.tech/img_209.png"></li>
+</ol>
+<h1 id="data-view"><a href="#data-view" class="headerlink" title="data view"></a>data view</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/data-views.html">创建 data view</a></p>
+<h1 id="Discover-管理"><a href="#Discover-管理" class="headerlink" title="Discover 管理"></a>Discover 管理</h1><h2 id="修改-Discover-中默认显示的最大文档数量"><a href="#修改-Discover-中默认显示的最大文档数量" class="headerlink" title="修改 Discover 中默认显示的最大文档数量"></a>修改 Discover 中默认显示的最大文档数量</h2><p>Discover 中默认最多显示 500 条文档，如果 Elasticsearch 中索引的文档数量超过500，默认不显示，也无法通过 Kibana 搜索到。要修改此值，参考以下步骤</p>
+<ol>
+<li>找到 Discover 页面的右上角的 <code>Options</code> 按钮，点击弹出的 <code>View Discover settings</code><br><img src="https://i.csms.tech/img_210.png"></li>
+<li>在 <code>Space Settings</code> 中，找到选项 <code>Maximum rows per table</code>，起默认值为 <code>500</code>，修改此值<br><img src="https://i.csms.tech/img_211.png"></li>
+</ol>
+<h1 id="KQL"><a href="#KQL" class="headerlink" title="KQL"></a>KQL</h1><p>KQL（Kibana Query Language）是 Kibana 中用于进行查询的查询语言。KQL 可以帮助用户在 Kibana 的 “Discover”（发现）页面、”Visualize”（可视化）页面以及 “Dashboard”（仪表盘）页面等地方快速构建查询，并过滤和分析数据。</p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.elastic.co/guide/en/kibana/8.8/tutorial-secure-access-to-kibana.html">Kibana 官方文档</a></p>
+]]></content>
       <categories>
         <category>Linux</category>
         <category>ELK</category>
@@ -11904,6 +11904,27 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>linux module 管理操作</title>
+    <url>/202406251436/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="查看内核已加载的模块"><a href="#查看内核已加载的模块" class="headerlink" title="查看内核已加载的模块"></a>查看内核已加载的模块</h1><p>使用 <code>lsmod</code> 命令列出所有已加载的内核模块，输出中包含： <code>模块名称(Name)</code>、<code>大小(Size)</code> 和 <code>何处被使用(Used by)</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">lsmod</span> </span><br><span class="line">Module                  Size  Used by</span><br><span class="line">softdog                12288  0 </span><br><span class="line">xt_MASQUERADE          16384  2 </span><br><span class="line">nf_conntrack_netlink    53248  0 </span><br><span class="line">nfnetlink              20480  2 nf_conntrack_netlink</span><br><span class="line">iptable_nat            12288  1 </span><br><span class="line">nf_nat                 57344  2 iptable_nat,xt_MASQUERADE</span><br><span class="line">xt_addrtype            12288  2 </span><br><span class="line">br_netfilter           32768  0 </span><br><span class="line">overlay               180224  0 </span><br><span class="line">ipt_REJECT             12288  2 </span><br><span class="line">nf_reject_ipv4         16384  1 ipt_REJECT</span><br><span class="line">xt_comment             12288  7 </span><br><span class="line">xt_multiport           16384  2 </span><br><span class="line">xt_conntrack           12288  10 </span><br><span class="line">nf_conntrack          188416  4 xt_conntrack,nf_nat,nf_conntrack_netlink,xt_MASQUERADE</span><br><span class="line">nf_defrag_ipv6         24576  1 nf_conntrack</span><br><span class="line">nf_defrag_ipv4         12288  1 nf_conntrack</span><br></pre></td></tr></table></figure>
+
+<h1 id="加载内核模块"><a href="#加载内核模块" class="headerlink" title="加载内核模块"></a>加载内核模块</h1><p>使用 <code>insmod</code> 命令加载内核模块. <strong>模块需要完整后缀（如果有）</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">insmod simple.ko</span><br></pre></td></tr></table></figure>
+
+<h1 id="卸载内核模块"><a href="#卸载内核模块" class="headerlink" title="卸载内核模块"></a>卸载内核模块</h1><p>使用 <code>rmmod</code> 命令卸载内核模块。<strong>无需后缀，只需要给定模块名</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">rmmod simple</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux 常见错误集锦</title>
     <url>/202306081314/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -11998,66 +12019,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>linux module 管理操作</title>
-    <url>/202406251436/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="查看内核已加载的模块"><a href="#查看内核已加载的模块" class="headerlink" title="查看内核已加载的模块"></a>查看内核已加载的模块</h1><p>使用 <code>lsmod</code> 命令列出所有已加载的内核模块，输出中包含： <code>模块名称(Name)</code>、<code>大小(Size)</code> 和 <code>何处被使用(Used by)</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">lsmod</span> </span><br><span class="line">Module                  Size  Used by</span><br><span class="line">softdog                12288  0 </span><br><span class="line">xt_MASQUERADE          16384  2 </span><br><span class="line">nf_conntrack_netlink    53248  0 </span><br><span class="line">nfnetlink              20480  2 nf_conntrack_netlink</span><br><span class="line">iptable_nat            12288  1 </span><br><span class="line">nf_nat                 57344  2 iptable_nat,xt_MASQUERADE</span><br><span class="line">xt_addrtype            12288  2 </span><br><span class="line">br_netfilter           32768  0 </span><br><span class="line">overlay               180224  0 </span><br><span class="line">ipt_REJECT             12288  2 </span><br><span class="line">nf_reject_ipv4         16384  1 ipt_REJECT</span><br><span class="line">xt_comment             12288  7 </span><br><span class="line">xt_multiport           16384  2 </span><br><span class="line">xt_conntrack           12288  10 </span><br><span class="line">nf_conntrack          188416  4 xt_conntrack,nf_nat,nf_conntrack_netlink,xt_MASQUERADE</span><br><span class="line">nf_defrag_ipv6         24576  1 nf_conntrack</span><br><span class="line">nf_defrag_ipv4         12288  1 nf_conntrack</span><br></pre></td></tr></table></figure>
-
-<h1 id="加载内核模块"><a href="#加载内核模块" class="headerlink" title="加载内核模块"></a>加载内核模块</h1><p>使用 <code>insmod</code> 命令加载内核模块. <strong>模块需要完整后缀（如果有）</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">insmod simple.ko</span><br></pre></td></tr></table></figure>
-
-<h1 id="卸载内核模块"><a href="#卸载内核模块" class="headerlink" title="卸载内核模块"></a>卸载内核模块</h1><p>使用 <code>rmmod</code> 命令卸载内核模块。<strong>无需后缀，只需要给定模块名</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">rmmod simple</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux namespace 简介</title>
-    <url>/202304191340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 5.4.239-1</li>
-</ul>
-<p>Linux 的 namespace 的作用是 ”隔离内核资源“，目前主要实现了以下 namespace</p>
-<ul>
-<li><code>mount namespace</code> - 文件系统挂载点</li>
-<li><code>UTS namespace</code> - 主机名</li>
-<li><code>IPC namespace</code> - POSIX 进程间通信消息队列</li>
-<li><code>PID namespace</code> - 进程 pid 数字空间</li>
-<li><code>network namespace</code> - network</li>
-<li><code>user namespace</code> - user ID 数字空间</li>
-<li><code>cgroup</code> - 资源使用控制</li>
-</ul>
-<p>其中，除了 <code>network namespace</code>，其他 namespace 的操作需要使用 C 语言调用系统 API 实现。<code>network namespace</code> 的增删改查功能已经集成到了 Linux 的 <code>ip</code> 工具集的 <code>netns</code> 子命令中</p>
-<p>Linux 里面的 namespace 给处在其中的进程造成 2 个错觉：</p>
-<ol>
-<li>它是系统里面唯一的进程</li>
-<li>它独享系统的所有资源</li>
-</ol>
-<p>默认情况下，Linux 里面的所有进程处在和宿主机相同的 namespace ，即初始 namespace 里，默认享有全局系统资源。</p>
-<p>想要查看某个进程都在哪些 namespace 中，可以找到进程 ID （PID），通过查看以下内容或者 namespace 信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root     32679 32659  0  80   0 -  2248 sigsus Apr07 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/32679/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 ipc -&gt; ipc:[4026534784]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 mnt -&gt; mnt:[4026534583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 net -&gt; net:[4026534787]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid_for_children -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 uts -&gt; uts:[4026534877]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>通过以上命令，可以看到 <code>nginx</code> 进程所属的 namespace，要查看系统初始 namespace ，可以查看 PID 为 1 的进程的 namespace 信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/1/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 ipc -&gt; ipc:[4026531839]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 mnt -&gt; mnt:[4026531840]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 net -&gt; net:[4026531992]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid_for_children -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 uts -&gt; uts:[4026531838]</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>链接文件的内容的格式为 ns 类型: [inode number]。这里的 <code>inode number</code> 则用来标识一个 namespace，我们也可以把它理解为 namespace 的 ID。如果两个进程的某个 namespace 文件指向同一个链接文件，说明其相关资源在同一个 namespace 中。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs](https://zhuanlan.zhihu.com/p/374503196)">[1]</span></a></sup></p>
-</blockquote>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://zhuanlan.zhihu.com/p/374503196">不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>linux macvlan 网卡虚拟化技术</title>
     <url>/202304251611/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Macvlan"><a href="#Macvlan" class="headerlink" title="Macvlan"></a>Macvlan</h1><p>Macvlan 本身是 linxu kernel 模块</p>
@@ -12097,6 +12058,45 @@ width: 20%;
       <categories>
         <category>Linux</category>
         <category>network</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux namespace 简介</title>
+    <url>/202304191340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 5.4.239-1</li>
+</ul>
+<p>Linux 的 namespace 的作用是 ”隔离内核资源“，目前主要实现了以下 namespace</p>
+<ul>
+<li><code>mount namespace</code> - 文件系统挂载点</li>
+<li><code>UTS namespace</code> - 主机名</li>
+<li><code>IPC namespace</code> - POSIX 进程间通信消息队列</li>
+<li><code>PID namespace</code> - 进程 pid 数字空间</li>
+<li><code>network namespace</code> - network</li>
+<li><code>user namespace</code> - user ID 数字空间</li>
+<li><code>cgroup</code> - 资源使用控制</li>
+</ul>
+<p>其中，除了 <code>network namespace</code>，其他 namespace 的操作需要使用 C 语言调用系统 API 实现。<code>network namespace</code> 的增删改查功能已经集成到了 Linux 的 <code>ip</code> 工具集的 <code>netns</code> 子命令中</p>
+<p>Linux 里面的 namespace 给处在其中的进程造成 2 个错觉：</p>
+<ol>
+<li>它是系统里面唯一的进程</li>
+<li>它独享系统的所有资源</li>
+</ol>
+<p>默认情况下，Linux 里面的所有进程处在和宿主机相同的 namespace ，即初始 namespace 里，默认享有全局系统资源。</p>
+<p>想要查看某个进程都在哪些 namespace 中，可以找到进程 ID （PID），通过查看以下内容或者 namespace 信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root     32679 32659  0  80   0 -  2248 sigsus Apr07 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/32679/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 ipc -&gt; ipc:[4026534784]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 mnt -&gt; mnt:[4026534583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 net -&gt; net:[4026534787]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 pid_for_children -&gt; pid:[4026534878]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:51 uts -&gt; uts:[4026534877]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>通过以上命令，可以看到 <code>nginx</code> 进程所属的 namespace，要查看系统初始 namespace ，可以查看 PID 为 1 的进程的 namespace 信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ll /proc/1/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 ipc -&gt; ipc:[4026531839]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 mnt -&gt; mnt:[4026531840]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 net -&gt; net:[4026531992]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 pid_for_children -&gt; pid:[4026531836]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr 19 13:53 uts -&gt; uts:[4026531838]</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>链接文件的内容的格式为 ns 类型: [inode number]。这里的 <code>inode number</code> 则用来标识一个 namespace，我们也可以把它理解为 namespace 的 ID。如果两个进程的某个 namespace 文件指向同一个链接文件，说明其相关资源在同一个 namespace 中。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs](https://zhuanlan.zhihu.com/p/374503196)">[1]</span></a></sup></p>
+</blockquote>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://zhuanlan.zhihu.com/p/374503196">不能不知道的三个docker容器隔离核心技术：namespace、cgroups、rootfs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -15173,6 +15173,241 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>Prometheus 指标汇总</title>
+    <url>/202306061427/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Prometheus 2.44.0</li>
+<li>Grafana 9.5.2</li>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="Kubernetes-相关指标"><a href="#Kubernetes-相关指标" class="headerlink" title="Kubernetes 相关指标"></a>Kubernetes 相关指标</h1><a href="/202212141608/" title="Kubernetes 中部署并监控 Kubernetes 集群参考">Kubernetes 中部署并监控 Kubernetes 集群参考</a>。
+
+<p><a href="https://csms.tech/202212141608/#配置-Prometheus-自动发现-kubelet-并读取监控指标">配置 Prometheus 监控 Kubelet</a> 之后可以采集到 Kubelet 监控指标。</p>
+<p><a href="https://csms.tech/202212141608/#配置-Prometheus-从-cAdvisor-读取监控数据">配置 Prometheus 读取 cAdvisor</a> 之后可以通过 cAdvisor 采集到容器相关的监控指标。</p>
+<table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>kubelet_pod_start_duration_seconds_count</code></td>
+<td></td>
+<td>Pod 启动的时间</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_pod_start_duration_seconds_bucket</code></td>
+<td></td>
+<td>Pod 启动的时间的延迟直方图数据</td>
+<td><code>kubelet_pod_start_duration_seconds_bucket&#123;le=&quot;0.5&quot;&#125;</code></td>
+</tr>
+<tr>
+<td><code>kubelet_running_pods</code></td>
+<td></td>
+<td>运行的 Pod 的数量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_running_containers</code></td>
+<td></td>
+<td>运行的 Containers 的数量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_runtime_operations_errors_total</code></td>
+<td></td>
+<td>Kubelet 和 CRI 交互产生的错误（类型）</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_started_containers_total</code></td>
+<td></td>
+<td>Kubelet 启动的 Container 总数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_started_pods_total</code></td>
+<td></td>
+<td>Kubelet 启动的 Pod 总数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kubelet_volume_stats_available_bytes</code></td>
+<td></td>
+<td>PV Volume 可以使用的磁盘空间</td>
+<td></td>
+</tr>
+<tr>
+<td><code>kube_node_status_allocatable</code><br/><code>kube_node_status_capacity</code></td>
+<td></td>
+<td>节点的可分配的 <strong>资源</strong> 数量</td>
+<td><code>kube_node_status_allocatable&#123;resource=&quot;pods&quot;&#125;</code><br/>节点可分配的 Pod 的数量</td>
+</tr>
+<tr>
+<td><code>kubelet_started_pods_total</code></td>
+<td><code>Counter</code></td>
+<td>已启动的 Pod 数量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>container_cpu_usage_seconds_total</code></td>
+<td><code>Counter</code></td>
+<td>Container 使用的 CPU</td>
+<td></td>
+</tr>
+<tr>
+<td><code>container_memory_usage_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>Pod 使用的内存</td>
+<td><code>container_memory_usage_bytes&#123;namespace=&quot;default&quot;&#125;</code></td>
+</tr>
+<tr>
+<td><code>kube_pod_container_status_restarts_total</code></td>
+<td><code>Counter</code></td>
+<td>Pod 的重启次数</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="nginx-ingress-controller-相关指标"><a href="#nginx-ingress-controller-相关指标" class="headerlink" title="nginx-ingress-controller 相关指标"></a>nginx-ingress-controller 相关指标</h2><p><a href="https://csms.tech/202212141608/#配置-Prometheus-抓取-Ingress-Nginx-指标">配置 Prometheus 监控 Ingress-Nginx-Controller 指标</a> 后，Prometheus 可以读取到 Ingress-Nginx-Controller 暴露的监控指标。</p>
+<p><a href="https://csms.tech/202306051707/#使用-Prometheus-数据源展示-Kubernetes-中-Ingress-Nginx-Controller-监控数据">Grafana 中配置使用 Ingress-Nginx-Controller 指标示例</a></p>
+<table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>nginx_ingress_controller_requests</code></td>
+<td><code>Counter</code></td>
+<td>Ingress Nginx Controller 接收到的所有请求数，，包括各个状态码</td>
+<td><code>irate(nginx_ingress_controller_requests[2m])</code> - 请求速率</td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_nginx_process_connections</code></td>
+<td>连接数，包括各个状态码</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_request_duration_seconds_sum</code></td>
+<td>请求持续时间的总和<br/><em><strong>请求持续时间是从请求进入 Ingress 控制器开始，到响应返回给客户端结束的整个时间</strong></em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_request_duration_seconds_count</code></td>
+<td>请求持续时间的计数。</td>
+<td>计算平均请求持续时间：平均请求持续时间 &#x3D; 请求持续时间总和 &#x2F; 请求持续时间计数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_sum</code></td>
+<td>upstream 占用时间的总和<br/><em><strong>upstream 占用时间是指请求从 Ingress 到达 upstream（backend）服务器的时间</strong></em></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_count</code></td>
+<td>upstream 上游占用时间的计数</td>
+<td>计算平均上游占用时间：平均上游占用时间 &#x3D; 上游占用时间总和 &#x2F; 上游占用时间计数。</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="node-相关指标"><a href="#node-相关指标" class="headerlink" title="node 相关指标"></a>node 相关指标</h1><h2 id="主机信息"><a href="#主机信息" class="headerlink" title="主机信息"></a>主机信息</h2><p>包括 CPU 架构、内核版本、操作系统类型、主机名等，集中在指标 <code>node_uname_info</code> 中。</p>
+<h2 id="CPU"><a href="#CPU" class="headerlink" title="CPU"></a>CPU</h2><table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>node_cpu_seconds_total</code></td>
+<td><code>Counter</code></td>
+<td>CPU 使用时间</td>
+<td><code>node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;</code> - CPU 空闲时间</td>
+</tr>
+</tbody></table>
+<h3 id="统计节点-CPU-使用率"><a href="#统计节点-CPU-使用率" class="headerlink" title="统计节点 CPU 使用率"></a>统计节点 CPU 使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">100 - (avg by (instance) (irate(node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;[5m])) * 100)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h2><table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>node_memory_MemTotal_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>总的内存</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_memory_MemFree_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>空闲内存</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_memory_Cached_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>Cache 内存</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_memory_Buffers_bytes</code></td>
+<td><code>Gauge</code></td>
+<td>Buffers 内存</td>
+<td></td>
+</tr>
+</tbody></table>
+<h3 id="统计节点的-内存使用率"><a href="#统计节点的-内存使用率" class="headerlink" title="统计节点的 内存使用率"></a>统计节点的 内存使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes) / node_memory_MemTotal_bytes * 100</span><br></pre></td></tr></table></figure>
+
+<h2 id="Network"><a href="#Network" class="headerlink" title="Network"></a>Network</h2><table>
+<thead>
+<tr>
+<th>指标名称</th>
+<th>类型</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>node_network_receive_bytes_total</code></td>
+<td><code>Counter</code></td>
+<td>网卡<strong>接收</strong>的流量</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node_network_transmit_bytes_total</code></td>
+<td><code>Counter</code></td>
+<td>网卡<strong>发送</strong>的流量</td>
+<td></td>
+</tr>
+</tbody></table>
+<h3 id="网卡流量带宽"><a href="#网卡流量带宽" class="headerlink" title="网卡流量带宽"></a>网卡流量带宽</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">irate(node_network_receive_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br><span class="line">irate(node_network_transmit_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Prometheus 安装配置</title>
     <url>/202211221610/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15636,241 +15871,6 @@ width: 20%;
 <li>进行指标优化，去除无效的 Metrics 采集<br> 在 Prometheus UI 的 Status 中，有 <code>TSDB Status</code>，里面包含了 Prometheus 的统计概要</li>
 </ol>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/quickstart/prometheus-quick-start/install-prometheus-server">安装Prometheus Server</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/quickstart/prometheus-quick-start/use-node-exporter">使用Node Exporter采集主机数据</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/quickstart/prometheus-quick-start/use-node-exporter#cong-node-exporter-shou-ji-jian-kong-shu-ju">从Node Exporter收集监控数据</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/quickstart/prometheus-quick-start/use-grafana-create-dashboard">监控数据可视化</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://hulining.gitbook.io/prometheus/concepts/jobs_instances#automatically-generated-labels-and-time-series">自动生成标签和时间序列</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://hulining.gitbook.io/prometheus/prometheus/querying/basics#range-vector-selectors">范围向量选择器</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/promql/what-is-prometheus-metrics-and-labels#zhi-biao-metric">指标(Metric)</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/promql/prometheus-metrics-types">Metrics类型</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/promql/prometheus-query-language">初识 PromQL</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://yunlzheng.gitbook.io/prometheus-book/parti-prometheus-ji-chu/promql/prometheus-promql-functions">PromQL内置函数</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Prometheus 指标汇总</title>
-    <url>/202306061427/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Prometheus 2.44.0</li>
-<li>Grafana 9.5.2</li>
-<li>Kubernetes 1.24</li>
-</ul>
-<h1 id="Kubernetes-相关指标"><a href="#Kubernetes-相关指标" class="headerlink" title="Kubernetes 相关指标"></a>Kubernetes 相关指标</h1><a href="/202212141608/" title="Kubernetes 中部署并监控 Kubernetes 集群参考">Kubernetes 中部署并监控 Kubernetes 集群参考</a>。
-
-<p><a href="https://csms.tech/202212141608/#配置-Prometheus-自动发现-kubelet-并读取监控指标">配置 Prometheus 监控 Kubelet</a> 之后可以采集到 Kubelet 监控指标。</p>
-<p><a href="https://csms.tech/202212141608/#配置-Prometheus-从-cAdvisor-读取监控数据">配置 Prometheus 读取 cAdvisor</a> 之后可以通过 cAdvisor 采集到容器相关的监控指标。</p>
-<table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>kubelet_pod_start_duration_seconds_count</code></td>
-<td></td>
-<td>Pod 启动的时间</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_pod_start_duration_seconds_bucket</code></td>
-<td></td>
-<td>Pod 启动的时间的延迟直方图数据</td>
-<td><code>kubelet_pod_start_duration_seconds_bucket&#123;le=&quot;0.5&quot;&#125;</code></td>
-</tr>
-<tr>
-<td><code>kubelet_running_pods</code></td>
-<td></td>
-<td>运行的 Pod 的数量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_running_containers</code></td>
-<td></td>
-<td>运行的 Containers 的数量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_runtime_operations_errors_total</code></td>
-<td></td>
-<td>Kubelet 和 CRI 交互产生的错误（类型）</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_started_containers_total</code></td>
-<td></td>
-<td>Kubelet 启动的 Container 总数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_started_pods_total</code></td>
-<td></td>
-<td>Kubelet 启动的 Pod 总数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kubelet_volume_stats_available_bytes</code></td>
-<td></td>
-<td>PV Volume 可以使用的磁盘空间</td>
-<td></td>
-</tr>
-<tr>
-<td><code>kube_node_status_allocatable</code><br/><code>kube_node_status_capacity</code></td>
-<td></td>
-<td>节点的可分配的 <strong>资源</strong> 数量</td>
-<td><code>kube_node_status_allocatable&#123;resource=&quot;pods&quot;&#125;</code><br/>节点可分配的 Pod 的数量</td>
-</tr>
-<tr>
-<td><code>kubelet_started_pods_total</code></td>
-<td><code>Counter</code></td>
-<td>已启动的 Pod 数量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>container_cpu_usage_seconds_total</code></td>
-<td><code>Counter</code></td>
-<td>Container 使用的 CPU</td>
-<td></td>
-</tr>
-<tr>
-<td><code>container_memory_usage_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>Pod 使用的内存</td>
-<td><code>container_memory_usage_bytes&#123;namespace=&quot;default&quot;&#125;</code></td>
-</tr>
-<tr>
-<td><code>kube_pod_container_status_restarts_total</code></td>
-<td><code>Counter</code></td>
-<td>Pod 的重启次数</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="nginx-ingress-controller-相关指标"><a href="#nginx-ingress-controller-相关指标" class="headerlink" title="nginx-ingress-controller 相关指标"></a>nginx-ingress-controller 相关指标</h2><p><a href="https://csms.tech/202212141608/#配置-Prometheus-抓取-Ingress-Nginx-指标">配置 Prometheus 监控 Ingress-Nginx-Controller 指标</a> 后，Prometheus 可以读取到 Ingress-Nginx-Controller 暴露的监控指标。</p>
-<p><a href="https://csms.tech/202306051707/#使用-Prometheus-数据源展示-Kubernetes-中-Ingress-Nginx-Controller-监控数据">Grafana 中配置使用 Ingress-Nginx-Controller 指标示例</a></p>
-<table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>nginx_ingress_controller_requests</code></td>
-<td><code>Counter</code></td>
-<td>Ingress Nginx Controller 接收到的所有请求数，，包括各个状态码</td>
-<td><code>irate(nginx_ingress_controller_requests[2m])</code> - 请求速率</td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_nginx_process_connections</code></td>
-<td>连接数，包括各个状态码</td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_request_duration_seconds_sum</code></td>
-<td>请求持续时间的总和<br/><em><strong>请求持续时间是从请求进入 Ingress 控制器开始，到响应返回给客户端结束的整个时间</strong></em></td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_request_duration_seconds_count</code></td>
-<td>请求持续时间的计数。</td>
-<td>计算平均请求持续时间：平均请求持续时间 &#x3D; 请求持续时间总和 &#x2F; 请求持续时间计数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_sum</code></td>
-<td>upstream 占用时间的总和<br/><em><strong>upstream 占用时间是指请求从 Ingress 到达 upstream（backend）服务器的时间</strong></em></td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td><code>nginx_ingress_controller_ingress_upstream_latency_seconds_count</code></td>
-<td>upstream 上游占用时间的计数</td>
-<td>计算平均上游占用时间：平均上游占用时间 &#x3D; 上游占用时间总和 &#x2F; 上游占用时间计数。</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="node-相关指标"><a href="#node-相关指标" class="headerlink" title="node 相关指标"></a>node 相关指标</h1><h2 id="主机信息"><a href="#主机信息" class="headerlink" title="主机信息"></a>主机信息</h2><p>包括 CPU 架构、内核版本、操作系统类型、主机名等，集中在指标 <code>node_uname_info</code> 中。</p>
-<h2 id="CPU"><a href="#CPU" class="headerlink" title="CPU"></a>CPU</h2><table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>node_cpu_seconds_total</code></td>
-<td><code>Counter</code></td>
-<td>CPU 使用时间</td>
-<td><code>node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;</code> - CPU 空闲时间</td>
-</tr>
-</tbody></table>
-<h3 id="统计节点-CPU-使用率"><a href="#统计节点-CPU-使用率" class="headerlink" title="统计节点 CPU 使用率"></a>统计节点 CPU 使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">100 - (avg by (instance) (irate(node_cpu_seconds_total&#123;mode=&quot;idle&quot;&#125;[5m])) * 100)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h2><table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>node_memory_MemTotal_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>总的内存</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_memory_MemFree_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>空闲内存</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_memory_Cached_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>Cache 内存</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_memory_Buffers_bytes</code></td>
-<td><code>Gauge</code></td>
-<td>Buffers 内存</td>
-<td></td>
-</tr>
-</tbody></table>
-<h3 id="统计节点的-内存使用率"><a href="#统计节点的-内存使用率" class="headerlink" title="统计节点的 内存使用率"></a>统计节点的 内存使用率</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">(node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes) / node_memory_MemTotal_bytes * 100</span><br></pre></td></tr></table></figure>
-
-<h2 id="Network"><a href="#Network" class="headerlink" title="Network"></a>Network</h2><table>
-<thead>
-<tr>
-<th>指标名称</th>
-<th>类型</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>node_network_receive_bytes_total</code></td>
-<td><code>Counter</code></td>
-<td>网卡<strong>接收</strong>的流量</td>
-<td></td>
-</tr>
-<tr>
-<td><code>node_network_transmit_bytes_total</code></td>
-<td><code>Counter</code></td>
-<td>网卡<strong>发送</strong>的流量</td>
-<td></td>
-</tr>
-</tbody></table>
-<h3 id="网卡流量带宽"><a href="#网卡流量带宽" class="headerlink" title="网卡流量带宽"></a>网卡流量带宽</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">irate(node_network_receive_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br><span class="line">irate(node_network_transmit_bytes_total&#123;device!~&quot;cni0|docker.*|flannel.*|veth.*|virbr.*|lo&quot;,kubernetes_io_hostname=~&quot;$node&quot;&#125;[$prometheusTimeInterval])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
       <categories>
         <category>Tools</category>
         <category>Prometheus</category>
@@ -16573,29 +16573,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>python PyInstaller 使用</title>
-    <url>/202310021022/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>要将 Python 脚本打包为 Windows 可运行程序，一种常用的方法是使用 PyInstaller。</p>
-<h1 id="安装-PyInstaller"><a href="#安装-PyInstaller" class="headerlink" title="安装 PyInstaller"></a>安装 PyInstaller</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install pyinstaller</span><br></pre></td></tr></table></figure>
-
-<h1 id="打包"><a href="#打包" class="headerlink" title="打包"></a>打包</h1><p>在命令行中，导航到脚本所在的文件夹并运行以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile test_file.py</span><br></pre></td></tr></table></figure>
-<p>这会生成一个 <code>dist</code> 目录，里面包含一个名为 <code>test_file.exe</code> 的可执行文件。参数 <code>--onefile</code> 确保所有必要的文件都被包含在单一的可执行文件中。</p>
-<p>以上方法打包后的文件点击运行后，桌面会弹窗一个 cmd 窗口，如果关闭了此 cmd 窗口，与其关联的程序也会被关闭。为了阻止这个命令行窗口的出现，并让程序在关闭窗口后仍然运行，你需要在使用 PyInstaller 打包时使用 <code>--noconsole</code> 选项。此外，为了使程序在没有任何可视窗口的情况下静默运行（例如，仅在系统托盘中），你还需要使用 <code>--windowed</code> 选项。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile --noconsole --windowed test_file.py</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>如果你想要程序在系统托盘中静默运行，并通过系统托盘图标进行交互，那么你需要使用其他库，如 <code>pystray</code>，来创建系统托盘应用。</p>
-</blockquote>
-]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Python3 requests 库使用</title>
     <url>/202302011011/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -16612,6 +16589,29 @@ width: 20%;
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.models.Response)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.Response)</span></span><br></pre></td></tr></table></figure>
 
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>python PyInstaller 使用</title>
+    <url>/202310021022/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>要将 Python 脚本打包为 Windows 可运行程序，一种常用的方法是使用 PyInstaller。</p>
+<h1 id="安装-PyInstaller"><a href="#安装-PyInstaller" class="headerlink" title="安装 PyInstaller"></a>安装 PyInstaller</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install pyinstaller</span><br></pre></td></tr></table></figure>
+
+<h1 id="打包"><a href="#打包" class="headerlink" title="打包"></a>打包</h1><p>在命令行中，导航到脚本所在的文件夹并运行以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile test_file.py</span><br></pre></td></tr></table></figure>
+<p>这会生成一个 <code>dist</code> 目录，里面包含一个名为 <code>test_file.exe</code> 的可执行文件。参数 <code>--onefile</code> 确保所有必要的文件都被包含在单一的可执行文件中。</p>
+<p>以上方法打包后的文件点击运行后，桌面会弹窗一个 cmd 窗口，如果关闭了此 cmd 窗口，与其关联的程序也会被关闭。为了阻止这个命令行窗口的出现，并让程序在关闭窗口后仍然运行，你需要在使用 PyInstaller 打包时使用 <code>--noconsole</code> 选项。此外，为了使程序在没有任何可视窗口的情况下静默运行（例如，仅在系统托盘中），你还需要使用 <code>--windowed</code> 选项。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile --noconsole --windowed test_file.py</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>如果你想要程序在系统托盘中静默运行，并通过系统托盘图标进行交互，那么你需要使用其他库，如 <code>pystray</code>，来创建系统托盘应用。</p>
+</blockquote>
+]]></content>
       <categories>
         <category>Python</category>
       </categories>
@@ -18374,40 +18374,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Vault Policy</title>
-    <url>/202307131545/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
-<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
-<p>以下示例创建一个只读策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
-<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>读取策略内容</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<blockquote>
-<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
-</blockquote>
-<p>使用新建的 token 登陆并尝试更新相关键</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>读取键，可以看到只能读取键值，无法写入</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Vault</category>
-      </categories>
-      <tags>
-        <tag>Vault</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Vault 介绍及安装配置</title>
     <url>/202307100928/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -18498,6 +18464,40 @@ width: 20%;
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://thiscute.world/posts/experience-of-vault/#4-vault-agent-%E9%85%8D%E7%BD%AE">secrets 管理工具 Vault 的介绍、安装及使用</a></p>
 <p><a href="https://lonegunmanb.github.io/essential-vault/">Vault 中文手册</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/internals/architecture">Vault High-Level Overview</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#install-vault">Installing Vault</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#dev-mode">Dev mode</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#ha-mode">HA mode</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#initialize-and-unseal-vault">Initialize and unseal Vault</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/5.%E5%90%AF%E5%8A%A8%E6%A0%87%E5%87%86%E7%9A%84Vault%E6%9C%8D%E5%8A%A1.html">Vault 中文手册</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/6.Vault%E7%9A%84%E6%9E%B6%E6%9E%84.html">Vault的架构</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5.html">基本概念</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/2.%E5%B0%81%E5%8D%B0%E4%B8%8E%E8%A7%A3%E5%B0%81.html">封印与解封</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/4.%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6/overview.html">Vault 配置文件</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/9.%E5%AE%9E%E9%99%85%E6%A1%88%E4%BE%8B/1.%E5%8A%A0%E5%AF%86%E5%8D%B3%E6%9C%8D%E5%8A%A1.html">加密即服务</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Vault</category>
+      </categories>
+      <tags>
+        <tag>Vault</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Vault Policy</title>
+    <url>/202307131545/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)">[1]</span></a></sup></p>
+<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
+<p>以下示例创建一个只读策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
+<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>读取策略内容</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<blockquote>
+<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
+</blockquote>
+<p>使用新建的 token 登陆并尝试更新相关键</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>读取键，可以看到只能读取键值，无法写入</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Tools</category>
         <category>Vault</category>
