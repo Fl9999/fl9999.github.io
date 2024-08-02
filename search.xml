@@ -1146,6 +1146,199 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Ansible playbook 使用介绍</title>
+    <url>/202309011341/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>ansible 2.9.27</li>
+</ul>
+<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
+<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
+<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
+<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
+<span id="more"></span>
+<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
+<ul>
+<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
+<li><code>remote_user</code> 用户名。</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
+
+<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
+
+<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
+<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
+
+<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
+
+<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
+
+<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
+<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
+<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
+<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
+<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
+
+<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
+<ul>
+<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></li>
+<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
+</ul>
+<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>action </code></td>
+<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain</code></td>
+<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>table </code></td>
+<td>This option specifies the packet matching table which the command should operate on</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain_management </code></td>
+<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>comment </code></td>
+<td>规则的注释说明</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ctstate </code><br/><code>list / elements=string</code></td>
+<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>source </code></td>
+<td>Source specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination</code> <br/><code>string</code></td>
+<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_port </code><br/><code>string</code></td>
+<td>Destination port or port range specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
+<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dst_range </code><br/><code>string</code></td>
+<td>Specifies the destination IP range to match in the iprange module.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>source_port </code></td>
+<td>Source port or port range specification.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>flush</code><br/><code>boolean</code></td>
+<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>jump </code></td>
+<td>This specifies the target of the rule</td>
+<td></td>
+</tr>
+<tr>
+<td><code>protocol </code></td>
+<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>rule_num </code></td>
+<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="lineinfile"><a href="#lineinfile" class="headerlink" title="lineinfile"></a>lineinfile</h2><p><code>lineinfile</code> 用于以下场景：</p>
+<ul>
+<li>确定文件中存在特定的一行，替换存在的行</li>
+<li>修改文件中特定的一行</li>
+</ul>
+<p>常用参数：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>state</code></td>
+<td>指定的行是否应该存在。<br/> - <code>absent</code><br/> - <code>present</code> 默认值</td>
+<td></td>
+</tr>
+<tr>
+<td><code>path</code><br/>aliases: <code>dest</code>, <code>destfile</code>, <code>name</code><br/><em><strong>required</strong></em></td>
+<td>要修改的目标文件</td>
+<td></td>
+</tr>
+<tr>
+<td><code>line</code>     <br/>aliases: <code>value</code></td>
+<td>要插入或者替换修改的行<br/><code>state=present</code> 时为必须参数 <br/>如果 <code>backrefs=true</code>，可以使用 <code>regexp</code> 正则表达式捕获的值，使用 <code>\g&lt;1&gt;</code>、<code>\g&lt;2&gt;</code> 的方式引用捕获到的内容</td>
+<td></td>
+</tr>
+<tr>
+<td><code>backup</code>               <br/>boolean</td>
+<td>默认值 <code>false</code> 。是否创建备份文件</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>修改防火墙中某个 IP 示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Modify iptables rule in /etc/sysconfig/iptables</span><br><span class="line">  hosts: nginx_1</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line"></span><br><span class="line">    - name: Replace the IP address in iptables rule</span><br><span class="line">      lineinfile:</span><br><span class="line">        path: /etc/sysconfig/iptables</span><br><span class="line">        regexp: (.*)18\.32\.100\.90(.*)</span><br><span class="line">        line: \g&lt;1&gt;180.232.100.99\g&lt;2&gt;</span><br><span class="line"></span><br><span class="line">        state: present</span><br><span class="line">        backup: yes</span><br><span class="line">        backrefs: true</span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html#ansible-collections-ansible-builtin-lineinfile-module-parameter-state">ansible.builtin.lineinfile</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ansible</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Ansible playbooks 使用介绍</title>
     <url>/202405231459/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1337,199 +1530,6 @@ width: 20%;
 </tbody></table>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_intro.html#ansible-playbooks">Ansible playbooks</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#where-to-set-variables">Where to set variables</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_vars_facts.html">Discovering variables: facts and magic variables</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#registering-variables">Registering variables</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>ansible</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Ansible playbook 使用介绍</title>
-    <url>/202309011341/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>ansible 2.9.27</li>
-</ul>
-<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
-<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
-<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
-<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
-<span id="more"></span>
-<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
-<ul>
-<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
-<li><code>remote_user</code> 用户名。</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
-
-<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
-
-<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
-<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
-
-<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
-
-<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
-
-<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
-<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
-<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
-<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
-<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
-
-
-
-
-
-<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
-
-<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
-<ul>
-<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></li>
-<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
-</ul>
-<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>action </code></td>
-<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain</code></td>
-<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>table </code></td>
-<td>This option specifies the packet matching table which the command should operate on</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain_management </code></td>
-<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>comment </code></td>
-<td>规则的注释说明</td>
-<td></td>
-</tr>
-<tr>
-<td><code>ctstate </code><br/><code>list / elements=string</code></td>
-<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>source </code></td>
-<td>Source specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination</code> <br/><code>string</code></td>
-<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_port </code><br/><code>string</code></td>
-<td>Destination port or port range specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
-<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
-<td></td>
-</tr>
-<tr>
-<td><code>dst_range </code><br/><code>string</code></td>
-<td>Specifies the destination IP range to match in the iprange module.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>source_port </code></td>
-<td>Source port or port range specification.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>flush</code><br/><code>boolean</code></td>
-<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>jump </code></td>
-<td>This specifies the target of the rule</td>
-<td></td>
-</tr>
-<tr>
-<td><code>protocol </code></td>
-<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>rule_num </code></td>
-<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="lineinfile"><a href="#lineinfile" class="headerlink" title="lineinfile"></a>lineinfile</h2><p><code>lineinfile</code> 用于以下场景：</p>
-<ul>
-<li>确定文件中存在特定的一行，替换存在的行</li>
-<li>修改文件中特定的一行</li>
-</ul>
-<p>常用参数：</p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>state</code></td>
-<td>指定的行是否应该存在。<br/> - <code>absent</code><br/> - <code>present</code> 默认值</td>
-<td></td>
-</tr>
-<tr>
-<td><code>path</code><br/>aliases: <code>dest</code>, <code>destfile</code>, <code>name</code><br/><em><strong>required</strong></em></td>
-<td>要修改的目标文件</td>
-<td></td>
-</tr>
-<tr>
-<td><code>line</code>     <br/>aliases: <code>value</code></td>
-<td>要插入或者替换修改的行<br/><code>state=present</code> 时为必须参数 <br/>如果 <code>backrefs=true</code>，可以使用 <code>regexp</code> 正则表达式捕获的值，使用 <code>\g&lt;1&gt;</code>、<code>\g&lt;2&gt;</code> 的方式引用捕获到的内容</td>
-<td></td>
-</tr>
-<tr>
-<td><code>backup</code>               <br/>boolean</td>
-<td>默认值 <code>false</code> 。是否创建备份文件</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>修改防火墙中某个 IP 示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Modify iptables rule in /etc/sysconfig/iptables</span><br><span class="line">  hosts: nginx_1</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line"></span><br><span class="line">    - name: Replace the IP address in iptables rule</span><br><span class="line">      lineinfile:</span><br><span class="line">        path: /etc/sysconfig/iptables</span><br><span class="line">        regexp: (.*)18\.32\.100\.90(.*)</span><br><span class="line">        line: \g&lt;1&gt;180.232.100.99\g&lt;2&gt;</span><br><span class="line"></span><br><span class="line">        state: present</span><br><span class="line">        backup: yes</span><br><span class="line">        backrefs: true</span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html#ansible-collections-ansible-builtin-lineinfile-module-parameter-state">ansible.builtin.lineinfile</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -2103,155 +2103,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Apollo 配置中心服务使用说明</title>
-    <url>/202211021332/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 kernel 5.4</li>
-<li>Apollo 2.0.1</li>
-<li>Mysql 5.7</li>
-<li>Java 1.8</li>
-</ul>
-<h1 id="安装部署"><a href="#安装部署" class="headerlink" title="安装部署"></a>安装部署</h1><h2 id="分布式部署"><a href="#分布式部署" class="headerlink" title="分布式部署"></a>分布式部署</h2><h3 id="部署服务器信息说明"><a href="#部署服务器信息说明" class="headerlink" title="部署服务器信息说明"></a>部署服务器信息说明</h3><table>
-<thead>
-<tr>
-<th>环境</th>
-<th>服务器</th>
-<th>服务</th>
-<th>端口</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-portal</td>
-<td>8070</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>数据库 ApolloPortalDB</td>
-<td>3306</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.88.1</td>
-<td>数据库ApolloConfigDB</td>
-<td>3306</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.82.2</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>pro</code></td>
-<td>172.31.82.2</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>apollo-configservice</td>
-<td>8080</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>apollo-adminservice</td>
-<td>8090</td>
-</tr>
-<tr>
-<td><code>uat</code></td>
-<td>172.31.83.3</td>
-<td>数据库ApolloConfigDB</td>
-<td>3306</td>
-</tr>
-</tbody></table>
-<p>其中 <code>172.31.88.1</code>、<code>172.31.82.2</code> 为 <code>pro</code> 环境的高可用节点。<code>172.31.83.3</code> 为 <code>uat</code> 环境的单节点。</p>
-<p><code>apollo-portal</code> 和 <code>ApolloPortalDB</code> 部署在 <code>pro</code> 环境，<code>uat</code> 环境共用 <code>apollo-portal</code> 和 <code>ApolloPortalDB</code>。</p>
-<span id="more"></span>
-<h3 id="安装-Java"><a href="#安装-Java" class="headerlink" title="安装 Java"></a>安装 Java</h3><p>在所有节点上安装 java-1.8.0</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y java-1.8.0-openjdk</span><br></pre></td></tr></table></figure>
-<p>验证 java 安装成功</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">java -version</span></span><br><span class="line">openjdk version &quot;1.8.0_352&quot;</span><br><span class="line">OpenJDK Runtime Environment (build 1.8.0_352-b08)</span><br><span class="line">OpenJDK 64-Bit Server VM (build 25.352-b08, mixed mode)</span><br></pre></td></tr></table></figure>
-
-<h3 id="下载-Apollo-源码包"><a href="#下载-Apollo-源码包" class="headerlink" title="下载 Apollo 源码包"></a>下载 Apollo 源码包</h3><p><a href="https://github.com/apolloconfig/apollo/releases/tag/v2.0.1">下载地址</a>，<code>apollo-portal</code> 只需要在 portal 服务器下载，<code>apollo-adminservice</code> 和 <code>apollo-configservice</code> 需要在所有节点上下载<br><img src="https://i.csms.tech/img_79.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-adminservice-2.0.1-github.zip </span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-configservice-2.0.1-github.zip</span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-portal-2.0.1-github.zip</span><br></pre></td></tr></table></figure>
-
-<p>解压源码包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">unzip apollo-adminservice-2.0.1-github.zip -d apollo-adminservice-2.0.1</span><br><span class="line">unzip apollo-configservice-2.0.1-github.zip -d apollo-configservice-2.0.1</span><br><span class="line">unzip apollo-portal-2.0.1-github.zip -d apollo-portal-2.0.1</span><br></pre></td></tr></table></figure>
-
-
-<h3 id="准备数据库"><a href="#准备数据库" class="headerlink" title="准备数据库"></a>准备数据库</h3><p>Apollo 服务端共需要两个数据库：<code>ApolloPortalDB</code> 和 <code>ApolloConfigDB</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建数据库](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)">[1]</span></a></sup></p>
-<p>需要注意的是 <code>ApolloPortalDB</code> 只需要在 <code>pro</code> 环境部署一个即可，而 <code>ApolloConfigDB</code> 需要在每个环境部署一套，如 <code>fat</code>、<code>uat</code> 和 <code>pro</code> 分别部署 3 套 <code>ApolloConfigDB</code>。</p>
-<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloportaldb.sql</code> 并导入数据库 </p>
-<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[apolloportaldb.sql](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)
-">[2]</span></a></sup></p>
-<p>在 <code>uat</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库</p>
-<p>调整 <code>ApolloPortalDB.ServerConfig</code> 表的数据，<code>portal</code> 默认支持的环境是 <code>DEV</code>，若需要支持其它环境，需要修改 <code>apollo.portal.envs</code> 的值，默认值是 <code>DEV</code>，修改为以下值，表示支持 <code>UAT</code>、<code>PRO</code><br><img src="https://i.csms.tech/img_80.png"></p>
-<p>因为 <code>PRO</code> 环境有多个节点，需要调整 <code>PRO</code> 环境的数据库表 <code>ApolloConfigDB.ServerConfig</code>，修改 <code>eureka.service.url</code> 的值为当前 <code>PRO</code> 环境的 <code>apollo-configservice</code> 的地址和端口，注意多个地址之间用英文逗号隔开。<br><img src="https://i.csms.tech/img_81.png"><br><code>UAT</code> 环境只有一个节点，<code>eureka.service.url</code> 使用默认的 <code>localhost</code> 即可。 </p>
-<h3 id="部署-Apollo"><a href="#部署-Apollo" class="headerlink" title="部署 Apollo"></a>部署 Apollo</h3><h4 id="部署-apollo-configservice"><a href="#部署-apollo-configservice" class="headerlink" title="部署 apollo-configservice"></a>部署 apollo-configservice</h4><h5 id="配置数据库连接"><a href="#配置数据库连接" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-configservice-2.0.1/config/application-github.properties</code> 文件，修改其中的数据库连接为当前环境的数据库信息。</p>
-<figure class="highlight shell"><figcaption><span>apollo-configservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWb+5Pw==</span><br></pre></td></tr></table></figure>
-
-<h5 id="启动-apollo-configservice"><a href="#启动-apollo-configservice" class="headerlink" title="启动 apollo-configservice"></a>启动 apollo-configservice</h5><p>默认的启动端口是 <code>8080</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8080&#125;</code> 的 <code>8080</code> 改成指定的端口即可。</p>
-<p>执行 <code>scripts/startup.sh</code> 启动</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 09:56:08 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22197]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 09:56:23 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
-
-<p>启动之后检查端口 <code>8080</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp | grep LIST</span></span><br><span class="line">tcp        0      0 0.0.0.0:111             0.0.0.0:*               LISTEN      612/rpcbind         </span><br><span class="line">tcp        0      0 0.0.0.0:30000           0.0.0.0:*               LISTEN      2595/sshd           </span><br><span class="line">tcp6       0      0 :::3306                 :::*                    LISTEN      21960/mysqld        </span><br><span class="line">tcp6       0      0 :::111                  :::*                    LISTEN      612/rpcbind         </span><br><span class="line">tcp6       0      0 :::8080                 :::*                    LISTEN      22197/java          </span><br><span class="line">tcp6       0      0 :::30000                :::*                    LISTEN      2595/sshd</span><br></pre></td></tr></table></figure>
-
-<h4 id="部署-apollo-adminservice"><a href="#部署-apollo-adminservice" class="headerlink" title="部署 apollo-adminservice"></a>部署 apollo-adminservice</h4><h5 id="配置数据库连接-1"><a href="#配置数据库连接-1" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-adminservice-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为当前环境的数据库信息。</p>
-<figure class="highlight shell"><figcaption><span>apollo-adminservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = 1roAYNg==</span><br></pre></td></tr></table></figure>
-<h5 id="启动-apollo-adminservice"><a href="#启动-apollo-adminservice" class="headerlink" title="启动 apollo-adminservice"></a>启动 apollo-adminservice</h5><p>默认的启动端口是 <code>8090</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8090&#125;</code> 的 <code>8090</code> 改成指定的端口即可。</p>
-<p>执行 <code>scripts/startup.sh</code> 启动</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 10:06:05 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22818]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:06:21 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
-
-<h4 id="部署-apollo-portal"><a href="#部署-apollo-portal" class="headerlink" title="部署 apollo-portal"></a>部署 apollo-portal</h4><h5 id="配置数据库连接-2"><a href="#配置数据库连接-2" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改 <code>apollo-portal</code> 节点上的 <code>apollo-portal-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为 <code>ApolloPortalDB</code> 的数据库信息。</p>
-<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">DataSource</span></span><br><span class="line">spring.datasource.url = jdbc:mysql://pro.env.apollo.mysql:3306/ApolloPortalDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWwRDNEb+5Pw==</span><br></pre></td></tr></table></figure>
-
-<h5 id="配置-meta-service-信息"><a href="#配置-meta-service-信息" class="headerlink" title="配置 meta service 信息"></a>配置 meta service 信息</h5><p><code>meta service</code> 的地址和端口，默认就是 <code>apollo-configservice</code> 的地址和端口。</p>
-<p>修改 <code>apollo-portal-2.0.1/config/apollo-env.properties</code>，填写当前的 <code>apollo-portal</code> 要管理的环境的 <code>apollo-configservice</code> 的地址和端口，多个地址之间用英文逗号隔开</p>
-<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/apollo-env.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">pro.meta=http://172.31.81.1:8080,http://172.31.82.2:8080</span><br><span class="line">uat.meta=http://172.31.83.3:8080</span><br></pre></td></tr></table></figure>
-
-<h5 id="启动-apollo-portal"><a href="#启动-apollo-portal" class="headerlink" title="启动 apollo-portal"></a>启动 apollo-portal</h5><p>默认的启动端口是 <code>8070</code> ，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8070&#125;</code> 的 <code>8070</code> 改成指定的端口即可。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span> </span><br><span class="line">Thu Nov  3 10:23:32 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [23044]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:23:47 CST 2022 Server started in 15 seconds!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="部署后检查是否成功"><a href="#部署后检查是否成功" class="headerlink" title="部署后检查是否成功"></a>部署后检查是否成功</h3><h4 id="apollo-configservice-和-apollo-adminservice-检查"><a href="#apollo-configservice-和-apollo-adminservice-检查" class="headerlink" title="apollo-configservice 和 apollo-adminservice 检查"></a>apollo-configservice 和 apollo-adminservice 检查</h4><ol>
-<li><p>在浏览器上登录当前环境的其中一个 <code>apollo-configservice</code> 的 <code>http://ip:port</code></p>
-</li>
-<li><p>查看该环境的 <code>apollo-configservice</code> 和 <code>apollo-adminservice</code> 的节点数是否正常。<br> 比如 <code>PRO</code> 环境有 2 个节点，输出中正常情况下会显示 2 个正常的节点<br> <img src="https://i.csms.tech/img_82.png"></p>
-</li>
-</ol>
-<h4 id="apollo-portal-检查"><a href="#apollo-portal-检查" class="headerlink" title="apollo-portal 检查"></a>apollo-portal 检查</h4><ol>
-<li>浏览器登录 <code>apollo-portal</code> 的 <code>http://ip:port</code>，默认账号 <code>apollo</code>，密码 <code>admin</code>。</li>
-</ol>
-<h1 id="常用操作"><a href="#常用操作" class="headerlink" title="常用操作"></a>常用操作</h1><h2 id="修改默认管理员-apollo-的密码"><a href="#修改默认管理员-apollo-的密码" class="headerlink" title="修改默认管理员 apollo 的密码"></a>修改默认管理员 apollo 的密码</h2><p>默认管理员 <code>apollo</code> 的密码为 <code>admin</code>，要修改此密码，在 <code>管理员工具</code> -&gt; <code>用户管理</code> 中输入用户名和密码，如果用户已存在，更新用户信息，用户不存在，则创建新用户。</p>
-<h2 id="创建部门"><a href="#创建部门" class="headerlink" title="创建部门"></a>创建部门</h2><p>只有管理员才能创建部门，在 <code>管理员工具</code> -&gt; <code>系统参数</code> 中查询 <code>organizations</code>，会输出当前的部门信息<br><img src="https://i.csms.tech/img_83.png"><br>修改此参数并保存，即可更新部门信息。</p>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.apolloconfig.com/#/zh/design/apollo-introduction">Apollo 配置中心介绍</a></p>
-<p><a href="https://blog.csdn.net/werewolf2017/article/details/109120336">Apollo分布式配置中心集群部署</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">创建数据库</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">apolloportaldb.sql</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Apollo</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>awk 使用示例</title>
     <url>/202208031132/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>awk 是一种编程语言，用于在linux&#x2F;unix下对文本和数据进行处理。数据可以来自标准输入(stdin)、一个或多个文件，或其它命令的输出。它支持用户自定义函数和动态正则表达式等先进功能，是linux&#x2F;unix下的一个强大编程工具。它在命令行中使用，但更多是作为脚本来使用。awk有很多内建的功能，比如数组、函数等，这是它和C语言的相同之处，灵活性是awk最大的优势。  </p>
@@ -2406,6 +2257,155 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
         <tag>awk</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Apollo 配置中心服务使用说明</title>
+    <url>/202211021332/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 kernel 5.4</li>
+<li>Apollo 2.0.1</li>
+<li>Mysql 5.7</li>
+<li>Java 1.8</li>
+</ul>
+<h1 id="安装部署"><a href="#安装部署" class="headerlink" title="安装部署"></a>安装部署</h1><h2 id="分布式部署"><a href="#分布式部署" class="headerlink" title="分布式部署"></a>分布式部署</h2><h3 id="部署服务器信息说明"><a href="#部署服务器信息说明" class="headerlink" title="部署服务器信息说明"></a>部署服务器信息说明</h3><table>
+<thead>
+<tr>
+<th>环境</th>
+<th>服务器</th>
+<th>服务</th>
+<th>端口</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>apollo-portal</td>
+<td>8070</td>
+</tr>
+<tr>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>数据库 ApolloPortalDB</td>
+<td>3306</td>
+</tr>
+<tr>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>apollo-configservice</td>
+<td>8080</td>
+</tr>
+<tr>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>apollo-adminservice</td>
+<td>8090</td>
+</tr>
+<tr>
+<td><code>pro</code></td>
+<td>172.31.88.1</td>
+<td>数据库ApolloConfigDB</td>
+<td>3306</td>
+</tr>
+<tr>
+<td><code>pro</code></td>
+<td>172.31.82.2</td>
+<td>apollo-configservice</td>
+<td>8080</td>
+</tr>
+<tr>
+<td><code>pro</code></td>
+<td>172.31.82.2</td>
+<td>apollo-adminservice</td>
+<td>8090</td>
+</tr>
+<tr>
+<td><code>uat</code></td>
+<td>172.31.83.3</td>
+<td>apollo-configservice</td>
+<td>8080</td>
+</tr>
+<tr>
+<td><code>uat</code></td>
+<td>172.31.83.3</td>
+<td>apollo-adminservice</td>
+<td>8090</td>
+</tr>
+<tr>
+<td><code>uat</code></td>
+<td>172.31.83.3</td>
+<td>数据库ApolloConfigDB</td>
+<td>3306</td>
+</tr>
+</tbody></table>
+<p>其中 <code>172.31.88.1</code>、<code>172.31.82.2</code> 为 <code>pro</code> 环境的高可用节点。<code>172.31.83.3</code> 为 <code>uat</code> 环境的单节点。</p>
+<p><code>apollo-portal</code> 和 <code>ApolloPortalDB</code> 部署在 <code>pro</code> 环境，<code>uat</code> 环境共用 <code>apollo-portal</code> 和 <code>ApolloPortalDB</code>。</p>
+<span id="more"></span>
+<h3 id="安装-Java"><a href="#安装-Java" class="headerlink" title="安装 Java"></a>安装 Java</h3><p>在所有节点上安装 java-1.8.0</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y java-1.8.0-openjdk</span><br></pre></td></tr></table></figure>
+<p>验证 java 安装成功</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">java -version</span></span><br><span class="line">openjdk version &quot;1.8.0_352&quot;</span><br><span class="line">OpenJDK Runtime Environment (build 1.8.0_352-b08)</span><br><span class="line">OpenJDK 64-Bit Server VM (build 25.352-b08, mixed mode)</span><br></pre></td></tr></table></figure>
+
+<h3 id="下载-Apollo-源码包"><a href="#下载-Apollo-源码包" class="headerlink" title="下载 Apollo 源码包"></a>下载 Apollo 源码包</h3><p><a href="https://github.com/apolloconfig/apollo/releases/tag/v2.0.1">下载地址</a>，<code>apollo-portal</code> 只需要在 portal 服务器下载，<code>apollo-adminservice</code> 和 <code>apollo-configservice</code> 需要在所有节点上下载<br><img src="https://i.csms.tech/img_79.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-adminservice-2.0.1-github.zip </span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-configservice-2.0.1-github.zip</span><br><span class="line">wget https://github.com/apolloconfig/apollo/releases/download/v2.0.1/apollo-portal-2.0.1-github.zip</span><br></pre></td></tr></table></figure>
+
+<p>解压源码包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">unzip apollo-adminservice-2.0.1-github.zip -d apollo-adminservice-2.0.1</span><br><span class="line">unzip apollo-configservice-2.0.1-github.zip -d apollo-configservice-2.0.1</span><br><span class="line">unzip apollo-portal-2.0.1-github.zip -d apollo-portal-2.0.1</span><br></pre></td></tr></table></figure>
+
+
+<h3 id="准备数据库"><a href="#准备数据库" class="headerlink" title="准备数据库"></a>准备数据库</h3><p>Apollo 服务端共需要两个数据库：<code>ApolloPortalDB</code> 和 <code>ApolloConfigDB</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[创建数据库](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)">[1]</span></a></sup></p>
+<p>需要注意的是 <code>ApolloPortalDB</code> 只需要在 <code>pro</code> 环境部署一个即可，而 <code>ApolloConfigDB</code> 需要在每个环境部署一套，如 <code>fat</code>、<code>uat</code> 和 <code>pro</code> 分别部署 3 套 <code>ApolloConfigDB</code>。</p>
+<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloportaldb.sql</code> 并导入数据库 </p>
+<p>在 <code>pro</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[apolloportaldb.sql](https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93)
+">[2]</span></a></sup></p>
+<p>在 <code>uat</code> 环境的数据库服务器上下载 <code>apolloconfigdb.sql</code> 并导入数据库</p>
+<p>调整 <code>ApolloPortalDB.ServerConfig</code> 表的数据，<code>portal</code> 默认支持的环境是 <code>DEV</code>，若需要支持其它环境，需要修改 <code>apollo.portal.envs</code> 的值，默认值是 <code>DEV</code>，修改为以下值，表示支持 <code>UAT</code>、<code>PRO</code><br><img src="https://i.csms.tech/img_80.png"></p>
+<p>因为 <code>PRO</code> 环境有多个节点，需要调整 <code>PRO</code> 环境的数据库表 <code>ApolloConfigDB.ServerConfig</code>，修改 <code>eureka.service.url</code> 的值为当前 <code>PRO</code> 环境的 <code>apollo-configservice</code> 的地址和端口，注意多个地址之间用英文逗号隔开。<br><img src="https://i.csms.tech/img_81.png"><br><code>UAT</code> 环境只有一个节点，<code>eureka.service.url</code> 使用默认的 <code>localhost</code> 即可。 </p>
+<h3 id="部署-Apollo"><a href="#部署-Apollo" class="headerlink" title="部署 Apollo"></a>部署 Apollo</h3><h4 id="部署-apollo-configservice"><a href="#部署-apollo-configservice" class="headerlink" title="部署 apollo-configservice"></a>部署 apollo-configservice</h4><h5 id="配置数据库连接"><a href="#配置数据库连接" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-configservice-2.0.1/config/application-github.properties</code> 文件，修改其中的数据库连接为当前环境的数据库信息。</p>
+<figure class="highlight shell"><figcaption><span>apollo-configservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWb+5Pw==</span><br></pre></td></tr></table></figure>
+
+<h5 id="启动-apollo-configservice"><a href="#启动-apollo-configservice" class="headerlink" title="启动 apollo-configservice"></a>启动 apollo-configservice</h5><p>默认的启动端口是 <code>8080</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8080&#125;</code> 的 <code>8080</code> 改成指定的端口即可。</p>
+<p>执行 <code>scripts/startup.sh</code> 启动</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 09:56:08 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22197]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 09:56:23 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
+
+<p>启动之后检查端口 <code>8080</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp | grep LIST</span></span><br><span class="line">tcp        0      0 0.0.0.0:111             0.0.0.0:*               LISTEN      612/rpcbind         </span><br><span class="line">tcp        0      0 0.0.0.0:30000           0.0.0.0:*               LISTEN      2595/sshd           </span><br><span class="line">tcp6       0      0 :::3306                 :::*                    LISTEN      21960/mysqld        </span><br><span class="line">tcp6       0      0 :::111                  :::*                    LISTEN      612/rpcbind         </span><br><span class="line">tcp6       0      0 :::8080                 :::*                    LISTEN      22197/java          </span><br><span class="line">tcp6       0      0 :::30000                :::*                    LISTEN      2595/sshd</span><br></pre></td></tr></table></figure>
+
+<h4 id="部署-apollo-adminservice"><a href="#部署-apollo-adminservice" class="headerlink" title="部署 apollo-adminservice"></a>部署 apollo-adminservice</h4><h5 id="配置数据库连接-1"><a href="#配置数据库连接-1" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改各节点上的 <code>apollo-adminservice-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为当前环境的数据库信息。</p>
+<figure class="highlight shell"><figcaption><span>apollo-adminservice-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">spring.datasource.url = jdbc:mysql://apollo.mysql:3306/ApolloConfigDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = 1roAYNg==</span><br></pre></td></tr></table></figure>
+<h5 id="启动-apollo-adminservice"><a href="#启动-apollo-adminservice" class="headerlink" title="启动 apollo-adminservice"></a>启动 apollo-adminservice</h5><p>默认的启动端口是 <code>8090</code>，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8090&#125;</code> 的 <code>8090</code> 改成指定的端口即可。</p>
+<p>执行 <code>scripts/startup.sh</code> 启动</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span></span><br><span class="line">Thu Nov  3 10:06:05 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [22818]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:06:21 CST 2022 Server started in 15 seconds!</span><br></pre></td></tr></table></figure>
+
+<h4 id="部署-apollo-portal"><a href="#部署-apollo-portal" class="headerlink" title="部署 apollo-portal"></a>部署 apollo-portal</h4><h5 id="配置数据库连接-2"><a href="#配置数据库连接-2" class="headerlink" title="配置数据库连接"></a>配置数据库连接</h5><p>修改 <code>apollo-portal</code> 节点上的 <code>apollo-portal-2.0.1/config/application-github.properties</code>，修改其中的数据库连接为 <code>ApolloPortalDB</code> 的数据库信息。</p>
+<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/application-github.properties</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">DataSource</span></span><br><span class="line">spring.datasource.url = jdbc:mysql://pro.env.apollo.mysql:3306/ApolloPortalDB?characterEncoding=utf8</span><br><span class="line">spring.datasource.username = root</span><br><span class="line">spring.datasource.password = WayWwRDNEb+5Pw==</span><br></pre></td></tr></table></figure>
+
+<h5 id="配置-meta-service-信息"><a href="#配置-meta-service-信息" class="headerlink" title="配置 meta service 信息"></a>配置 meta service 信息</h5><p><code>meta service</code> 的地址和端口，默认就是 <code>apollo-configservice</code> 的地址和端口。</p>
+<p>修改 <code>apollo-portal-2.0.1/config/apollo-env.properties</code>，填写当前的 <code>apollo-portal</code> 要管理的环境的 <code>apollo-configservice</code> 的地址和端口，多个地址之间用英文逗号隔开</p>
+<figure class="highlight shell"><figcaption><span>apollo-portal-2.0.1/config/apollo-env.properties</span></figcaption><table><tr><td class="code"><pre><span class="line">pro.meta=http://172.31.81.1:8080,http://172.31.82.2:8080</span><br><span class="line">uat.meta=http://172.31.83.3:8080</span><br></pre></td></tr></table></figure>
+
+<h5 id="启动-apollo-portal"><a href="#启动-apollo-portal" class="headerlink" title="启动 apollo-portal"></a>启动 apollo-portal</h5><p>默认的启动端口是 <code>8070</code> ，若要修改，则将 <code>scripts/startup.sh</code> 中的 <code>SERVER_PORT=$&#123;SERVER_PORT:=8070&#125;</code> 的 <code>8070</code> 改成指定的端口即可。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./scripts/startup.sh</span> </span><br><span class="line">Thu Nov  3 10:23:32 CST 2022 ==== Starting ==== </span><br><span class="line">Application is running as root (UID 0). This is considered insecure.</span><br><span class="line">Started [23044]</span><br><span class="line">Waiting for server startup...</span><br><span class="line">Thu Nov  3 10:23:47 CST 2022 Server started in 15 seconds!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="部署后检查是否成功"><a href="#部署后检查是否成功" class="headerlink" title="部署后检查是否成功"></a>部署后检查是否成功</h3><h4 id="apollo-configservice-和-apollo-adminservice-检查"><a href="#apollo-configservice-和-apollo-adminservice-检查" class="headerlink" title="apollo-configservice 和 apollo-adminservice 检查"></a>apollo-configservice 和 apollo-adminservice 检查</h4><ol>
+<li><p>在浏览器上登录当前环境的其中一个 <code>apollo-configservice</code> 的 <code>http://ip:port</code></p>
+</li>
+<li><p>查看该环境的 <code>apollo-configservice</code> 和 <code>apollo-adminservice</code> 的节点数是否正常。<br> 比如 <code>PRO</code> 环境有 2 个节点，输出中正常情况下会显示 2 个正常的节点<br> <img src="https://i.csms.tech/img_82.png"></p>
+</li>
+</ol>
+<h4 id="apollo-portal-检查"><a href="#apollo-portal-检查" class="headerlink" title="apollo-portal 检查"></a>apollo-portal 检查</h4><ol>
+<li>浏览器登录 <code>apollo-portal</code> 的 <code>http://ip:port</code>，默认账号 <code>apollo</code>，密码 <code>admin</code>。</li>
+</ol>
+<h1 id="常用操作"><a href="#常用操作" class="headerlink" title="常用操作"></a>常用操作</h1><h2 id="修改默认管理员-apollo-的密码"><a href="#修改默认管理员-apollo-的密码" class="headerlink" title="修改默认管理员 apollo 的密码"></a>修改默认管理员 apollo 的密码</h2><p>默认管理员 <code>apollo</code> 的密码为 <code>admin</code>，要修改此密码，在 <code>管理员工具</code> -&gt; <code>用户管理</code> 中输入用户名和密码，如果用户已存在，更新用户信息，用户不存在，则创建新用户。</p>
+<h2 id="创建部门"><a href="#创建部门" class="headerlink" title="创建部门"></a>创建部门</h2><p>只有管理员才能创建部门，在 <code>管理员工具</code> -&gt; <code>系统参数</code> 中查询 <code>organizations</code>，会输出当前的部门信息<br><img src="https://i.csms.tech/img_83.png"><br>修改此参数并保存，即可更新部门信息。</p>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.apolloconfig.com/#/zh/design/apollo-introduction">Apollo 配置中心介绍</a></p>
+<p><a href="https://blog.csdn.net/werewolf2017/article/details/109120336">Apollo分布式配置中心集群部署</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">创建数据库</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.apolloconfig.com/#/zh/deployment/distributed-deployment-guide?id=_21-%e5%88%9b%e5%bb%ba%e6%95%b0%e6%8d%ae%e5%ba%93">apolloportaldb.sql</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+      <tags>
+        <tag>Apollo</tag>
       </tags>
   </entry>
   <entry>
