@@ -1146,6 +1146,199 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Ansible playbook 使用介绍</title>
+    <url>/202309011341/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>ansible 2.9.27</li>
+</ul>
+<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
+<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
+<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
+<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
+<span id="more"></span>
+<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
+<ul>
+<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
+<li><code>remote_user</code> 用户名。</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
+
+<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
+
+<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
+<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
+
+<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
+
+<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
+
+<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
+
+<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
+<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
+<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
+<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
+<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
+
+<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
+<ul>
+<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></li>
+<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
+</ul>
+<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>action </code></td>
+<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain</code></td>
+<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>table </code></td>
+<td>This option specifies the packet matching table which the command should operate on</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain_management </code></td>
+<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>comment </code></td>
+<td>规则的注释说明</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ctstate </code><br/><code>list / elements=string</code></td>
+<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>source </code></td>
+<td>Source specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination</code> <br/><code>string</code></td>
+<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_port </code><br/><code>string</code></td>
+<td>Destination port or port range specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
+<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dst_range </code><br/><code>string</code></td>
+<td>Specifies the destination IP range to match in the iprange module.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>source_port </code></td>
+<td>Source port or port range specification.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>flush</code><br/><code>boolean</code></td>
+<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>jump </code></td>
+<td>This specifies the target of the rule</td>
+<td></td>
+</tr>
+<tr>
+<td><code>protocol </code></td>
+<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>rule_num </code></td>
+<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="lineinfile"><a href="#lineinfile" class="headerlink" title="lineinfile"></a>lineinfile</h2><p><code>lineinfile</code> 用于以下场景：</p>
+<ul>
+<li>确定文件中存在特定的一行，替换存在的行</li>
+<li>修改文件中特定的一行</li>
+</ul>
+<p>常用参数：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>state</code></td>
+<td>指定的行是否应该存在。<br/> - <code>absent</code><br/> - <code>present</code> 默认值</td>
+<td></td>
+</tr>
+<tr>
+<td><code>path</code><br/>aliases: <code>dest</code>, <code>destfile</code>, <code>name</code><br/><em><strong>required</strong></em></td>
+<td>要修改的目标文件</td>
+<td></td>
+</tr>
+<tr>
+<td><code>line</code>     <br/>aliases: <code>value</code></td>
+<td>要插入或者替换修改的行<br/><code>state=present</code> 时为必须参数 <br/>如果 <code>backrefs=true</code>，可以使用 <code>regexp</code> 正则表达式捕获的值，使用 <code>\g&lt;1&gt;</code>、<code>\g&lt;2&gt;</code> 的方式引用捕获到的内容</td>
+<td></td>
+</tr>
+<tr>
+<td><code>backup</code>               <br/>boolean</td>
+<td>默认值 <code>false</code> 。是否创建备份文件</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>修改防火墙中某个 IP 示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Modify iptables rule in /etc/sysconfig/iptables</span><br><span class="line">  hosts: nginx_1</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line"></span><br><span class="line">    - name: Replace the IP address in iptables rule</span><br><span class="line">      lineinfile:</span><br><span class="line">        path: /etc/sysconfig/iptables</span><br><span class="line">        regexp: (.*)18\.32\.100\.90(.*)</span><br><span class="line">        line: \g&lt;1&gt;180.232.100.99\g&lt;2&gt;</span><br><span class="line"></span><br><span class="line">        state: present</span><br><span class="line">        backup: yes</span><br><span class="line">        backrefs: true</span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html#ansible-collections-ansible-builtin-lineinfile-module-parameter-state">ansible.builtin.lineinfile</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ansible</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Ansible playbooks 使用介绍</title>
     <url>/202405231459/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1337,199 +1530,6 @@ width: 20%;
 </tbody></table>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_intro.html#ansible-playbooks">Ansible playbooks</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#where-to-set-variables">Where to set variables</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_vars_facts.html">Discovering variables: facts and magic variables</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#registering-variables">Registering variables</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>ansible</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Ansible playbook 使用介绍</title>
-    <url>/202309011341/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>ansible 2.9.27</li>
-</ul>
-<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
-<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
-<p>每一个 <code>play</code> 中包含了一个 <code>tasks</code> 列表，<code>tasks</code> 列表中的每个 <code>task</code> 在其对应的 <code>hosts</code> 上 <em><strong>依次执行</strong></em>。<strong>即一个 <code>task</code> 执行完毕，下一个 <code>task</code> 才会执行</strong>。</p>
-<p>在运行 playbook 的过程中，<strong>如果一个 <code>host</code> 执行 <code>task</code> 失败，这个 <code>host</code> 将从整个 playbook 中移除</strong>。如果发生执行失败的情况，需要修正 playbook 中的错误，重新执行。</p>
-<span id="more"></span>
-<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="主机与用户"><a href="#主机与用户" class="headerlink" title="主机与用户"></a>主机与用户</h2><p><code>play</code> 中一般都需要选择要操作的目标主机，也可能需要指明以哪个用户身份来执行 <code>tasks</code></p>
-<ul>
-<li><code>hosts</code> 一个或多个组或主机的 patterns，以 <code>,</code> 分割</li>
-<li><code>remote_user</code> 用户名。</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br></pre></td></tr></table></figure>
-
-<p>在每一个 <code>task</code> 中，也可以定义自己的远程账号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">      remote_user: user1</span><br></pre></td></tr></table></figure>
-
-<h2 id="sudo-提权操作"><a href="#sudo-提权操作" class="headerlink" title="sudo 提权操作"></a>sudo 提权操作</h2><p>在需要提权操作的场景下，需要切换到更高权限的用户，可以使用 <code>become</code> 指令。<code>become</code> 可以在全局（<code>play</code>）级别使用或者 <code>task</code> 级别使用。</p>
-<p>如果要提权到其他用户而非 <code>root</code>，可以使用指令 <code>become_user</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: master-nodes</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: cat authorize</span><br><span class="line">      command: cat /root/.ssh/authorized_keys</span><br><span class="line">      become: yes</span><br><span class="line">      become_user: centos</span><br></pre></td></tr></table></figure>
-
-<h2 id="变量"><a href="#变量" class="headerlink" title="变量"></a>变量</h2><p>在 <code>task</code> 中可以使用变量。假设在 <code>vars</code> 那里定义了变量，可以这样使用它:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  tasks:</span><br><span class="line">    - name: create a web for port &#123;&#123; http_port &#125;&#125;</span><br><span class="line">      template: src=somefile.j2 dest=/etc/httpd/conf.d/&#123;&#123; http_port &#125;&#125;</span><br></pre></td></tr></table></figure>
-
-<p>playbook 执行之前，默认会执行 <code>setup</code> 收集目标主机的 <code>facts</code> 信息，这是 <code>play</code> 中默认的第一个 <code>task</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br></pre></td></tr></table></figure>
-
-<p>playbook 中的 <code>task</code> 可以使用 <code>facts</code> 中的变量的值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible k8s-master-nodes[0] -m setup -a <span class="string">&quot;filter=ansible_distribution&quot;</span></span></span><br><span class="line"></span><br><span class="line">k8s-master1 | SUCCESS =&gt; &#123;</span><br><span class="line">    &quot;ansible_facts&quot;: &#123;</span><br><span class="line">        &quot;ansible_distribution&quot;: &quot;CentOS Linux&quot;, </span><br><span class="line">        &quot;discovered_interpreter_python&quot;: &quot;/usr/bin/python&quot;</span><br><span class="line">    &#125;, </span><br><span class="line">    &quot;changed&quot;: false</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> test.yml</span></span><br><span class="line">---</span><br><span class="line">- hosts: k8s-master-nodes</span><br><span class="line"><span class="meta prompt_">  # </span><span class="language-bash">become: <span class="built_in">yes</span></span></span><br><span class="line">  tasks:</span><br><span class="line">    - name: ping</span><br><span class="line">      ping:</span><br><span class="line">     </span><br><span class="line">    - name: test os distribution</span><br><span class="line">      debug:</span><br><span class="line">        msg: &quot;This is Centos&quot;</span><br><span class="line">      when: ansible_distribution == &quot;CentOS Linux&quot;</span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line">	  </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ansible-playbook test.yml</span> </span><br><span class="line"></span><br><span class="line">PLAY [k8s-master-nodes] ******************************************************************************************************************</span><br><span class="line"></span><br><span class="line">TASK [Gathering Facts] **************************************************************************************************************************</span><br><span class="line"></span><br><span class="line">ok: [k8s-master1]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">ok: [k8s-master2]</span><br><span class="line"></span><br><span class="line">TASK [ping] *************************************************************************************************************************************</span><br><span class="line">ok: [k8s-master2]</span><br><span class="line">ok: [k8s-master1]</span><br><span class="line">ok: [k8s-master3]</span><br><span class="line"></span><br><span class="line">TASK [test os distribution] *********************************************************************************************************************</span><br><span class="line">ok: [k8s-master1] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master2] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line">ok: [k8s-master3] =&gt; &#123;</span><br><span class="line">    &quot;msg&quot;: &quot;This is Centos&quot;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">PLAY RECAP **************************************************************************************************************************************</span><br><span class="line">k8s-master1            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master2            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   </span><br><span class="line">k8s-master3            : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0	  </span><br></pre></td></tr></table></figure>
-
-<h2 id="handlers"><a href="#handlers" class="headerlink" title="handlers"></a>handlers</h2><p><code>handlers</code> 中定义了在发生改动时执行的操作。</p>
-<p>Handlers 也是一些 <code>task</code> 的列表，通过名字来引用，它们和一般的 <code>task</code> 并没有什么区别。Handlers 是由通知者进行 <code>notify</code>， 如果没有被 <code>notify</code>，handlers 不会执行。不管有多少个通知者进行了 <code>notify</code>，等到 play 中的所有 <code>task</code> 执行完成之后,handlers 也只会被执行一次。</p>
-<p><em><strong>handlers 会按照声明的顺序执行</strong></em></p>
-<p><strong>Handlers 最佳的应用场景是用来重启服务，或者触发系统重启操作</strong></p>
-<h3 id="notify"><a href="#notify" class="headerlink" title="notify"></a>notify</h3><p>（当发生改动时）<code>notify</code> actions 会在 playbook 的每一个 <code>task</code> 结束时被触发，而且即使有多个不同的 <code>task</code> 通知改动的发生, <code>notify</code> actions 只会被触发一次。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: template configuration file</span><br><span class="line">  template: src=template.j2 dest=/etc/foo.conf</span><br><span class="line">  notify:</span><br><span class="line">     - restart memcached</span><br><span class="line">     - restart apache</span><br></pre></td></tr></table></figure>
-
-
-
-
-
-<h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
-
-<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
-<ul>
-<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></li>
-<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
-</ul>
-<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>action </code></td>
-<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain</code></td>
-<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>table </code></td>
-<td>This option specifies the packet matching table which the command should operate on</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain_management </code></td>
-<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>comment </code></td>
-<td>规则的注释说明</td>
-<td></td>
-</tr>
-<tr>
-<td><code>ctstate </code><br/><code>list / elements=string</code></td>
-<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>source </code></td>
-<td>Source specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination</code> <br/><code>string</code></td>
-<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_port </code><br/><code>string</code></td>
-<td>Destination port or port range specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
-<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
-<td></td>
-</tr>
-<tr>
-<td><code>dst_range </code><br/><code>string</code></td>
-<td>Specifies the destination IP range to match in the iprange module.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>source_port </code></td>
-<td>Source port or port range specification.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>flush</code><br/><code>boolean</code></td>
-<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>jump </code></td>
-<td>This specifies the target of the rule</td>
-<td></td>
-</tr>
-<tr>
-<td><code>protocol </code></td>
-<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>rule_num </code></td>
-<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="lineinfile"><a href="#lineinfile" class="headerlink" title="lineinfile"></a>lineinfile</h2><p><code>lineinfile</code> 用于以下场景：</p>
-<ul>
-<li>确定文件中存在特定的一行，替换存在的行</li>
-<li>修改文件中特定的一行</li>
-</ul>
-<p>常用参数：</p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>state</code></td>
-<td>指定的行是否应该存在。<br/> - <code>absent</code><br/> - <code>present</code> 默认值</td>
-<td></td>
-</tr>
-<tr>
-<td><code>path</code><br/>aliases: <code>dest</code>, <code>destfile</code>, <code>name</code><br/><em><strong>required</strong></em></td>
-<td>要修改的目标文件</td>
-<td></td>
-</tr>
-<tr>
-<td><code>line</code>     <br/>aliases: <code>value</code></td>
-<td>要插入或者替换修改的行<br/><code>state=present</code> 时为必须参数 <br/>如果 <code>backrefs=true</code>，可以使用 <code>regexp</code> 正则表达式捕获的值，使用 <code>\g&lt;1&gt;</code>、<code>\g&lt;2&gt;</code> 的方式引用捕获到的内容</td>
-<td></td>
-</tr>
-<tr>
-<td><code>backup</code>               <br/>boolean</td>
-<td>默认值 <code>false</code> 。是否创建备份文件</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>修改防火墙中某个 IP 示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Modify iptables rule in /etc/sysconfig/iptables</span><br><span class="line">  hosts: nginx_1</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line"></span><br><span class="line">    - name: Replace the IP address in iptables rule</span><br><span class="line">      lineinfile:</span><br><span class="line">        path: /etc/sysconfig/iptables</span><br><span class="line">        regexp: (.*)18\.32\.100\.90(.*)</span><br><span class="line">        line: \g&lt;1&gt;180.232.100.99\g&lt;2&gt;</span><br><span class="line"></span><br><span class="line">        state: present</span><br><span class="line">        backup: yes</span><br><span class="line">        backrefs: true</span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html#ansible-collections-ansible-builtin-lineinfile-module-parameter-state">ansible.builtin.lineinfile</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -3075,6 +3075,15 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>常用小脚本收集</title>
+    <url>/202311221348/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Python"><a href="#Python" class="headerlink" title="Python"></a>Python</h1><h2 id="批量下载"><a href="#批量下载" class="headerlink" title="批量下载"></a>批量下载</h2><h3 id="批量下载文件中给定的-urls"><a href="#批量下载文件中给定的-urls" class="headerlink" title="批量下载文件中给定的 urls"></a>批量下载文件中给定的 urls</h3><p>假如需要下载的 urls 存在于给定的文件中（每行一个 url），本示例演示批量并发下载，假设 urls 存在于文件 <code>img.txt</code> 中</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">import</span> concurrent.futures</span><br><span class="line"><span class="keyword">import</span> requests</span><br><span class="line"></span><br><span class="line"><span class="comment"># 创建一个函数来下载图片</span></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">download_image</span>(<span class="params">url</span>):</span><br><span class="line">    <span class="keyword">try</span>:</span><br><span class="line">        response = requests.get(url)</span><br><span class="line">        response.raise_for_status()  <span class="comment"># 检查是否有 HTTP 错误</span></span><br><span class="line">        <span class="built_in">print</span>(<span class="string">f&quot;下载完成: <span class="subst">&#123;url&#125;</span>&quot;</span>)</span><br><span class="line">    <span class="keyword">except</span> requests.exceptions.RequestException <span class="keyword">as</span> e:</span><br><span class="line">        <span class="built_in">print</span>(<span class="string">f&quot;下载失败: <span class="subst">&#123;url&#125;</span>, 错误: <span class="subst">&#123;e&#125;</span>&quot;</span>) </span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="comment"># 从文件中读取图片链接</span></span><br><span class="line"><span class="keyword">with</span> <span class="built_in">open</span>(<span class="string">&quot;img.txt&quot;</span>, <span class="string">&quot;r&quot;</span>) <span class="keyword">as</span> file:</span><br><span class="line">    img_urls = file.read().splitlines()</span><br><span class="line"></span><br><span class="line"><span class="comment"># 使用 ThreadPoolExecutor 来限制并发线程数量为 10</span></span><br><span class="line">max_concurrent_threads = <span class="number">10</span></span><br><span class="line"><span class="keyword">with</span> concurrent.futures.ThreadPoolExecutor(max_concurrent_threads) <span class="keyword">as</span> executor:</span><br><span class="line">    <span class="comment"># 提交任务并下载图片</span></span><br><span class="line">    executor.<span class="built_in">map</span>(download_image, img_urls)</span><br><span class="line"></span><br><span class="line"><span class="built_in">print</span>(<span class="string">&quot;所有图片下载完成&quot;</span>)</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
     <title>Cloudflare 常用配置</title>
     <url>/202307201408/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="同一个域名使用不同的-HTTPS-重定向规则"><a href="#同一个域名使用不同的-HTTPS-重定向规则" class="headerlink" title="同一个域名使用不同的 HTTPS 重定向规则"></a>同一个域名使用不同的 HTTPS 重定向规则</h1><p>在 Cloudflare 中，配置的规则 (比如 <code>自动 HTPTPS 重写</code> 功能) 对所有使用了 Cloudflare 加速的域名都生效。</p>
@@ -3104,15 +3113,6 @@ width: 20%;
       <tags>
         <tag>云平台</tag>
       </tags>
-  </entry>
-  <entry>
-    <title>常用小脚本收集</title>
-    <url>/202311221348/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Python"><a href="#Python" class="headerlink" title="Python"></a>Python</h1><h2 id="批量下载"><a href="#批量下载" class="headerlink" title="批量下载"></a>批量下载</h2><h3 id="批量下载文件中给定的-urls"><a href="#批量下载文件中给定的-urls" class="headerlink" title="批量下载文件中给定的 urls"></a>批量下载文件中给定的 urls</h3><p>假如需要下载的 urls 存在于给定的文件中（每行一个 url），本示例演示批量并发下载，假设 urls 存在于文件 <code>img.txt</code> 中</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">import</span> concurrent.futures</span><br><span class="line"><span class="keyword">import</span> requests</span><br><span class="line"></span><br><span class="line"><span class="comment"># 创建一个函数来下载图片</span></span><br><span class="line"><span class="keyword">def</span> <span class="title function_">download_image</span>(<span class="params">url</span>):</span><br><span class="line">    <span class="keyword">try</span>:</span><br><span class="line">        response = requests.get(url)</span><br><span class="line">        response.raise_for_status()  <span class="comment"># 检查是否有 HTTP 错误</span></span><br><span class="line">        <span class="built_in">print</span>(<span class="string">f&quot;下载完成: <span class="subst">&#123;url&#125;</span>&quot;</span>)</span><br><span class="line">    <span class="keyword">except</span> requests.exceptions.RequestException <span class="keyword">as</span> e:</span><br><span class="line">        <span class="built_in">print</span>(<span class="string">f&quot;下载失败: <span class="subst">&#123;url&#125;</span>, 错误: <span class="subst">&#123;e&#125;</span>&quot;</span>) </span><br><span class="line"></span><br><span class="line"></span><br><span class="line"><span class="comment"># 从文件中读取图片链接</span></span><br><span class="line"><span class="keyword">with</span> <span class="built_in">open</span>(<span class="string">&quot;img.txt&quot;</span>, <span class="string">&quot;r&quot;</span>) <span class="keyword">as</span> file:</span><br><span class="line">    img_urls = file.read().splitlines()</span><br><span class="line"></span><br><span class="line"><span class="comment"># 使用 ThreadPoolExecutor 来限制并发线程数量为 10</span></span><br><span class="line">max_concurrent_threads = <span class="number">10</span></span><br><span class="line"><span class="keyword">with</span> concurrent.futures.ThreadPoolExecutor(max_concurrent_threads) <span class="keyword">as</span> executor:</span><br><span class="line">    <span class="comment"># 提交任务并下载图片</span></span><br><span class="line">    executor.<span class="built_in">map</span>(download_image, img_urls)</span><br><span class="line"></span><br><span class="line"><span class="built_in">print</span>(<span class="string">&quot;所有图片下载完成&quot;</span>)</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
   </entry>
   <entry>
     <title>Confluence 常用基本操作</title>
@@ -4164,31 +4164,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>docker daemon 常用配置</title>
-    <url>/202211241005/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Docker 19.03.15</li>
-</ul>
-<h1 id="docker-配置容器日志-rotate"><a href="#docker-配置容器日志-rotate" class="headerlink" title="docker 配置容器日志 rotate"></a>docker 配置容器日志 rotate</h1><h2 id="docker-daemon-方式配置容器日志-rotate"><a href="#docker-daemon-方式配置容器日志-rotate" class="headerlink" title="docker daemon 方式配置容器日志 rotate"></a>docker daemon 方式配置容器日志 rotate</h2><p>编辑 docker daemon 配置文件 <code>/etc/docker/daemon.json</code> (若不存在则新建)，添加以下内容，用来配置 docker containers 的日志轮转</p>
-<figure class="highlight shell"><figcaption><span>/etc/docker/daemon.json</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;</span><br><span class="line">  &quot;log-driver&quot;: &quot;json-file&quot;,</span><br><span class="line">  &quot;log-opts&quot;: &#123;</span><br><span class="line">    &quot;max-size&quot;: &quot;100m&quot;,</span><br><span class="line">    &quot;max-file&quot;: &quot;3&quot;    </span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>重启 docker 服务生效</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart docker</span><br></pre></td></tr></table></figure>
-<p>根据以上配置，当容器日志大小达到 <code>100m</code>，即对其进行 rotate，并保留最多 3 个日志文件。 </p>
-<h2 id="使用-OS-系统服务-logrotate-进行容器日志-rotate"><a href="#使用-OS-系统服务-logrotate-进行容器日志-rotate" class="headerlink" title="使用 OS 系统服务 logrotate 进行容器日志 rotate"></a>使用 OS 系统服务 logrotate 进行容器日志 rotate</h2><p>Linux 系统中有专门用来做日志 rotate 的 <a href="!--swig%EF%BF%BC3--">服务 <code>logrotate</code></a>，可直接使用此服务做 log rotate</p>
-<p>配置针对 docker 的 <code>logrotate</code> 配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/docker</span></figcaption><table><tr><td class="code"><pre><span class="line">/var/lib/docker/containers/*/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    rotate 5</span><br><span class="line">    copytruncate</span><br><span class="line">    missingok</span><br><span class="line">    compress</span><br><span class="line">    delaycompress</span><br><span class="line">    maxsize 100M</span><br><span class="line">    minsize 1024k</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>copytruncate</code> 的方式做日志 totate 时，会先拷贝日志文件为 totate 日志文件，然后 <code>truncate</code> 日志，确保 totate 过程中，日志文件不变并一直保持打开状态。</p>
-<span id="more"></span>]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>docker 容器中安装常见工具</title>
     <url>/202209051507/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常用工具安装"><a href="#常用工具安装" class="headerlink" title="常用工具安装"></a>常用工具安装</h1><p>查找 <code>netstat</code> 命令由哪个安装包提供</p>
@@ -4228,86 +4203,23 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>docker compose 命令</title>
-    <url>/202208311004/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于 <code>Compose</code> 来说，大部分命令的对象既可以是项目本身，也可以指定为项目中的服务或者容器。如果没有特别的说明，命令对象将是项目，这意味着项目中所有的服务都会受到命令影响。  </p>
-<p>执行 <code>docker compose [COMMAND] --help</code>  可以查看具体某个命令的使用格式。  </p>
-<p><code>docker compose</code> 命令的基本的使用格式是  </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose [-f=&lt;arg&gt;...] [options] [COMMAND] [ARGS...]</span><br></pre></td></tr></table></figure>
-<p>常用选项  </p>
-<ul>
-<li><code>-f, --file FILE</code>  指定使用的 Compose 模板文件，默认为 <code>docker-compose.yml</code>，可以多次指定。  </li>
-<li><code>-p, --project-name NAME</code> 指定项目名称，默认将使用所在目录名称作为项目名。</li>
+    <title>docker daemon 常用配置</title>
+    <url>/202211241005/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Docker 19.03.15</li>
 </ul>
-<span id="more"></span>
+<h1 id="docker-配置容器日志-rotate"><a href="#docker-配置容器日志-rotate" class="headerlink" title="docker 配置容器日志 rotate"></a>docker 配置容器日志 rotate</h1><h2 id="docker-daemon-方式配置容器日志-rotate"><a href="#docker-daemon-方式配置容器日志-rotate" class="headerlink" title="docker daemon 方式配置容器日志 rotate"></a>docker daemon 方式配置容器日志 rotate</h2><p>编辑 docker daemon 配置文件 <code>/etc/docker/daemon.json</code> (若不存在则新建)，添加以下内容，用来配置 docker containers 的日志轮转</p>
+<figure class="highlight shell"><figcaption><span>/etc/docker/daemon.json</span></figcaption><table><tr><td class="code"><pre><span class="line">&#123;</span><br><span class="line">  &quot;log-driver&quot;: &quot;json-file&quot;,</span><br><span class="line">  &quot;log-opts&quot;: &#123;</span><br><span class="line">    &quot;max-size&quot;: &quot;100m&quot;,</span><br><span class="line">    &quot;max-file&quot;: &quot;3&quot;    </span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>重启 docker 服务生效</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart docker</span><br></pre></td></tr></table></figure>
+<p>根据以上配置，当容器日志大小达到 <code>100m</code>，即对其进行 rotate，并保留最多 3 个日志文件。 </p>
+<h2 id="使用-OS-系统服务-logrotate-进行容器日志-rotate"><a href="#使用-OS-系统服务-logrotate-进行容器日志-rotate" class="headerlink" title="使用 OS 系统服务 logrotate 进行容器日志 rotate"></a>使用 OS 系统服务 logrotate 进行容器日志 rotate</h2><p>Linux 系统中有专门用来做日志 rotate 的 <a href="!--swig%EF%BF%BC3--">服务 <code>logrotate</code></a>，可直接使用此服务做 log rotate</p>
+<p>配置针对 docker 的 <code>logrotate</code> 配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/docker</span></figcaption><table><tr><td class="code"><pre><span class="line">/var/lib/docker/containers/*/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    rotate 5</span><br><span class="line">    copytruncate</span><br><span class="line">    missingok</span><br><span class="line">    compress</span><br><span class="line">    delaycompress</span><br><span class="line">    maxsize 100M</span><br><span class="line">    minsize 1024k</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
 
-<h3 id="build"><a href="#build" class="headerlink" title="build"></a>build</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose build [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>构建（重新构建）项目中的服务容器。  </p>
-<p>服务容器一旦构建后，将会带上一个标记名，例如对于 web 项目中的一个 db 容器，可能是 web_db。<br>可以随时在项目目录下运行 <code>docker compose build</code> 来重新构建服务。<br>常用选项包括：</p>
-<ul>
-<li><code>--no-cache</code>  构建镜像过程中不使用 cache（这将加长构建过程）。</li>
-<li><code>--pull</code>  始终尝试通过 <code>pull</code> 来获取更新版本的镜像。</li>
-<li><code>-q, --quiet</code>  不输出任何内容到 STDOUT</li>
-</ul>
-<h3 id="config"><a href="#config" class="headerlink" title="config"></a>config</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose config</span><br></pre></td></tr></table></figure>
-<p>验证 Compose 文件格式是否正确，若正确则显示配置，若格式错误显示错误原因。</p>
-<h3 id="up"><a href="#up" class="headerlink" title="up"></a>up</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose up [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>该命令十分强大，它将尝试自动完成包括构建镜像，（重新）创建服务，启动服务，并关联服务相关容器的一系列操作。  </p>
-<p>链接的服务都将会被自动启动，除非已经处于运行状态。</p>
-<p>可以说，大部分时候都可以直接通过该命令来启动一个项目。</p>
-<p>默认情况，<code>docker compose up</code> 启动的容器都在前台，控制台将会同时打印所有容器的输出信息，可以很方便进行调试。</p>
-<p>当通过 <code>Ctrl-C</code> 停止命令时，所有容器将会停止。</p>
-<p>如果使用 <code>docker compose up -d</code>，将会在后台启动并运行所有的容器。一般推荐生产环境下使用该选项。</p>
-<p>默认情况，如果服务容器已经存在，<code>docker compose up</code> 将会尝试停止容器，然后重新创建（保持使用 volumes-from 挂载的卷），以保证新启动的服务匹配 <code>docker-compose.yml</code> 文件的最新内容。如果用户不希望容器被停止并重新创建，可以使用 <code>docker compose up --no-recreate</code>。这样将只会启动处于停止状态的容器，而忽略已经运行的服务。如果用户只想重新部署某个服务，可以使用 <code>docker compose up --no-deps -d &lt;SERVICE_NAME&gt;</code> 来重新创建服务并后台停止旧服务，启动新服务，并不会影响到其所依赖的服务。</p>
-<p>常用选项说明：  </p>
-<ul>
-<li><code>-d, --detach</code> 在后台运行服务容器</li>
-<li><code>--no-color</code> 不使用颜色来区分不同的服务的控制台输出</li>
-<li><code>--no-deps</code> 不启动服务所链接的容器。</li>
-<li><code>--force-recreate</code> 强制重新创建容器，不能与 <code>--no-recreate</code> 同时使用</li>
-<li><code>--no-recreate</code> 如果容器已经存在了，则不重新创建，不能与 <code>--force-recreate</code> 同时使用。</li>
-<li><code>--no-build</code> 不自动构建缺失的服务镜像</li>
-<li><code>-t, --timeout TIMEOUT</code> 停止容器时候的超时（默认为 10 秒）时间。</li>
-<li><code>--no-start</code> 创建服务但是不启动服务</li>
-<li><code>--build</code>  启动容器之前，重新构建容器</li>
-</ul>
-<h3 id="down"><a href="#down" class="headerlink" title="down"></a>down</h3><p>此命令将会停止 <code>up</code> 命令所启动的容器，并移除网络</p>
-<h3 id="start"><a href="#start" class="headerlink" title="start"></a>start</h3><p>启动已经存在的服务容器。</p>
-<h3 id="pause"><a href="#pause" class="headerlink" title="pause"></a>pause</h3><p>暂停一个服务容器。</p>
-<h3 id="unpause"><a href="#unpause" class="headerlink" title="unpause"></a>unpause</h3><p>恢复处于暂停状态中的服务。</p>
-<h3 id="restart"><a href="#restart" class="headerlink" title="restart"></a>restart</h3><p>重启项目中的服务。</p>
-<h3 id="stop"><a href="#stop" class="headerlink" title="stop"></a>stop</h3><p>停止已经处于运行状态的容器，但不删除它。通过 <code>docker compose start</code> 可以再次启动这些容器。</p>
-<h3 id="ps"><a href="#ps" class="headerlink" title="ps"></a>ps</h3><p>列出项目中目前的所有容器。</p>
-<h3 id="port"><a href="#port" class="headerlink" title="port"></a>port</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose port [options] SERVICE PRIVATE_PORT</span><br></pre></td></tr></table></figure>
-<p>打印某个容器端口所映射的公共端口  </p>
-<p>常用选项  </p>
-<ul>
-<li><code>--protocol=proto</code> 指定端口协议，tcp（默认值）或者 udp。</li>
-<li><code>--index=index</code> 如果同一服务存在多个容器，指定命令对象容器的序号（默认为 1）</li>
-</ul>
-<h3 id="exec"><a href="#exec" class="headerlink" title="exec"></a>exec</h3><p>进入指定的容器。</p>
-<h3 id="images"><a href="#images" class="headerlink" title="images"></a>images</h3><p>列出 Compose 文件中包含的镜像。</p>
-<h3 id="kill"><a href="#kill" class="headerlink" title="kill"></a>kill</h3><p>格式为 </p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
-<p>通过发送 SIGKILL 信号来强制停止服务容器。</p>
-<p>支持通过 <code>-s</code> 参数来指定发送的信号，例如通过如下指令发送 SIGINT 信号。</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill -s SIGINT</span><br></pre></td></tr></table></figure>
-
-<h3 id="logs"><a href="#logs" class="headerlink" title="logs"></a>logs</h3><p>格式为 </p>
-<pre><code>docker compose logs [options] [SERVICE...]
-</code></pre>
-<p>查看服务容器的输出。默认情况下，<code>docker compose</code> 将对不同的服务输出使用不同的颜色来区分。可以通过 <code>--no-color</code> 来关闭颜色。<br>该命令在调试问题的时候十分有用。</p>
-<h3 id="top"><a href="#top" class="headerlink" title="top"></a>top</h3><p>查看各个服务容器内运行的进程。</p>
-<h3 id="rm"><a href="#rm" class="headerlink" title="rm"></a>rm</h3><p>删除所有（停止状态的）服务容器。推荐先执行 <code>docker compose stop</code> 命令来停止容器。<br>选项：</p>
-<ul>
-<li><code>-f, --force</code> 强制直接删除，包括非停止状态的容器。一般尽量不要使用该选项。</li>
-<li><code>-v</code> 删除容器所挂载的数据卷。</li>
-</ul>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://yeasy.gitbook.io/docker_practice/compose/commands">docker compose 命令说明</a></p>
-]]></content>
+<p>使用 <code>copytruncate</code> 的方式做日志 totate 时，会先拷贝日志文件为 totate 日志文件，然后 <code>truncate</code> 日志，确保 totate 过程中，日志文件不变并一直保持打开状态。</p>
+<span id="more"></span>]]></content>
       <categories>
         <category>Docker</category>
       </categories>
@@ -4513,6 +4425,94 @@ width: 20%;
 <p>执行 <code>docker compose up</code> 则会启动一个 <code>mongo:3.6</code> 镜像的容器。</p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.docker.com/compose/">Compose V2 beta</a><br><a href="https://yeasy.gitbook.io/docker_practice/compose/v2">Docker 从入门到实践</a><br><a href="https://docs.docker.com/compose/compose-file/05-services/">Docker Compose 指令官方文档</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/intro/history/">History and development of Docker Compose</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/gettingstarted/#step-7-split-up-your-services">Split up your services</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/environment-variables/set-environment-variables/">Ways to set environment variables with Compose</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/compose-file/05-services/#depends_on">depends_on</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.docker.com/compose/compose-file/05-services/#command">command</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>docker compose 命令</title>
+    <url>/202208311004/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于 <code>Compose</code> 来说，大部分命令的对象既可以是项目本身，也可以指定为项目中的服务或者容器。如果没有特别的说明，命令对象将是项目，这意味着项目中所有的服务都会受到命令影响。  </p>
+<p>执行 <code>docker compose [COMMAND] --help</code>  可以查看具体某个命令的使用格式。  </p>
+<p><code>docker compose</code> 命令的基本的使用格式是  </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose [-f=&lt;arg&gt;...] [options] [COMMAND] [ARGS...]</span><br></pre></td></tr></table></figure>
+<p>常用选项  </p>
+<ul>
+<li><code>-f, --file FILE</code>  指定使用的 Compose 模板文件，默认为 <code>docker-compose.yml</code>，可以多次指定。  </li>
+<li><code>-p, --project-name NAME</code> 指定项目名称，默认将使用所在目录名称作为项目名。</li>
+</ul>
+<span id="more"></span>
+
+<h3 id="build"><a href="#build" class="headerlink" title="build"></a>build</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose build [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>构建（重新构建）项目中的服务容器。  </p>
+<p>服务容器一旦构建后，将会带上一个标记名，例如对于 web 项目中的一个 db 容器，可能是 web_db。<br>可以随时在项目目录下运行 <code>docker compose build</code> 来重新构建服务。<br>常用选项包括：</p>
+<ul>
+<li><code>--no-cache</code>  构建镜像过程中不使用 cache（这将加长构建过程）。</li>
+<li><code>--pull</code>  始终尝试通过 <code>pull</code> 来获取更新版本的镜像。</li>
+<li><code>-q, --quiet</code>  不输出任何内容到 STDOUT</li>
+</ul>
+<h3 id="config"><a href="#config" class="headerlink" title="config"></a>config</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose config</span><br></pre></td></tr></table></figure>
+<p>验证 Compose 文件格式是否正确，若正确则显示配置，若格式错误显示错误原因。</p>
+<h3 id="up"><a href="#up" class="headerlink" title="up"></a>up</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose up [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>该命令十分强大，它将尝试自动完成包括构建镜像，（重新）创建服务，启动服务，并关联服务相关容器的一系列操作。  </p>
+<p>链接的服务都将会被自动启动，除非已经处于运行状态。</p>
+<p>可以说，大部分时候都可以直接通过该命令来启动一个项目。</p>
+<p>默认情况，<code>docker compose up</code> 启动的容器都在前台，控制台将会同时打印所有容器的输出信息，可以很方便进行调试。</p>
+<p>当通过 <code>Ctrl-C</code> 停止命令时，所有容器将会停止。</p>
+<p>如果使用 <code>docker compose up -d</code>，将会在后台启动并运行所有的容器。一般推荐生产环境下使用该选项。</p>
+<p>默认情况，如果服务容器已经存在，<code>docker compose up</code> 将会尝试停止容器，然后重新创建（保持使用 volumes-from 挂载的卷），以保证新启动的服务匹配 <code>docker-compose.yml</code> 文件的最新内容。如果用户不希望容器被停止并重新创建，可以使用 <code>docker compose up --no-recreate</code>。这样将只会启动处于停止状态的容器，而忽略已经运行的服务。如果用户只想重新部署某个服务，可以使用 <code>docker compose up --no-deps -d &lt;SERVICE_NAME&gt;</code> 来重新创建服务并后台停止旧服务，启动新服务，并不会影响到其所依赖的服务。</p>
+<p>常用选项说明：  </p>
+<ul>
+<li><code>-d, --detach</code> 在后台运行服务容器</li>
+<li><code>--no-color</code> 不使用颜色来区分不同的服务的控制台输出</li>
+<li><code>--no-deps</code> 不启动服务所链接的容器。</li>
+<li><code>--force-recreate</code> 强制重新创建容器，不能与 <code>--no-recreate</code> 同时使用</li>
+<li><code>--no-recreate</code> 如果容器已经存在了，则不重新创建，不能与 <code>--force-recreate</code> 同时使用。</li>
+<li><code>--no-build</code> 不自动构建缺失的服务镜像</li>
+<li><code>-t, --timeout TIMEOUT</code> 停止容器时候的超时（默认为 10 秒）时间。</li>
+<li><code>--no-start</code> 创建服务但是不启动服务</li>
+<li><code>--build</code>  启动容器之前，重新构建容器</li>
+</ul>
+<h3 id="down"><a href="#down" class="headerlink" title="down"></a>down</h3><p>此命令将会停止 <code>up</code> 命令所启动的容器，并移除网络</p>
+<h3 id="start"><a href="#start" class="headerlink" title="start"></a>start</h3><p>启动已经存在的服务容器。</p>
+<h3 id="pause"><a href="#pause" class="headerlink" title="pause"></a>pause</h3><p>暂停一个服务容器。</p>
+<h3 id="unpause"><a href="#unpause" class="headerlink" title="unpause"></a>unpause</h3><p>恢复处于暂停状态中的服务。</p>
+<h3 id="restart"><a href="#restart" class="headerlink" title="restart"></a>restart</h3><p>重启项目中的服务。</p>
+<h3 id="stop"><a href="#stop" class="headerlink" title="stop"></a>stop</h3><p>停止已经处于运行状态的容器，但不删除它。通过 <code>docker compose start</code> 可以再次启动这些容器。</p>
+<h3 id="ps"><a href="#ps" class="headerlink" title="ps"></a>ps</h3><p>列出项目中目前的所有容器。</p>
+<h3 id="port"><a href="#port" class="headerlink" title="port"></a>port</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose port [options] SERVICE PRIVATE_PORT</span><br></pre></td></tr></table></figure>
+<p>打印某个容器端口所映射的公共端口  </p>
+<p>常用选项  </p>
+<ul>
+<li><code>--protocol=proto</code> 指定端口协议，tcp（默认值）或者 udp。</li>
+<li><code>--index=index</code> 如果同一服务存在多个容器，指定命令对象容器的序号（默认为 1）</li>
+</ul>
+<h3 id="exec"><a href="#exec" class="headerlink" title="exec"></a>exec</h3><p>进入指定的容器。</p>
+<h3 id="images"><a href="#images" class="headerlink" title="images"></a>images</h3><p>列出 Compose 文件中包含的镜像。</p>
+<h3 id="kill"><a href="#kill" class="headerlink" title="kill"></a>kill</h3><p>格式为 </p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill [options] [SERVICE...]</span><br></pre></td></tr></table></figure>
+<p>通过发送 SIGKILL 信号来强制停止服务容器。</p>
+<p>支持通过 <code>-s</code> 参数来指定发送的信号，例如通过如下指令发送 SIGINT 信号。</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">docker compose kill -s SIGINT</span><br></pre></td></tr></table></figure>
+
+<h3 id="logs"><a href="#logs" class="headerlink" title="logs"></a>logs</h3><p>格式为 </p>
+<pre><code>docker compose logs [options] [SERVICE...]
+</code></pre>
+<p>查看服务容器的输出。默认情况下，<code>docker compose</code> 将对不同的服务输出使用不同的颜色来区分。可以通过 <code>--no-color</code> 来关闭颜色。<br>该命令在调试问题的时候十分有用。</p>
+<h3 id="top"><a href="#top" class="headerlink" title="top"></a>top</h3><p>查看各个服务容器内运行的进程。</p>
+<h3 id="rm"><a href="#rm" class="headerlink" title="rm"></a>rm</h3><p>删除所有（停止状态的）服务容器。推荐先执行 <code>docker compose stop</code> 命令来停止容器。<br>选项：</p>
+<ul>
+<li><code>-f, --force</code> 强制直接删除，包括非停止状态的容器。一般尽量不要使用该选项。</li>
+<li><code>-v</code> 删除容器所挂载的数据卷。</li>
+</ul>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://yeasy.gitbook.io/docker_practice/compose/commands">docker compose 命令说明</a></p>
+]]></content>
       <categories>
         <category>Docker</category>
       </categories>
@@ -8566,6 +8566,57 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 监控</title>
+    <url>/202305231329/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="Kubernetes-Metrics-Server"><a href="#Kubernetes-Metrics-Server" class="headerlink" title="Kubernetes Metrics Server"></a>Kubernetes Metrics Server</h1><p>Kubernetes Metrics Server 从 <code>kubelet</code> 收集资源使用指标（情况）并通过 Metrics API 将其暴露给 Kubernetes API Server，以供 HPA(Horizontal Pod Autoscaler) 和 VPA(Vertical Pod Autoscaler) 使用。<code>kubectl top</code> 也使用 Metrics API。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server](https://github.com/kubernetes-sigs/metrics-server)">[1]</span></a></sup></p>
+<h2 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h2><p>Kubernetes Metrics Server 安装之前必须要开启 kube api-server 的聚合层功能以及认证鉴权功能 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置聚合层](https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/)">[3]</span></a></sup> </p>
+<p>检查 Kubernetes API Server 是否启用了聚合层功能及认证鉴权功能</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -ef | grep apiserver | grep -E <span class="string">&quot;authorization-mode|enable-aggregator-routing&quot;</span></span></span><br><span class="line">root       390   369  7 13:55 ?        00:00:37 kube-apiserver --advertise-address=172.31.26.116 \</span><br><span class="line">                                                               --allow-privileged=true \</span><br><span class="line">                                                               --authorization-mode=Node,RBAC \</span><br><span class="line">                                                               --client-ca-file=/etc/kubernetes/pki/ca.crt \</span><br><span class="line">                                                               --enable-admission-plugins=NodeRestriction \</span><br><span class="line">                                                               --enable-bootstrap-token-auth=true \</span><br><span class="line">                                                               --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt \</span><br><span class="line">                                                               --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt \</span><br><span class="line">                                                               --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key \</span><br><span class="line">                                                               --etcd-servers=https://127.0.0.1:2379 \</span><br><span class="line">                                                               --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \</span><br><span class="line">                                                               --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname \</span><br><span class="line">                                                               --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt \</span><br><span class="line">                                                               --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key \</span><br><span class="line">                                                               --requestheader-allowed-names=front-proxy-client \</span><br><span class="line">                                                               --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt \</span><br><span class="line">                                                               --requestheader-extra-headers-prefix=X-Remote-Extra- \</span><br><span class="line">                                                               --requestheader-group-headers=X-Remote-Group \</span><br><span class="line">                                                               --requestheader-username-headers=X-Remote-User \</span><br><span class="line">                                                               --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local \</span><br><span class="line">                                                               --service-account-key-file=/etc/kubernetes/pki/sa.pub \</span><br><span class="line">                                                               --service-account-signing-key-file=/etc/kubernetes/pki/sa.key \</span><br><span class="line">                                                               --service-cluster-ip-range=10.96.0.0/12 \</span><br><span class="line">                                                               --tls-cert-file=/etc/kubernetes/pki/apiserver.crt --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \</span><br><span class="line">                                                               --enable-aggregator-routing=true</span><br></pre></td></tr></table></figure>
+<p>输出中包含了 <code>--authorization-mode=Node,RBAC</code> 和 <code>--enable-aggregator-routing=true</code>，表示已开启对应功能。如若未开启，修改 <code>api-server</code> 的 manifest 文件 <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>，在 <code>kube-apiserver</code> 的启动参数中添加 <code>--enable-aggregator-routing=true</code> 和 <code>--authorization-mode=Node,RBAC</code></p>
+<p>以下命令使用 yaml 文件安装最新版本 Metrics Server <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server installation](https://github.com/kubernetes-sigs/metrics-server#installation)">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</span><br></pre></td></tr></table></figure>
+
+<h2 id="Kubernetes-Metrics-Server-部署配置常见错误"><a href="#Kubernetes-Metrics-Server-部署配置常见错误" class="headerlink" title="Kubernetes Metrics Server 部署配置常见错误"></a>Kubernetes Metrics Server 部署配置常见错误</h2><h3 id="Failed-to-scrape-node"><a href="#Failed-to-scrape-node" class="headerlink" title="Failed to scrape node"></a>Failed to scrape node</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep metrics</span></span><br><span class="line">kube-system                 metrics-server-5cdf47479d-rwtd6             0/1     Running       0              5m53s</span><br></pre></td></tr></table></figure>
+<p>检查 Pod 日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.21.3:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.21.3 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.26.116:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.26.116 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.19.164:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.19.164 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster2&quot;</span><br></pre></td></tr></table></figure>
+<p>根据日志提示，由于 metrics-server 未获得TLS Bootstrap 签发证书的导致访问各节点资源时报错。</p>
+<ol>
+<li><a href="https://www.modb.pro/db/408792">参考解决办法</a></li>
+<li>添加选项 <code>--kubelet-insecure-tls</code> 不验证 Kubelet 的 CA 证书 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=InternalIP</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    - --kubelet-insecure-tls</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+<h3 id="no-such-host"><a href="#no-such-host" class="headerlink" title="no such host"></a>no such host</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态，检查 Pod 日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster3:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster3 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker1:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker1 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker2:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker2 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker2&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster2:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster2 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster2&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">I0524 09:32:43.033797       1 server.go:187] &quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br></pre></td></tr></table></figure>
+<p>根据日志显示，API Server 的主机名解析存在问题。这是因为节点主机名在集群的 DNS 中无法解析导致，可以通过在 Metrics Server 的 Pod 中手动添加解析解决</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">spec:</span><br><span class="line">  hostAliases:</span><br><span class="line">  - ip: &#x27;172.31.26.116&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.19.164&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master2&#x27;</span><br><span class="line">  - ip: &#x27;172.31.21.3&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master3&#x27;</span><br><span class="line">  - ip: &#x27;172.31.16.124&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.22.159&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker2&#x27;</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=Hostname</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br></pre></td></tr></table></figure>
+
+<h2 id="Metrics-Server-无法获取所在节点的主机的监控信息"><a href="#Metrics-Server-无法获取所在节点的主机的监控信息" class="headerlink" title="Metrics Server 无法获取所在节点的主机的监控信息"></a>Metrics Server 无法获取所在节点的主机的监控信息</h2><p>Metrics Server 部署成功后，无法获取所在节点的主机的监控信息，获取其他主机的监控信息正常，具体信息如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME          STATUS   ROLES           AGE    VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME</span><br><span class="line">k8s-master1   Ready    control-plane   169d   v1.24.7   172.31.26.116   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master2   Ready    control-plane   169d   v1.24.7   172.31.19.164   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master3   Ready    control-plane   169d   v1.24.7   172.31.21.3     &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker1   Ready    &lt;none&gt;          169d   v1.24.7   172.31.16.124   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker2   Ready    &lt;none&gt;          169d   v1.24.7   172.31.22.159   &lt;none&gt;        CentOS Linux 7 (Core)   3.10.0-1160.80.1.el7.x86_64   docker://20.10.9</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep met</span></span><br><span class="line">metrics-server-c48655c66-jxwpt             1/1     Running   0              12m    10.244.4.138    k8s-worker1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME          CPU(cores)   CPU%        MEMORY(bytes)   MEMORY%     </span><br><span class="line">k8s-master1   381m         9%          3263Mi          43%         </span><br><span class="line">k8s-master2   149m         3%          3432Mi          45%         </span><br><span class="line">k8s-master3   166m         4%          3163Mi          41%         </span><br><span class="line">k8s-worker2   2093m        13%         21933Mi         71%         </span><br><span class="line">k8s-worker1   &lt;unknown&gt;    &lt;unknown&gt;   &lt;unknown&gt;       &lt;unknown&gt; </span><br></pre></td></tr></table></figure>
+
+<p>查看 Metrics Server Pod 日志，显示</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-c48655c66-jxwpt</span></span><br><span class="line">E0525 05:19:42.085468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:19:57.125457       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:12.101468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:27.077495       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>根据日志显示，是因为无法连接节点的 kubelet (端口 10250) 导致。为了定位问题，修改 Metrics Server 的部署 Yaml 文件，在其中加入一个容器，来方便使用工具测试问题。参考以下内容，在 Pod 中加入容器 <code>centos:centos7.9.2009</code></p>
+<figure class="highlight shell"><figcaption><span>metrics-server.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">  name: metrics-server</span><br><span class="line">  namespace: kube-system</span><br><span class="line">spec:</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      k8s-app: metrics-server</span><br><span class="line">  strategy:</span><br><span class="line">    rollingUpdate:</span><br><span class="line">      maxUnavailable: 0</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        k8s-app: metrics-server</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">      - image: centos:centos7.9.2009</span><br><span class="line">        command:</span><br><span class="line">        - ping</span><br><span class="line">        - 127.0.0.1</span><br><span class="line">        name: centos7</span><br><span class="line">      - args:</span><br><span class="line">        - --cert-dir=/tmp</span><br><span class="line">        - --secure-port=4443</span><br><span class="line">        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname</span><br><span class="line">        - --kubelet-use-node-status-port</span><br><span class="line">        - --metric-resolution=15s</span><br><span class="line">        - --kubelet-insecure-tls</span><br><span class="line">        image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br><span class="line">        imagePullPolicy: IfNotPresent</span><br><span class="line">        ...</span><br></pre></td></tr></table></figure>
+<p>重新部署后，登陆容器 <code>centos7</code>，安装所需工具进行测试。根据日志信息，首先测试 Pod 是否能连接到节点的 kubelet</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.22.159:10250</span></span><br><span class="line">* About to connect() to 172.31.22.159 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.22.159...</span><br><span class="line">* Connected to 172.31.22.159 (172.31.22.159) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.22.159:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>根据以上测试，Metrics Server 的 Pod 无法连接所在节点 k8s-worker1（<code>172.31.16.124</code>）的 kubelet （<code>172.31.16.124:10250</code>），可以正常连接其他节点的 kubelet。由此可以确定问题原因。</p>
+<p>考虑到 Metrics Server 的 Pod 只是访问不到宿主节点所在的 kubelet，可以访问其他节点的 kubelet，梳理其中的网络连同流程发现，<strong>在访问其他节点的 kubelet 时，Metrics Server Pod 的报文在流出宿主节点前，会被 SNAT 为宿主节点的出口 IP，报文源 IP 为 宿主节点的 IP。而访问宿主节点的 kubelet 的报文，其源 IP 为 Metrics Server Pod 的 IP，目的 IP 为宿主节点的 IP。怀疑可能因为集群节点上的 iptables 允许集群节点的 IP 访问 kubelet，而 Pod 的 IP 未被允许访问 kubelet</strong>。为验证此猜想，在节点 <code>k8s-worker1</code> 的 iptables 添加允许 Metrics Server Pod 的 IP 访问的规则进行测试</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -I INPUT 7 -s 10.244.4.138 -j ACCEPT</span><br></pre></td></tr></table></figure>
+<p>再次测试和 kubelet 的连通性，发现可以正常连通，再次检查 <code>kubectl top node</code>，可以查到所有节点的监控数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* Connected to 172.31.16.124 (172.31.16.124) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.16.124:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME                CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   </span><br><span class="line">fm-k8s-c1-master1   286m         7%     3242Mi          42%       </span><br><span class="line">fm-k8s-c1-master2   150m         3%     3262Mi          43%       </span><br><span class="line">fm-k8s-c1-master3   251m         6%     3247Mi          42%       </span><br><span class="line">fm-k8s-c1-worker1   166m         1%     4317Mi          13%       </span><br><span class="line">fm-k8s-c1-worker2   2013m        12%    21684Mi         70%</span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">metrics-server</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server#installation">metrics-server installation</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/">配置聚合层</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>ingress-nginx 安装配置</title>
     <url>/202209301604/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -8725,57 +8776,6 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://kubernetes.github.io/ingress-nginx/deploy/baremetal/">裸机注意事项</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/deploy/baremetal/#via-the-host-network">Via the host network</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/">Ingress NGINX Configuration</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/examples/rewrite/#examples">Rewrite Target</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/examples/rewrite/#app-root">App Root</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#session-affinity">Session Affinity</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#enable-cors">Enable CORS</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#redirect-fromto-www">Redirect from/to www</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#whitelist-source-range">Whitelist source range</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-timeouts">Custom timeouts</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/#configuration-options">Configuration options</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/#access-log-path">access-log-path</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 监控</title>
-    <url>/202305231329/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Kubernetes 1.24</li>
-</ul>
-<h1 id="Kubernetes-Metrics-Server"><a href="#Kubernetes-Metrics-Server" class="headerlink" title="Kubernetes Metrics Server"></a>Kubernetes Metrics Server</h1><p>Kubernetes Metrics Server 从 <code>kubelet</code> 收集资源使用指标（情况）并通过 Metrics API 将其暴露给 Kubernetes API Server，以供 HPA(Horizontal Pod Autoscaler) 和 VPA(Vertical Pod Autoscaler) 使用。<code>kubectl top</code> 也使用 Metrics API。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server](https://github.com/kubernetes-sigs/metrics-server)">[1]</span></a></sup></p>
-<h2 id="安装-Kubernetes-Metrics-Server"><a href="#安装-Kubernetes-Metrics-Server" class="headerlink" title="安装 Kubernetes Metrics Server"></a>安装 Kubernetes Metrics Server</h2><p>Kubernetes Metrics Server 安装之前必须要开启 kube api-server 的聚合层功能以及认证鉴权功能 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置聚合层](https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/)">[3]</span></a></sup> </p>
-<p>检查 Kubernetes API Server 是否启用了聚合层功能及认证鉴权功能</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -ef | grep apiserver | grep -E <span class="string">&quot;authorization-mode|enable-aggregator-routing&quot;</span></span></span><br><span class="line">root       390   369  7 13:55 ?        00:00:37 kube-apiserver --advertise-address=172.31.26.116 \</span><br><span class="line">                                                               --allow-privileged=true \</span><br><span class="line">                                                               --authorization-mode=Node,RBAC \</span><br><span class="line">                                                               --client-ca-file=/etc/kubernetes/pki/ca.crt \</span><br><span class="line">                                                               --enable-admission-plugins=NodeRestriction \</span><br><span class="line">                                                               --enable-bootstrap-token-auth=true \</span><br><span class="line">                                                               --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt \</span><br><span class="line">                                                               --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt \</span><br><span class="line">                                                               --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key \</span><br><span class="line">                                                               --etcd-servers=https://127.0.0.1:2379 \</span><br><span class="line">                                                               --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key \</span><br><span class="line">                                                               --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname \</span><br><span class="line">                                                               --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt \</span><br><span class="line">                                                               --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key \</span><br><span class="line">                                                               --requestheader-allowed-names=front-proxy-client \</span><br><span class="line">                                                               --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt \</span><br><span class="line">                                                               --requestheader-extra-headers-prefix=X-Remote-Extra- \</span><br><span class="line">                                                               --requestheader-group-headers=X-Remote-Group \</span><br><span class="line">                                                               --requestheader-username-headers=X-Remote-User \</span><br><span class="line">                                                               --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local \</span><br><span class="line">                                                               --service-account-key-file=/etc/kubernetes/pki/sa.pub \</span><br><span class="line">                                                               --service-account-signing-key-file=/etc/kubernetes/pki/sa.key \</span><br><span class="line">                                                               --service-cluster-ip-range=10.96.0.0/12 \</span><br><span class="line">                                                               --tls-cert-file=/etc/kubernetes/pki/apiserver.crt --tls-private-key-file=/etc/kubernetes/pki/apiserver.key \</span><br><span class="line">                                                               --enable-aggregator-routing=true</span><br></pre></td></tr></table></figure>
-<p>输出中包含了 <code>--authorization-mode=Node,RBAC</code> 和 <code>--enable-aggregator-routing=true</code>，表示已开启对应功能。如若未开启，修改 <code>api-server</code> 的 manifest 文件 <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>，在 <code>kube-apiserver</code> 的启动参数中添加 <code>--enable-aggregator-routing=true</code> 和 <code>--authorization-mode=Node,RBAC</code></p>
-<p>以下命令使用 yaml 文件安装最新版本 Metrics Server <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[metrics-server installation](https://github.com/kubernetes-sigs/metrics-server#installation)">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml</span><br></pre></td></tr></table></figure>
-
-<h2 id="Kubernetes-Metrics-Server-部署配置常见错误"><a href="#Kubernetes-Metrics-Server-部署配置常见错误" class="headerlink" title="Kubernetes Metrics Server 部署配置常见错误"></a>Kubernetes Metrics Server 部署配置常见错误</h2><h3 id="Failed-to-scrape-node"><a href="#Failed-to-scrape-node" class="headerlink" title="Failed to scrape node"></a>Failed to scrape node</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep metrics</span></span><br><span class="line">kube-system                 metrics-server-5cdf47479d-rwtd6             0/1     Running       0              5m53s</span><br></pre></td></tr></table></figure>
-<p>检查 Pod 日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.21.3:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.21.3 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.26.116:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.26.116 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.19.164:10250/metrics/resource\&quot;: x509: cannot validate certificate for 172.31.19.164 because it doesn&#x27;t contain any IP SANs&quot; node=&quot;k8smaster2&quot;</span><br></pre></td></tr></table></figure>
-<p>根据日志提示，由于 metrics-server 未获得TLS Bootstrap 签发证书的导致访问各节点资源时报错。</p>
-<ol>
-<li><a href="https://www.modb.pro/db/408792">参考解决办法</a></li>
-<li>添加选项 <code>--kubelet-insecure-tls</code> 不验证 Kubelet 的 CA 证书 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=InternalIP</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    - --kubelet-insecure-tls</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ol>
-<h3 id="no-such-host"><a href="#no-such-host" class="headerlink" title="no such host"></a>no such host</h3><p><a href="#%E5%AE%89%E8%A3%85-Kubernetes-Metrics-Server">参考部署步骤</a> 部署后，Metrics Server 的 Pod 一直处于未就绪状态，检查 Pod 日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-5cdf47479d-rwtd6</span></span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster1:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster1 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster3:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster3 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster3&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker1:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker1 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker1&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8sworker2:10250/metrics/resource\&quot;: dial tcp: lookup k8sworker2 on 10.96.0.10:53: no such host&quot; node=&quot;k8sworker2&quot;</span><br><span class="line">&quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://k8smaster2:10250/metrics/resource\&quot;: dial tcp: lookup k8smaster2 on 10.96.0.10:53: no such host&quot; node=&quot;k8smaster2&quot;</span><br><span class="line">&quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br><span class="line">I0524 09:32:43.033797       1 server.go:187] &quot;Failed probe&quot; probe=&quot;metric-storage-ready&quot; err=&quot;no metrics to serve&quot;</span><br></pre></td></tr></table></figure>
-<p>根据日志显示，API Server 的主机名解析存在问题。这是因为节点主机名在集群的 DNS 中无法解析导致，可以通过在 Metrics Server 的 Pod 中手动添加解析解决</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">spec:</span><br><span class="line">  hostAliases:</span><br><span class="line">  - ip: &#x27;172.31.26.116&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.19.164&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master2&#x27;</span><br><span class="line">  - ip: &#x27;172.31.21.3&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-master3&#x27;</span><br><span class="line">  - ip: &#x27;172.31.16.124&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker1&#x27;</span><br><span class="line">  - ip: &#x27;172.31.22.159&#x27;</span><br><span class="line">    hostnames:</span><br><span class="line">    - &#x27;fm-k8s-c1-worker2&#x27;</span><br><span class="line">  containers:</span><br><span class="line">  - args:</span><br><span class="line">    - --cert-dir=/tmp</span><br><span class="line">    - --secure-port=4443</span><br><span class="line">    - --kubelet-preferred-address-types=Hostname</span><br><span class="line">    - --kubelet-use-node-status-port</span><br><span class="line">    - --metric-resolution=15s</span><br><span class="line">    image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br></pre></td></tr></table></figure>
-
-<h2 id="Metrics-Server-无法获取所在节点的主机的监控信息"><a href="#Metrics-Server-无法获取所在节点的主机的监控信息" class="headerlink" title="Metrics Server 无法获取所在节点的主机的监控信息"></a>Metrics Server 无法获取所在节点的主机的监控信息</h2><p>Metrics Server 部署成功后，无法获取所在节点的主机的监控信息，获取其他主机的监控信息正常，具体信息如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME          STATUS   ROLES           AGE    VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME</span><br><span class="line">k8s-master1   Ready    control-plane   169d   v1.24.7   172.31.26.116   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master2   Ready    control-plane   169d   v1.24.7   172.31.19.164   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-master3   Ready    control-plane   169d   v1.24.7   172.31.21.3     &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker1   Ready    &lt;none&gt;          169d   v1.24.7   172.31.16.124   &lt;none&gt;        CentOS Linux 7 (Core)   5.4.225-1.el7.elrepo.x86_64   docker://20.10.9</span><br><span class="line">k8s-worker2   Ready    &lt;none&gt;          169d   v1.24.7   172.31.22.159   &lt;none&gt;        CentOS Linux 7 (Core)   3.10.0-1160.80.1.el7.x86_64   docker://20.10.9</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A | grep met</span></span><br><span class="line">metrics-server-c48655c66-jxwpt             1/1     Running   0              12m    10.244.4.138    k8s-worker1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME          CPU(cores)   CPU%        MEMORY(bytes)   MEMORY%     </span><br><span class="line">k8s-master1   381m         9%          3263Mi          43%         </span><br><span class="line">k8s-master2   149m         3%          3432Mi          45%         </span><br><span class="line">k8s-master3   166m         4%          3163Mi          41%         </span><br><span class="line">k8s-worker2   2093m        13%         21933Mi         71%         </span><br><span class="line">k8s-worker1   &lt;unknown&gt;    &lt;unknown&gt;   &lt;unknown&gt;       &lt;unknown&gt; </span><br></pre></td></tr></table></figure>
-
-<p>查看 Metrics Server Pod 日志，显示</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n kube-system metrics-server-c48655c66-jxwpt</span></span><br><span class="line">E0525 05:19:42.085468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:19:57.125457       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:12.101468       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line">E0525 05:20:27.077495       1 scraper.go:140] &quot;Failed to scrape node&quot; err=&quot;Get \&quot;https://172.31.16.124:10250/metrics/resource\&quot;: dial tcp 172.31.16.124:10250: connect: no route to host&quot; node=&quot;fm-k8s-c1-worker1&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>根据日志显示，是因为无法连接节点的 kubelet (端口 10250) 导致。为了定位问题，修改 Metrics Server 的部署 Yaml 文件，在其中加入一个容器，来方便使用工具测试问题。参考以下内容，在 Pod 中加入容器 <code>centos:centos7.9.2009</code></p>
-<figure class="highlight shell"><figcaption><span>metrics-server.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line">apiVersion: apps/v1</span><br><span class="line">kind: Deployment</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    k8s-app: metrics-server</span><br><span class="line">  name: metrics-server</span><br><span class="line">  namespace: kube-system</span><br><span class="line">spec:</span><br><span class="line">  selector:</span><br><span class="line">    matchLabels:</span><br><span class="line">      k8s-app: metrics-server</span><br><span class="line">  strategy:</span><br><span class="line">    rollingUpdate:</span><br><span class="line">      maxUnavailable: 0</span><br><span class="line">  template:</span><br><span class="line">    metadata:</span><br><span class="line">      labels:</span><br><span class="line">        k8s-app: metrics-server</span><br><span class="line">    spec:</span><br><span class="line">      containers:</span><br><span class="line">      - image: centos:centos7.9.2009</span><br><span class="line">        command:</span><br><span class="line">        - ping</span><br><span class="line">        - 127.0.0.1</span><br><span class="line">        name: centos7</span><br><span class="line">      - args:</span><br><span class="line">        - --cert-dir=/tmp</span><br><span class="line">        - --secure-port=4443</span><br><span class="line">        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname</span><br><span class="line">        - --kubelet-use-node-status-port</span><br><span class="line">        - --metric-resolution=15s</span><br><span class="line">        - --kubelet-insecure-tls</span><br><span class="line">        image: registry.k8s.io/metrics-server/metrics-server:v0.6.3</span><br><span class="line">        imagePullPolicy: IfNotPresent</span><br><span class="line">        ...</span><br></pre></td></tr></table></figure>
-<p>重新部署后，登陆容器 <code>centos7</code>，安装所需工具进行测试。根据日志信息，首先测试 Pod 是否能连接到节点的 kubelet</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* No route to host</span><br><span class="line">* Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line">* Closing connection 0</span><br><span class="line">curl: (7) Failed connect to 172.31.16.124:10250; No route to host</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.22.159:10250</span></span><br><span class="line">* About to connect() to 172.31.22.159 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.22.159...</span><br><span class="line">* Connected to 172.31.22.159 (172.31.22.159) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.22.159:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>根据以上测试，Metrics Server 的 Pod 无法连接所在节点 k8s-worker1（<code>172.31.16.124</code>）的 kubelet （<code>172.31.16.124:10250</code>），可以正常连接其他节点的 kubelet。由此可以确定问题原因。</p>
-<p>考虑到 Metrics Server 的 Pod 只是访问不到宿主节点所在的 kubelet，可以访问其他节点的 kubelet，梳理其中的网络连同流程发现，<strong>在访问其他节点的 kubelet 时，Metrics Server Pod 的报文在流出宿主节点前，会被 SNAT 为宿主节点的出口 IP，报文源 IP 为 宿主节点的 IP。而访问宿主节点的 kubelet 的报文，其源 IP 为 Metrics Server Pod 的 IP，目的 IP 为宿主节点的 IP。怀疑可能因为集群节点上的 iptables 允许集群节点的 IP 访问 kubelet，而 Pod 的 IP 未被允许访问 kubelet</strong>。为验证此猜想，在节点 <code>k8s-worker1</code> 的 iptables 添加允许 Metrics Server Pod 的 IP 访问的规则进行测试</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -I INPUT 7 -s 10.244.4.138 -j ACCEPT</span><br></pre></td></tr></table></figure>
-<p>再次测试和 kubelet 的连通性，发现可以正常连通，再次检查 <code>kubectl top node</code>，可以查到所有节点的监控数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl -v 172.31.16.124:10250</span></span><br><span class="line">* About to connect() to 172.31.16.124 port 10250 (#0)</span><br><span class="line">*   Trying 172.31.16.124...</span><br><span class="line">* Connected to 172.31.16.124 (172.31.16.124) port 10250 (#0)</span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">GET / HTTP/1.1</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">User-Agent: curl/7.29.0</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Host: 172.31.16.124:10250</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash">Accept: */*</span></span><br><span class="line"><span class="meta prompt_">&gt; </span><span class="language-bash"></span></span><br><span class="line"><span class="language-bash">* HTTP 1.0, assume close after body</span></span><br><span class="line">&lt; HTTP/1.0 400 Bad Request</span><br><span class="line">&lt; </span><br><span class="line">Client sent an HTTP request to an HTTPS server.</span><br><span class="line">* Closing connection 0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl top node</span></span><br><span class="line">NAME                CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   </span><br><span class="line">fm-k8s-c1-master1   286m         7%     3242Mi          42%       </span><br><span class="line">fm-k8s-c1-master2   150m         3%     3262Mi          43%       </span><br><span class="line">fm-k8s-c1-master3   251m         6%     3247Mi          42%       </span><br><span class="line">fm-k8s-c1-worker1   166m         1%     4317Mi          13%       </span><br><span class="line">fm-k8s-c1-worker2   2013m        12%    21684Mi         70%</span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server">metrics-server</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/kubernetes-sigs/metrics-server#installation">metrics-server installation</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/extend-kubernetes/configure-aggregation-layer/">配置聚合层</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
@@ -9650,49 +9650,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>kubernetes Service 详解</title>
-    <url>/202305030923/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Kubernetes 的 Service 代表的是 Kubernetes 后端服务的入口，它主要包含服务的访问 IP（虚拟 IP）和端口，工作在 L4.</p>
-<p>Service 只存储服务的入口信息（IP:PORT），不存储后端 Pod 信息，Service 是通过 <a href="https://csms.tech/202209241108/#标签和选择算符"><code>Label Selector</code></a> 选择与之匹配的后端 Pod。当被 Service 选择的后端 Pod 运行且能正常向外提供服务时，Kubernetes 的 <code>Endpoint Controller</code> 会生成一个新的 Endpoint 对象，指向此 Pod 的 IP:PORT。Service 接收到访问请求，会将请求转发到对应的 Endpoint。同时，Service 的访问 IP 和 Endpoint&#x2F;Pod 的 IP 都会在 Kubernetes 的 DNS 服务里面进行注册以记录域名和 IP 的对应关系，因此用户可以在集群中通过域名的方式访问 Service 和 Pod。</p>
-<p>用户创建 Service 后，Kubernetes 会从集群的可用服务 IP 池中为 Service 分配一个稳定的集群内访问 IP，称为 <strong>Cluster IP</strong>。Kubernetes 还会通过注册 DNS 条目为 <strong>Cluster IP</strong> 分配 <strong>域名</strong>（主机名）。<strong>Cluster IP</strong> 和 <strong>域名</strong> 在集群内是独一无二的，并且在服务的整个生命周期中保持不变，直到将 Service 从集群中删除，Kubernetes 才会释放 <strong>Cluster IP</strong> 和 <strong>域名</strong> 。通过此方法，Service 作为代理，向客户端提供了稳定不变的访问后端服务的入口。</p>
-<p>Service 除了作为 <strong>代理</strong> 功能，同时也提供了 <strong>负载均衡</strong> 和 <strong>高可用</strong>。当后端的 Pod 有多个时，默认会通过 <strong>轮询</strong> 将请求流量均匀分布到多个 Pod 上，当某个 Pod 不可用是，Service 不会将请求调度到问题节点。</p>
-<p>Kubernetes 使用节点上运行的 <code>kube-proxy</code> 组件管理各 Service 和后端 Pod 的连接。<code>kube-proxy</code> 是一个基于出战流量的 <strong>负载均衡控制器</strong>，它监控 Kubernetes API Service 并持续将 Service IP （ClusterIP）映射到运行状况良好的后端 Pod，具体实现是通过主机上的 <code>iptables/IPVS</code> 的规则。访问 Service 的 IP 会被这些（路由）规则直接 DNAT 到后端 Pod 的 IP。</p>
-<p><a href="https://csms.tech/202209241108/#Service">Service 配置语法参考</a></p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 3.10.0-1160</li>
-<li>Kubernetes v1.24.7</li>
-</ul>
-<h1 id="kube-proxy-iptables-模式下的规则解析"><a href="#kube-proxy-iptables-模式下的规则解析" class="headerlink" title="kube-proxy iptables 模式下的规则解析"></a>kube-proxy iptables 模式下的规则解析</h1><p>kube-proxy 默认使用 <code>iptables</code> 模式实现 Service 的代理转发和负载均衡。<a href="https://csms.tech/202209131536/#获取节点上的-kube-proxy-代理模式">检查 <code>kube-proxy</code> 使用的代理模式</a></p>
-<p>本示例使用相关信息如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span> </span><br><span class="line">NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)     AGE</span><br><span class="line">api-service      ClusterIP   10.106.126.96    &lt;none&gt;        10302/TCP   145d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get endpoints api-service</span></span><br><span class="line">NAME          ENDPOINTS                               AGE</span><br><span class="line">api-service   10.244.3.138:10302,10.244.4.120:10302   145d</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>针对 <code>api-service</code>，后端的 Pod 就绪后，生成了 ENDPOINTS，kube-proxy 会为该服务创建以下 iptables 规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-A PREROUTING -m comment --comment &quot;kubernetes service portals&quot; -j KUBE-SERVICES</span><br><span class="line"></span><br><span class="line">-A KUBE-SERVICES -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-SVC-DVTQLPR6DVOLBZS4</span><br><span class="line"></span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 ! -s 10.244.0.0/16 -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.3.138:10302&quot; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-JXBL7O23XHVFQV2I</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.4.120:10302&quot; -j KUBE-SEP-BBPDSOPRICLINLPY</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -s 10.244.3.138/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.3.138:10302</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -s 10.244.4.120/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.4.120:10302</span><br><span class="line"></span><br><span class="line">-A POSTROUTING -m comment --comment &quot;flanneld masq&quot; -j FLANNEL-POSTRTG</span><br><span class="line">-A POSTROUTING -m comment --comment &quot;kubernetes postrouting rules&quot; -j KUBE-POSTROUTING-A FLANNEL-POSTRTG -m mark --mark 0x4000/0x4000 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 ! -d 224.0.0.0/4 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.3.0/24 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line"></span><br><span class="line">-A KUBE-POSTROUTING -m mark ! --mark 0x4000/0x4000 -j RETURN</span><br><span class="line">-A KUBE-POSTROUTING -j MARK --set-xmark 0x4000/0x0</span><br><span class="line">-A KUBE-POSTROUTING -m comment --comment &quot;kubernetes service traffic requiring SNAT&quot; -j MASQUERADE</span><br></pre></td></tr></table></figure>
-<p>具体工作流程如下：</p>
-<ol>
-<li>所有进入 <code>PREROUTING</code> 链的流量会被跳转到 <code>KUBE-SERVICES</code> 自定义链</li>
-<li>本示例中请求 <code>api-service</code> 的访问数据包（目的地址为 <code>10.106.126.96:10302</code>）在 <code>PREROUTING</code> 链中被 <code>-d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302</code> 匹配到，根据规则跳转到自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code></li>
-<li>在自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code> 中，实现了负载均衡，一半的流量会被跳转到链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code>，另一半的流量会被跳转到 <code>KUBE-SEP-BBPDSOPRICLINLPY</code></li>
-<li>在自定义链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code> 和 <code>KUBE-SEP-BBPDSOPRICLINLPY</code> 中，流量分别被 DNAT 分配到了后端的 Pod（就绪的 Endpoints）。</li>
-<li>Pod 处理完数据请求，向客户端返回请求结果时，在 <code>POSTROUTING</code> 链上要对数据包做 SNAT 处理，以确保客户端接收到的数据包的源地址是其发送请求时的目标地址。</li>
-</ol>
-<p>通过以上 kube-proxy 管理的规则，Service 实现了对后端 Pod 的服务代理及负载均衡功能。</p>
-<p>综上所述，iptables 模式最主要的链是 <code>KUBE-SERVICES</code> 、<code>KUBE-SVC-*</code>、<code>KUBE-SEP-*</code></p>
-<ul>
-<li><code>KUBE-SERVICES</code> - 访问集群服务的数据包入口，它会根据匹配到的目标 IP:PORT 将数据包分发到相应的链 <code>KUBE-SVC-*</code></li>
-<li><code>KUBE-SVC-*</code> - 相当于一个负载均衡器，它会将数据包平均分配到 <code>KUBE-SEP-*</code> 链。每个 <code>KUBE-SVC-*</code> 链后面的 <code>KUBE-SEP-*</code> 链的数量和 Service 后端就绪的 Pod 数量一致。</li>
-<li><code>KUBE-SEP-*</code> - 通过 DNAT 将数据包的目的地址（IP:PORT）修改为后端就绪的 Pod 的 IP:PORT，从而将流量转发到相应的 Pod</li>
-</ul>
-<p><code>kube-proxy</code> 的 iptables 模式因为使用 DNAT 转发数据包，存在一定的性能损耗，另外，当集群中的 Service 数量上万时，节点上的 iptables rules 会非常庞大，对管理是个不小的负担，性能也会大打折扣。</p>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes 理论知识点汇总</title>
     <url>/202401101016/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -9825,6 +9782,49 @@ width: 20%;
 <p>Pod 中如果有个容器因为 Limit 被 kill，系统只会 kill 掉这一个容器并重启之，不会影响其他容器</p>
 </blockquote>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#network-setup">Network setup</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#initializing-your-control-plane-node">Initializing your control-plane node</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#more-information">admin.conf</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#pod-network">Installing a Pod network add-on</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/">Labels and Selectors</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/#syntax-and-character-set">Annotations Key Syntax and character set</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/architecture/nodes/#node-name-uniqueness">Node name uniqueness</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/architecture/control-plane-node-communication/#api-server-to-kubelet">API server to kubelet</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/architecture/leases/#node-heart-beats">Node heartbeats</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/containers/images/#serial-and-parallel-image-pulls">Serial and parallel image pulls</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-phase">Pod phase</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li><li id="fn:12"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">12.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/">Quality of Service</a><a href="#fnref:12" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>kubernetes Service 详解</title>
+    <url>/202305030923/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Kubernetes 的 Service 代表的是 Kubernetes 后端服务的入口，它主要包含服务的访问 IP（虚拟 IP）和端口，工作在 L4.</p>
+<p>Service 只存储服务的入口信息（IP:PORT），不存储后端 Pod 信息，Service 是通过 <a href="https://csms.tech/202209241108/#标签和选择算符"><code>Label Selector</code></a> 选择与之匹配的后端 Pod。当被 Service 选择的后端 Pod 运行且能正常向外提供服务时，Kubernetes 的 <code>Endpoint Controller</code> 会生成一个新的 Endpoint 对象，指向此 Pod 的 IP:PORT。Service 接收到访问请求，会将请求转发到对应的 Endpoint。同时，Service 的访问 IP 和 Endpoint&#x2F;Pod 的 IP 都会在 Kubernetes 的 DNS 服务里面进行注册以记录域名和 IP 的对应关系，因此用户可以在集群中通过域名的方式访问 Service 和 Pod。</p>
+<p>用户创建 Service 后，Kubernetes 会从集群的可用服务 IP 池中为 Service 分配一个稳定的集群内访问 IP，称为 <strong>Cluster IP</strong>。Kubernetes 还会通过注册 DNS 条目为 <strong>Cluster IP</strong> 分配 <strong>域名</strong>（主机名）。<strong>Cluster IP</strong> 和 <strong>域名</strong> 在集群内是独一无二的，并且在服务的整个生命周期中保持不变，直到将 Service 从集群中删除，Kubernetes 才会释放 <strong>Cluster IP</strong> 和 <strong>域名</strong> 。通过此方法，Service 作为代理，向客户端提供了稳定不变的访问后端服务的入口。</p>
+<p>Service 除了作为 <strong>代理</strong> 功能，同时也提供了 <strong>负载均衡</strong> 和 <strong>高可用</strong>。当后端的 Pod 有多个时，默认会通过 <strong>轮询</strong> 将请求流量均匀分布到多个 Pod 上，当某个 Pod 不可用是，Service 不会将请求调度到问题节点。</p>
+<p>Kubernetes 使用节点上运行的 <code>kube-proxy</code> 组件管理各 Service 和后端 Pod 的连接。<code>kube-proxy</code> 是一个基于出战流量的 <strong>负载均衡控制器</strong>，它监控 Kubernetes API Service 并持续将 Service IP （ClusterIP）映射到运行状况良好的后端 Pod，具体实现是通过主机上的 <code>iptables/IPVS</code> 的规则。访问 Service 的 IP 会被这些（路由）规则直接 DNAT 到后端 Pod 的 IP。</p>
+<p><a href="https://csms.tech/202209241108/#Service">Service 配置语法参考</a></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 3.10.0-1160</li>
+<li>Kubernetes v1.24.7</li>
+</ul>
+<h1 id="kube-proxy-iptables-模式下的规则解析"><a href="#kube-proxy-iptables-模式下的规则解析" class="headerlink" title="kube-proxy iptables 模式下的规则解析"></a>kube-proxy iptables 模式下的规则解析</h1><p>kube-proxy 默认使用 <code>iptables</code> 模式实现 Service 的代理转发和负载均衡。<a href="https://csms.tech/202209131536/#获取节点上的-kube-proxy-代理模式">检查 <code>kube-proxy</code> 使用的代理模式</a></p>
+<p>本示例使用相关信息如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span> </span><br><span class="line">NAME             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)     AGE</span><br><span class="line">api-service      ClusterIP   10.106.126.96    &lt;none&gt;        10302/TCP   145d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get endpoints api-service</span></span><br><span class="line">NAME          ENDPOINTS                               AGE</span><br><span class="line">api-service   10.244.3.138:10302,10.244.4.120:10302   145d</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>针对 <code>api-service</code>，后端的 Pod 就绪后，生成了 ENDPOINTS，kube-proxy 会为该服务创建以下 iptables 规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">-A PREROUTING -m comment --comment &quot;kubernetes service portals&quot; -j KUBE-SERVICES</span><br><span class="line"></span><br><span class="line">-A KUBE-SERVICES -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-SVC-DVTQLPR6DVOLBZS4</span><br><span class="line"></span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 ! -s 10.244.0.0/16 -d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302 -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.3.138:10302&quot; -m statistic --mode random --probability 0.50000000000 -j KUBE-SEP-JXBL7O23XHVFQV2I</span><br><span class="line">-A KUBE-SVC-DVTQLPR6DVOLBZS4 -m comment --comment &quot;default/api-service:api-pord -&gt; 10.244.4.120:10302&quot; -j KUBE-SEP-BBPDSOPRICLINLPY</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -s 10.244.3.138/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-JXBL7O23XHVFQV2I -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.3.138:10302</span><br><span class="line"></span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -s 10.244.4.120/32 -m comment --comment &quot;default/api-service:api-pord&quot; -j KUBE-MARK-MASQ</span><br><span class="line">-A KUBE-SEP-BBPDSOPRICLINLPY -p tcp -m comment --comment &quot;default/api-service:api-pord&quot; -m tcp -j DNAT --to-destination 10.244.4.120:10302</span><br><span class="line"></span><br><span class="line">-A POSTROUTING -m comment --comment &quot;flanneld masq&quot; -j FLANNEL-POSTRTG</span><br><span class="line">-A POSTROUTING -m comment --comment &quot;kubernetes postrouting rules&quot; -j KUBE-POSTROUTING-A FLANNEL-POSTRTG -m mark --mark 0x4000/0x4000 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG -s 10.244.0.0/16 ! -d 224.0.0.0/4 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.3.0/24 -m comment --comment &quot;flanneld masq&quot; -j RETURN</span><br><span class="line">-A FLANNEL-POSTRTG ! -s 10.244.0.0/16 -d 10.244.0.0/16 -m comment --comment &quot;flanneld masq&quot; -j MASQUERADE</span><br><span class="line"></span><br><span class="line">-A KUBE-POSTROUTING -m mark ! --mark 0x4000/0x4000 -j RETURN</span><br><span class="line">-A KUBE-POSTROUTING -j MARK --set-xmark 0x4000/0x0</span><br><span class="line">-A KUBE-POSTROUTING -m comment --comment &quot;kubernetes service traffic requiring SNAT&quot; -j MASQUERADE</span><br></pre></td></tr></table></figure>
+<p>具体工作流程如下：</p>
+<ol>
+<li>所有进入 <code>PREROUTING</code> 链的流量会被跳转到 <code>KUBE-SERVICES</code> 自定义链</li>
+<li>本示例中请求 <code>api-service</code> 的访问数据包（目的地址为 <code>10.106.126.96:10302</code>）在 <code>PREROUTING</code> 链中被 <code>-d 10.106.126.96/32 -p tcp -m comment --comment &quot;default/api-service:api-pord cluster IP&quot; -m tcp --dport 10302</code> 匹配到，根据规则跳转到自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code></li>
+<li>在自定义链 <code>KUBE-SVC-DVTQLPR6DVOLBZS4</code> 中，实现了负载均衡，一半的流量会被跳转到链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code>，另一半的流量会被跳转到 <code>KUBE-SEP-BBPDSOPRICLINLPY</code></li>
+<li>在自定义链 <code>KUBE-SEP-JXBL7O23XHVFQV2I</code> 和 <code>KUBE-SEP-BBPDSOPRICLINLPY</code> 中，流量分别被 DNAT 分配到了后端的 Pod（就绪的 Endpoints）。</li>
+<li>Pod 处理完数据请求，向客户端返回请求结果时，在 <code>POSTROUTING</code> 链上要对数据包做 SNAT 处理，以确保客户端接收到的数据包的源地址是其发送请求时的目标地址。</li>
+</ol>
+<p>通过以上 kube-proxy 管理的规则，Service 实现了对后端 Pod 的服务代理及负载均衡功能。</p>
+<p>综上所述，iptables 模式最主要的链是 <code>KUBE-SERVICES</code> 、<code>KUBE-SVC-*</code>、<code>KUBE-SEP-*</code></p>
+<ul>
+<li><code>KUBE-SERVICES</code> - 访问集群服务的数据包入口，它会根据匹配到的目标 IP:PORT 将数据包分发到相应的链 <code>KUBE-SVC-*</code></li>
+<li><code>KUBE-SVC-*</code> - 相当于一个负载均衡器，它会将数据包平均分配到 <code>KUBE-SEP-*</code> 链。每个 <code>KUBE-SVC-*</code> 链后面的 <code>KUBE-SEP-*</code> 链的数量和 Service 后端就绪的 Pod 数量一致。</li>
+<li><code>KUBE-SEP-*</code> - 通过 DNAT 将数据包的目的地址（IP:PORT）修改为后端就绪的 Pod 的 IP:PORT，从而将流量转发到相应的 Pod</li>
+</ul>
+<p><code>kube-proxy</code> 的 iptables 模式因为使用 DNAT 转发数据包，存在一定的性能损耗，另外，当集群中的 Service 数量上万时，节点上的 iptables rules 会非常庞大，对管理是个不小的负担，性能也会大打折扣。</p>
+]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
@@ -10571,6 +10571,30 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>lftp 使用</title>
+    <url>/202306080936/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="lftp-安装"><a href="#lftp-安装" class="headerlink" title="lftp 安装"></a>lftp 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y lftp</span><br></pre></td></tr></table></figure>
+
+<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><p>查看帮助信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">lftp -h</span></span><br><span class="line">Usage: lftp [OPTS] &lt;site&gt;</span><br><span class="line">`lftp&#x27; is the first command executed by lftp after rc files</span><br><span class="line"> -f &lt;file&gt;           execute commands from the file and exit</span><br><span class="line"> -c &lt;cmd&gt;            execute the commands and exit</span><br><span class="line"> --help              print this help and exit</span><br><span class="line"> --version           print lftp version and exit</span><br><span class="line">Other options are the same as in `open&#x27; command</span><br><span class="line"> -e &lt;cmd&gt;            execute the command just after selecting</span><br><span class="line"> -u &lt;user&gt;[,&lt;pass&gt;]  use the user/password for authentication</span><br><span class="line"> -p &lt;port&gt;           use the port for connection</span><br><span class="line"> &lt;site&gt;              host name, URL or bookmark name</span><br></pre></td></tr></table></figure>
+
+<h2 id="登陆-FTP"><a href="#登陆-FTP" class="headerlink" title="登陆 FTP"></a>登陆 FTP</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp $&#123;USER&#125;:$&#123;PASSWORD&#125;@$&#123;FTPIP&#125;:$&#123;FTPPORT&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="上传文件"><a href="#上传文件" class="headerlink" title="上传文件"></a>上传文件</h2><p>在一条 shell 命令中执行登陆、上传、退出操作</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp -u $&#123;USER&#125;,$&#123;PASSWORD&#125; -p $&#123;FTPPORT&#125; $&#123;FTPIP&#125; -e &quot;put /1.mp4 &amp;&amp; exit&quot;</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 权限控制</title>
     <url>/202305161451/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -10646,30 +10670,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>lftp 使用</title>
-    <url>/202306080936/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="lftp-安装"><a href="#lftp-安装" class="headerlink" title="lftp 安装"></a>lftp 安装</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y lftp</span><br></pre></td></tr></table></figure>
-
-<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><p>查看帮助信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">lftp -h</span></span><br><span class="line">Usage: lftp [OPTS] &lt;site&gt;</span><br><span class="line">`lftp&#x27; is the first command executed by lftp after rc files</span><br><span class="line"> -f &lt;file&gt;           execute commands from the file and exit</span><br><span class="line"> -c &lt;cmd&gt;            execute the commands and exit</span><br><span class="line"> --help              print this help and exit</span><br><span class="line"> --version           print lftp version and exit</span><br><span class="line">Other options are the same as in `open&#x27; command</span><br><span class="line"> -e &lt;cmd&gt;            execute the command just after selecting</span><br><span class="line"> -u &lt;user&gt;[,&lt;pass&gt;]  use the user/password for authentication</span><br><span class="line"> -p &lt;port&gt;           use the port for connection</span><br><span class="line"> &lt;site&gt;              host name, URL or bookmark name</span><br></pre></td></tr></table></figure>
-
-<h2 id="登陆-FTP"><a href="#登陆-FTP" class="headerlink" title="登陆 FTP"></a>登陆 FTP</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp $&#123;USER&#125;:$&#123;PASSWORD&#125;@$&#123;FTPIP&#125;:$&#123;FTPPORT&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="上传文件"><a href="#上传文件" class="headerlink" title="上传文件"></a>上传文件</h2><p>在一条 shell 命令中执行登陆、上传、退出操作</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">lftp -u $&#123;USER&#125;,$&#123;PASSWORD&#125; -p $&#123;FTPPORT&#125; $&#123;FTPIP&#125; -e &quot;put /1.mp4 &amp;&amp; exit&quot;</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
