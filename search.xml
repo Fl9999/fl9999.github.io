@@ -13792,6 +13792,102 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 主从复制相关原理简述</title>
+    <url>/2207211114/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h2 id="Mysql-主从同步基本原理"><a href="#Mysql-主从同步基本原理" class="headerlink" title="Mysql 主从同步基本原理"></a>Mysql 主从同步基本原理</h2></blockquote>
+<p>复制的基本过程如下：  </p>
+<ol>
+<li><p>Slave上面的IO进程连接上Master，并请求从指定日志文件的指定位置（或者从最开始的日志）之后的日志内容；</p>
+</li>
+<li><p>Master接收到来自Slave的IO进程的请求后，通过负责复制的IO进程,根据请求信息,读取指定日志指定位置之后的日志信息，返回给Slave 的IO进程。返回信息中除了日志所包含的信息之外，还包括本次返回的信息已经到Master端的bin-log文件的名称以及bin-log的位置；</p>
+</li>
+<li><p>Slave的IO进程接收到信息后，将接收到的日志内容依次添加到Slave端的relay-log文件的最末端，并将读取到的Master端的 bin-log的文件名和位置记录到master-info文件中，以便在下一次读取的时候能够清楚的告诉Master“我需要从某个bin-log的哪个位置开始往后的日志内容，请发给我”；</p>
+</li>
+<li><p>Slave的Sql进程检测到relay-log中新增加了内容后，会马上解析relay-log的内容，获得在Master端真实执行的那些可执行的内容，并在自身执行。</p>
+</li>
+</ol>
+<p>双主情况下，禁止同时写入，建议还是按照主从的方式工作，防止数据冲突。双主场景下，主要是切换主备方便。</p>
+<span id="more"></span>
+
+<blockquote>
+<h2 id="Mysql-复制方式"><a href="#Mysql-复制方式" class="headerlink" title="Mysql 复制方式"></a>Mysql 复制方式</h2></blockquote>
+<blockquote>
+<h3 id="异步复制（Asynchronous-replication）"><a href="#异步复制（Asynchronous-replication）" class="headerlink" title="异步复制（Asynchronous replication）"></a>异步复制（Asynchronous replication）</h3></blockquote>
+<p>MySQL默认的复制即是异步的，主库在执行完客户端提交的事务后会立即将结果返给给客户端，并不关心从库是否已经接收并处理，这样就会有一个问题，主如果crash掉了，此时主上已经提交的事务可能并没有传到从上，如果此时，强行将从提升为主，可能导致新主上的数据不完整。</p>
+<blockquote>
+<h3 id="全同步复制（Fully-synchronous-replication）"><a href="#全同步复制（Fully-synchronous-replication）" class="headerlink" title="全同步复制（Fully synchronous replication）"></a>全同步复制（Fully synchronous replication）</h3></blockquote>
+<p>指当主库执行完一个事务，所有的从库都执行了该事务才返回给客户端。因为需要等待所有从库执行完该事务才能返回，所以全同步复制的性能必然会收到严重的影响。</p>
+<blockquote>
+<h3 id="半同步复制（Semisynchronous-replication）"><a href="#半同步复制（Semisynchronous-replication）" class="headerlink" title="半同步复制（Semisynchronous replication）"></a>半同步复制（Semisynchronous replication）</h3></blockquote>
+<p>介于异步复制和全同步复制之间，主库在执行完客户端提交的事务后不是立刻返回给客户端，而是等待至少一个从库接收到并写到relay log中才返回给客户端。相对于异步复制，半同步复制提高了数据的安全性，同时它也造成了一定程度的延迟，这个延迟最少是一个TCP&#x2F;IP往返的时间。所以，半同步复制最好在低延时的网络中使用。半同步复制失败(配置超时时间)，自动转为异步复制  </p>
+<h4 id="半同步复制配置步骤"><a href="#半同步复制配置步骤" class="headerlink" title="半同步复制配置步骤"></a>半同步复制配置步骤</h4><ol>
+<li><p>加载使用的插件<br>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_master SONAME &#x27;semisync_master.so&#x27;;</span><br></pre></td></tr></table></figure>
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_slave SONAME &#x27;semisync_slave.so&#x27;;</span><br></pre></td></tr></table></figure>
+<p>通过 <code>show plugins;</code> 可查看已加载的插件</p>
+</li>
+<li><p>启动半同步复制<br>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_master_enabled = 1;</span><br></pre></td></tr></table></figure>
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_slave_enabled = 1;</span><br></pre></td></tr></table></figure>
+<p>执行以下命令重启从库上的IO线程</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">STOP SLAVE IO_THREAD;</span><br><span class="line">START SLAVE IO_THREAD;</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>检查半同步复制插件是否在运行<br>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_master_status&#x27;;</span><br></pre></td></tr></table></figure>
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_slave_status&#x27;;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<blockquote>
+<h2 id="Mysql-复制级别说明"><a href="#Mysql-复制级别说明" class="headerlink" title="Mysql 复制级别说明"></a>Mysql 复制级别说明</h2></blockquote>
+<p>不同复制级别的设置会影响到Master端的bin-log记录成不同的形式。<br>配置方式:</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">binlog_format=&#x27;row&#x27;</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<h3 id="基于sql语句（Statement-level）"><a href="#基于sql语句（Statement-level）" class="headerlink" title="基于sql语句（Statement level）"></a>基于sql语句（Statement level）</h3></blockquote>
+<p>每一条会修改数据的sql都会记录到 master的bin-log中。slave在复制的时候，sql进程会解析成和原来master端执行过的相同的sql来再次执行。</p>
+<p><strong>优点</strong>：statement level下的优点首先就是解决了<a href="#%E5%9F%BA%E4%BA%8E%E4%B8%80%E6%9D%A1%E8%AE%B0%E5%BD%95%EF%BC%88Row-level%EF%BC%89">row level</a>下的缺点，不需要记录每一行数据的变化，减少bin-log日志量，节约IO，提高性能。因为他只需要记录在Master上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
+<p><strong>缺点</strong>：由于他是记录的执行语句，所以，为了让这些语句在slave端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在slave端被执行的时候能够得到和在master端执行时候相同的结果。<br>另外就是，由于Mysql现在发展比较快，很多的新功能不断的加入，使mysql的复制遇到了不小的挑战，复制的时候涉及到越复杂的内容，bug也就越容易出现。在statement level下，目前已经发现的就有不少情况会造成mysql的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep()函数在有些版本中就不能真确复制，在存储过程中使用了last_insert_id()函数，可能会使slave和master上得到不一致的id等等。<br>由于row level是基于每一行来记录的变化，所以不会出现类似的问题。</p>
+<blockquote>
+<h3 id="基于一条记录（Row-level）"><a href="#基于一条记录（Row-level）" class="headerlink" title="基于一条记录（Row level）"></a>基于一条记录（Row level）</h3></blockquote>
+<p>日志中会记录成每一行数据被修改的形式，然后在slave端再对相同的数据进行修改</p>
+<p><strong>优点</strong>： 在row level模式下，bin-log中可以不记录执行的sql语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以row level的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程，或function，以及 trigger的调用和触发无法被正确复制的问题。<br>任何情况都可以被复制，这对复制来说是最安全可靠的；和其他大多数数据库系统的复制技术一样；多数情况下，从服务器上的表如果有主键的话，复制就会快了很多,更少的锁</p>
+<p><strong>缺点</strong>： row level下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条update语句：update product set owner_member_id &#x3D; ‘b’ where owner_member_id &#x3D; ‘a’，执行之后，日志中记录的不是这条update语句所对应的事件（mysql以事件的形式来记录bin-log日志），而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log日志的量就会很大。尤其是当执行alter table之类的语句的时候，产生的日志量是惊人的。因为Mysql对于alter table之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
+<blockquote>
+<h3 id="Mixed"><a href="#Mixed" class="headerlink" title="Mixed"></a>Mixed</h3></blockquote>
+<p>在Mixed模式下，Mysql会根据执行的每一条具体的sql语句,来区分对待记录的日志形式，也就是在Statement和Row之间选择一种。新版本中的Statment level还是和以前一样，仅仅记录执行的语句。而新版本的Mysql中对row level模式也被做了优化，并不是所有的修改都会以row level来记录，像遇到表结构变更的时候就会以statement模式来记录，如果sql语句确实就是update或者delete等修改数据的语句，那么还是会记录所有行的变更。</p>
+<blockquote>
+<h3 id="GTID模式"><a href="#GTID模式" class="headerlink" title="GTID模式"></a>GTID模式</h3></blockquote>
+<p>需要基于row模式，mysql-5.6.2支持,mysql5.6.10后完善</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log_bin=on</span><br><span class="line">binlog_format=&#x27;row&#x27;</span><br><span class="line">gtid_mode=on</span><br><span class="line">enforce-gtid-consistency=on</span><br><span class="line">log-slave-updates=1</span><br></pre></td></tr></table></figure>
+<p>限制：</p>
+<ol>
+<li>不支持非事务引擎(从库报错, stop slave; start slave ; 忽略)</li>
+<li>不支持create table … select语句(主库直接报错)</li>
+<li>不支持一个sql同时更新一个事务引擎和非事务引擎的表</li>
+<li>在一个复制组中,必须要求统一开启gtid或是关闭gtid</li>
+<li>开启gtid需要重启</li>
+<li>开启gtid后,就不在使用原来传统的复制方式</li>
+<li>对于create temporary table和drop temporary table语句不支持</li>
+<li>不支持sql_slave_skip_counter</li>
+</ol>
+<blockquote>
+<h2 id="MySQL（主从）配置相关参数"><a href="#MySQL（主从）配置相关参数" class="headerlink" title="MySQL（主从）配置相关参数"></a>MySQL（主从）配置相关参数</h2></blockquote>
+<p>master相关配置  </p>
+<figure class="highlight shell"><figcaption><span>master my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 1</span><br><span class="line">log-bin = mysql-bin    #要生成的二进制日志文件名称</span><br><span class="line">binlog_format=statement/row/mixed        ###复制实现模式/级别</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-do-db = rtzc_pnc_base       <span class="comment">##要同步的库.应该尽可能的在从库上使用replicate_wild_*，不建议在主库上使用</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-ignore-db = mysql   <span class="comment">#不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#### 一般不再主服务器上过滤，虽然可以减少主的开销，但这样会导致二进制日志不完整</span></span></span><br><span class="line">sync_binlog=0</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#######</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">0      表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span></span><br><span class="line"></span><br><span class="line">innodb_flush_log_at_trx_commit = 1</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##########innodb特有参数</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=0     每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=1     每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，<span class="built_in">log</span> buffer 会被写入到日志文件并刷写到磁盘。这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=2    当取值为 2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">replicate-wild-ignore-table=db.*               <span class="comment">###应该在从库上尽可能的使用replicate_wild_</span></span></span><br><span class="line"></span><br><span class="line">max_binlog_size</span><br><span class="line">expire_logs_days = 7          ##日志保存天数</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>slave相关配置</p>
+<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 2</span><br><span class="line">relay-log = mysql-relay-bin</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-db = rtzc_pnc_base     <span class="comment">##应该在从库上尽可能的使用replicate_wild_*，并不会减少主往从复制数据占用带宽</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-table = db.table      <span class="comment">##表级过滤</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#replicate-ignore-table = db.table</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_ignore_db=<span class="built_in">test</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_do_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_ignore_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">slave-skip-errors = 1032,1062     <span class="comment">###跳过某些同步错误号</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">log-slave-updates=1          <span class="comment">###从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span></span></span><br><span class="line">log-bin = mysql-bin</span><br><span class="line"></span><br><span class="line">expire_logs_days = 7</span><br><span class="line"></span><br><span class="line">read-only         ###从库Slave中使用read-only参数，确保从库数据不被非法更新。</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">innodb_read_only = 1         <span class="comment">###控制root用户，慎用</span></span></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>安装 Mysql</title>
     <url>/202211021345/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -18023,102 +18119,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>云平台</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 主从复制相关原理简述</title>
-    <url>/2207211114/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h2 id="Mysql-主从同步基本原理"><a href="#Mysql-主从同步基本原理" class="headerlink" title="Mysql 主从同步基本原理"></a>Mysql 主从同步基本原理</h2></blockquote>
-<p>复制的基本过程如下：  </p>
-<ol>
-<li><p>Slave上面的IO进程连接上Master，并请求从指定日志文件的指定位置（或者从最开始的日志）之后的日志内容；</p>
-</li>
-<li><p>Master接收到来自Slave的IO进程的请求后，通过负责复制的IO进程,根据请求信息,读取指定日志指定位置之后的日志信息，返回给Slave 的IO进程。返回信息中除了日志所包含的信息之外，还包括本次返回的信息已经到Master端的bin-log文件的名称以及bin-log的位置；</p>
-</li>
-<li><p>Slave的IO进程接收到信息后，将接收到的日志内容依次添加到Slave端的relay-log文件的最末端，并将读取到的Master端的 bin-log的文件名和位置记录到master-info文件中，以便在下一次读取的时候能够清楚的告诉Master“我需要从某个bin-log的哪个位置开始往后的日志内容，请发给我”；</p>
-</li>
-<li><p>Slave的Sql进程检测到relay-log中新增加了内容后，会马上解析relay-log的内容，获得在Master端真实执行的那些可执行的内容，并在自身执行。</p>
-</li>
-</ol>
-<p>双主情况下，禁止同时写入，建议还是按照主从的方式工作，防止数据冲突。双主场景下，主要是切换主备方便。</p>
-<span id="more"></span>
-
-<blockquote>
-<h2 id="Mysql-复制方式"><a href="#Mysql-复制方式" class="headerlink" title="Mysql 复制方式"></a>Mysql 复制方式</h2></blockquote>
-<blockquote>
-<h3 id="异步复制（Asynchronous-replication）"><a href="#异步复制（Asynchronous-replication）" class="headerlink" title="异步复制（Asynchronous replication）"></a>异步复制（Asynchronous replication）</h3></blockquote>
-<p>MySQL默认的复制即是异步的，主库在执行完客户端提交的事务后会立即将结果返给给客户端，并不关心从库是否已经接收并处理，这样就会有一个问题，主如果crash掉了，此时主上已经提交的事务可能并没有传到从上，如果此时，强行将从提升为主，可能导致新主上的数据不完整。</p>
-<blockquote>
-<h3 id="全同步复制（Fully-synchronous-replication）"><a href="#全同步复制（Fully-synchronous-replication）" class="headerlink" title="全同步复制（Fully synchronous replication）"></a>全同步复制（Fully synchronous replication）</h3></blockquote>
-<p>指当主库执行完一个事务，所有的从库都执行了该事务才返回给客户端。因为需要等待所有从库执行完该事务才能返回，所以全同步复制的性能必然会收到严重的影响。</p>
-<blockquote>
-<h3 id="半同步复制（Semisynchronous-replication）"><a href="#半同步复制（Semisynchronous-replication）" class="headerlink" title="半同步复制（Semisynchronous replication）"></a>半同步复制（Semisynchronous replication）</h3></blockquote>
-<p>介于异步复制和全同步复制之间，主库在执行完客户端提交的事务后不是立刻返回给客户端，而是等待至少一个从库接收到并写到relay log中才返回给客户端。相对于异步复制，半同步复制提高了数据的安全性，同时它也造成了一定程度的延迟，这个延迟最少是一个TCP&#x2F;IP往返的时间。所以，半同步复制最好在低延时的网络中使用。半同步复制失败(配置超时时间)，自动转为异步复制  </p>
-<h4 id="半同步复制配置步骤"><a href="#半同步复制配置步骤" class="headerlink" title="半同步复制配置步骤"></a>半同步复制配置步骤</h4><ol>
-<li><p>加载使用的插件<br>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_master SONAME &#x27;semisync_master.so&#x27;;</span><br></pre></td></tr></table></figure>
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_slave SONAME &#x27;semisync_slave.so&#x27;;</span><br></pre></td></tr></table></figure>
-<p>通过 <code>show plugins;</code> 可查看已加载的插件</p>
-</li>
-<li><p>启动半同步复制<br>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_master_enabled = 1;</span><br></pre></td></tr></table></figure>
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_slave_enabled = 1;</span><br></pre></td></tr></table></figure>
-<p>执行以下命令重启从库上的IO线程</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">STOP SLAVE IO_THREAD;</span><br><span class="line">START SLAVE IO_THREAD;</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>检查半同步复制插件是否在运行<br>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_master_status&#x27;;</span><br></pre></td></tr></table></figure>
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_slave_status&#x27;;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<blockquote>
-<h2 id="Mysql-复制级别说明"><a href="#Mysql-复制级别说明" class="headerlink" title="Mysql 复制级别说明"></a>Mysql 复制级别说明</h2></blockquote>
-<p>不同复制级别的设置会影响到Master端的bin-log记录成不同的形式。<br>配置方式:</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">binlog_format=&#x27;row&#x27;</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<h3 id="基于sql语句（Statement-level）"><a href="#基于sql语句（Statement-level）" class="headerlink" title="基于sql语句（Statement level）"></a>基于sql语句（Statement level）</h3></blockquote>
-<p>每一条会修改数据的sql都会记录到 master的bin-log中。slave在复制的时候，sql进程会解析成和原来master端执行过的相同的sql来再次执行。</p>
-<p><strong>优点</strong>：statement level下的优点首先就是解决了<a href="#%E5%9F%BA%E4%BA%8E%E4%B8%80%E6%9D%A1%E8%AE%B0%E5%BD%95%EF%BC%88Row-level%EF%BC%89">row level</a>下的缺点，不需要记录每一行数据的变化，减少bin-log日志量，节约IO，提高性能。因为他只需要记录在Master上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
-<p><strong>缺点</strong>：由于他是记录的执行语句，所以，为了让这些语句在slave端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在slave端被执行的时候能够得到和在master端执行时候相同的结果。<br>另外就是，由于Mysql现在发展比较快，很多的新功能不断的加入，使mysql的复制遇到了不小的挑战，复制的时候涉及到越复杂的内容，bug也就越容易出现。在statement level下，目前已经发现的就有不少情况会造成mysql的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep()函数在有些版本中就不能真确复制，在存储过程中使用了last_insert_id()函数，可能会使slave和master上得到不一致的id等等。<br>由于row level是基于每一行来记录的变化，所以不会出现类似的问题。</p>
-<blockquote>
-<h3 id="基于一条记录（Row-level）"><a href="#基于一条记录（Row-level）" class="headerlink" title="基于一条记录（Row level）"></a>基于一条记录（Row level）</h3></blockquote>
-<p>日志中会记录成每一行数据被修改的形式，然后在slave端再对相同的数据进行修改</p>
-<p><strong>优点</strong>： 在row level模式下，bin-log中可以不记录执行的sql语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以row level的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程，或function，以及 trigger的调用和触发无法被正确复制的问题。<br>任何情况都可以被复制，这对复制来说是最安全可靠的；和其他大多数数据库系统的复制技术一样；多数情况下，从服务器上的表如果有主键的话，复制就会快了很多,更少的锁</p>
-<p><strong>缺点</strong>： row level下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条update语句：update product set owner_member_id &#x3D; ‘b’ where owner_member_id &#x3D; ‘a’，执行之后，日志中记录的不是这条update语句所对应的事件（mysql以事件的形式来记录bin-log日志），而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log日志的量就会很大。尤其是当执行alter table之类的语句的时候，产生的日志量是惊人的。因为Mysql对于alter table之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
-<blockquote>
-<h3 id="Mixed"><a href="#Mixed" class="headerlink" title="Mixed"></a>Mixed</h3></blockquote>
-<p>在Mixed模式下，Mysql会根据执行的每一条具体的sql语句,来区分对待记录的日志形式，也就是在Statement和Row之间选择一种。新版本中的Statment level还是和以前一样，仅仅记录执行的语句。而新版本的Mysql中对row level模式也被做了优化，并不是所有的修改都会以row level来记录，像遇到表结构变更的时候就会以statement模式来记录，如果sql语句确实就是update或者delete等修改数据的语句，那么还是会记录所有行的变更。</p>
-<blockquote>
-<h3 id="GTID模式"><a href="#GTID模式" class="headerlink" title="GTID模式"></a>GTID模式</h3></blockquote>
-<p>需要基于row模式，mysql-5.6.2支持,mysql5.6.10后完善</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log_bin=on</span><br><span class="line">binlog_format=&#x27;row&#x27;</span><br><span class="line">gtid_mode=on</span><br><span class="line">enforce-gtid-consistency=on</span><br><span class="line">log-slave-updates=1</span><br></pre></td></tr></table></figure>
-<p>限制：</p>
-<ol>
-<li>不支持非事务引擎(从库报错, stop slave; start slave ; 忽略)</li>
-<li>不支持create table … select语句(主库直接报错)</li>
-<li>不支持一个sql同时更新一个事务引擎和非事务引擎的表</li>
-<li>在一个复制组中,必须要求统一开启gtid或是关闭gtid</li>
-<li>开启gtid需要重启</li>
-<li>开启gtid后,就不在使用原来传统的复制方式</li>
-<li>对于create temporary table和drop temporary table语句不支持</li>
-<li>不支持sql_slave_skip_counter</li>
-</ol>
-<blockquote>
-<h2 id="MySQL（主从）配置相关参数"><a href="#MySQL（主从）配置相关参数" class="headerlink" title="MySQL（主从）配置相关参数"></a>MySQL（主从）配置相关参数</h2></blockquote>
-<p>master相关配置  </p>
-<figure class="highlight shell"><figcaption><span>master my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 1</span><br><span class="line">log-bin = mysql-bin    #要生成的二进制日志文件名称</span><br><span class="line">binlog_format=statement/row/mixed        ###复制实现模式/级别</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-do-db = rtzc_pnc_base       <span class="comment">##要同步的库.应该尽可能的在从库上使用replicate_wild_*，不建议在主库上使用</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-ignore-db = mysql   <span class="comment">#不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#### 一般不再主服务器上过滤，虽然可以减少主的开销，但这样会导致二进制日志不完整</span></span></span><br><span class="line">sync_binlog=0</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#######</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">0      表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span></span><br><span class="line"></span><br><span class="line">innodb_flush_log_at_trx_commit = 1</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##########innodb特有参数</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=0     每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=1     每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，<span class="built_in">log</span> buffer 会被写入到日志文件并刷写到磁盘。这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=2    当取值为 2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">replicate-wild-ignore-table=db.*               <span class="comment">###应该在从库上尽可能的使用replicate_wild_</span></span></span><br><span class="line"></span><br><span class="line">max_binlog_size</span><br><span class="line">expire_logs_days = 7          ##日志保存天数</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>slave相关配置</p>
-<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 2</span><br><span class="line">relay-log = mysql-relay-bin</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-db = rtzc_pnc_base     <span class="comment">##应该在从库上尽可能的使用replicate_wild_*，并不会减少主往从复制数据占用带宽</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-table = db.table      <span class="comment">##表级过滤</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#replicate-ignore-table = db.table</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_ignore_db=<span class="built_in">test</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_do_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_ignore_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">slave-skip-errors = 1032,1062     <span class="comment">###跳过某些同步错误号</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">log-slave-updates=1          <span class="comment">###从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span></span></span><br><span class="line">log-bin = mysql-bin</span><br><span class="line"></span><br><span class="line">expire_logs_days = 7</span><br><span class="line"></span><br><span class="line">read-only         ###从库Slave中使用read-only参数，确保从库数据不被非法更新。</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">innodb_read_only = 1         <span class="comment">###控制root用户，慎用</span></span></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
