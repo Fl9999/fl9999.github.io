@@ -460,12 +460,23 @@
 <p>Linux 系统中调度的进程&#x2F;线程，通常被称为任务（Task）</p>
 <h1 id="进程调度"><a href="#进程调度" class="headerlink" title="进程调度"></a>进程调度</h1><p>Linux 中任务（Task）调度算法默认使用 CFS（Completely Fair Scheduler，内核版本 &gt;&#x3D; 2.6.23）.</p>
 <p>CFS 调度算法没有使用固定的进程（此处的进程可能是进程或者线程，Linux 中统称为 Task）优先级（Priority），而是根据进程的 <code>nice value</code> 为进程分配一定比例的（Proportional） CPU 计算时间。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Operating System Concepts v10 Online](https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf)  5.7.1 Example: Linux Scheduling">[1]</span></a></sup></p>
-<p>**<code>nice</code> 的取值从 <code>-20</code> - <code>+19</code>，值越小，优先级越高，默认值为 <code>0</code>**。优先级高的进程会被分配到更高比例的 CPU 处理时间。</p>
+<p><strong><code>nice</code> 的取值从 <code>-20</code> - <code>+19</code>，值越小，优先级越高，默认值为 <code>0</code></strong> 。优先级高的进程会被分配到更高比例的 CPU 处理时间。</p>
 <p>在 Linux 内核中，优先级分为两种：静态优先级和动态优先级。CFS 使用的是动态优先级，它是根据 <code>nice</code> 值计算出来的。</p>
 <p>CFS Scheduler 不会直接设定 Priorities，而是为每个 Task 维护变量 <code>vruntime（virtual runtime）</code>（可以检查系统 <code>/proc/&lt;PID&gt;/sched</code>），这个值记录了每个 task 使用了多少 CPU 时间。</p>
 <p>CFS 通过将进程的虚拟运行时间（<code>vruntime</code>）与其他进程的虚拟运行时间进行比较来决定调度优先级。权重越大，<code>vruntime</code> 增长越慢，意味着进程的优先级越高，能够更频繁地被调度。</p>
 <p>假入一个任务有默认的 Priority（<code>nice=0</code>），那么他的 <code>vruntime</code> 和实际使用的 CPU 时间相同。例如一个 <code>nice=0</code> 的进程使用了 CPU 200ms，那么他的 <code>vruntime=200ms</code>。<strong>低优先级（low priority，<code>nice&gt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&gt;200ms</code>，相反的，一个 <strong>高优先级（high priority,<code>nice&lt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&lt;200ms</code>。<strong>基于此，CFS Scheduler 在选择下一个要执行的任务时，会选择 <code>vruntime</code> 最小的任务来运行</strong>。如果有高优先级的任务就绪（可执行），它会抢占（preemptive）正在执行的低优先级的任务。</p>
 <p>假如 Linux 中有 2 个优先级一样的任务（<code>nice=0</code>），一个进程为 I&#x2F;O-bound，另一个为 CPU-bound。通常情况下，在一个 CPU 周期内，I&#x2F;O-bound 的任务会使用很少的 CPU 时间就会因等待 IO 而中断在 CPU 上的执行并进入 CPU 的等待调度队列（schedule queue），而 CPU-bound 的任务会用尽分配给它的整个 CPU 周期。执行一段时间之后， I&#x2F;O-bound 的任务的 <code>vruntime</code> 的值会显著的小于 CPU-bound 的任务的 <code>vruntime</code>，导致 I&#x2F;O-bound 的任务拥有比 CPU-bound 的任务更高的优先级，当 I&#x2F;O-bound 的任务就绪（IO 返回数据）时，它会立即抢占 CPU 开始执行。</p>
+<h2 id="修改-nice-的值"><a href="#修改-nice-的值" class="headerlink" title="修改 nice 的值"></a>修改 nice 的值</h2><p>在 Linux 中，<code>nice</code> 值用于调整进程的优先级，数值范围从 <code>-20</code>（ <strong>最高优先级</strong> ）到 <code>19</code>（ <strong>最低优先级</strong> ）。较低的 <code>nice</code> 值表示进程有更高的优先级，会更频繁地获得 CPU 时间，而较高的 <code>nice</code> 值表示进程有较低的优先级。</p>
+<p>你可以使用 <code>nice</code> 和 <code>renice</code> 命令来修改进程的 <code>nice</code> 值</p>
+<h3 id="nice-命令"><a href="#nice-命令" class="headerlink" title="nice 命令"></a>nice 命令</h3><p><strong><code>nice</code> 命令用于在启动进程时指定 <code>nice</code> 值</strong> 。如果不指定，默认 <code>nice</code> 值为 <code>0</code>。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">nice -n 10 command</span><br></pre></td></tr></table></figure>
+
+<h3 id="renice-命令"><a href="#renice-命令" class="headerlink" title="renice 命令"></a>renice 命令</h3><p><code>renice</code> 命令可以修改已经在运行的进程的 <code>nice</code> 值。需要提供进程 ID（ <strong>PID</strong> ）来指定要修改的进程。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">renice &lt;nice_value&gt; -p &lt;PID&gt;</span><br></pre></td></tr></table></figure>
+<p>如果想要一次修改多个进程的 <code>nice</code> 值，可以传递多个 PID：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo renice 10 -p 1234 2345 3456</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
 <h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a target="_blank" rel="noopener" href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a target="_blank" rel="noopener" href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a>  5.7.1 Example: Linux Scheduling<a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>
       
