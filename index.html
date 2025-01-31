@@ -250,6 +250,79 @@
 <h1 id="File-System-Cache"><a href="#File-System-Cache" class="headerlink" title="File System Cache"></a>File System Cache</h1><p>典型的 File System Cache 模型如下图:<br><img src="https://i.csms.tech/img_292.png"></p>
 <p>因为文件系统缓存（File System Cache）的存在，在统计 Applications 的读写请求延迟（IO Latency）时，要注意区分分析的统计数据是 <strong>文件系统（File System）的延迟（Request Latency）</strong> 还是 <strong>物理存储设备（Physical Device）的延迟</strong> 。</p>
 <p>OS 通常提供的 IO 统计数据是 <strong>存储设备级别（Disk Device-level）</strong> ，而不是 <strong>文件系统级别（File System Level）</strong> ，但是大多数情况下，影响 Application 性能的通常是 File System 级别的延迟（Latency），而不是物理存储设备（Physical Device）级别的延迟。比如 File System 对 Application 的写操作（Write Operations）会进行缓存（Buffers），缓存成功后立即向 Application 返回写成功的响应，文件系统会在后台定期的将 Buffer 里面的内容刷新（Write-back, 写回）回磁盘设备，这个写回操作会导致磁盘设备出现较高或者突发（Burstable）的 Disk IO Latency，从 Disk Device-level 统计数据来看，这可能是个问题，但是，Application 并不需要等待此时的写回操作，此时的 Disk Device-level IO Latency 对 Application 无任何的性能影响。</p>
+<p><strong>File System 通常使用 Main Memory（RAM）作为缓存（Cache）介质来提高性能</strong> ，Cache 的处理过程对 Applications 来说是透明的。</p>
+<p>OS 中 File System 涉及到的相关 Cache 如下表：</p>
+<table>
+<thead>
+<tr>
+<th>Cache</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Page cache</code></td>
+<td>Operating system page cache</td>
+</tr>
+<tr>
+<td><code>File system primary cache</code></td>
+<td>ZFS ARC</td>
+</tr>
+<tr>
+<td><code>File system secondary cache</code></td>
+<td>ZFS L2ARC</td>
+</tr>
+<tr>
+<td><code>Directory cache</code></td>
+<td><code>dentry cache</code></td>
+</tr>
+<tr>
+<td><code>inode cache</code></td>
+<td><code>inode cache</code></td>
+</tr>
+<tr>
+<td><code>Device cache</code></td>
+<td>ZFS vdev</td>
+</tr>
+<tr>
+<td><code>Block device cache</code></td>
+<td>Buffer cache</td>
+</tr>
+</tbody></table>
+<h2 id="Prefetch"><a href="#Prefetch" class="headerlink" title="Prefetch"></a>Prefetch</h2><p><strong>文件系统预取（File System Prefetch）</strong> 是 Linux 内核的一种优化机制，用于 <strong>提前加载</strong> 可能会被访问的文件或数据到内存，以提高 <strong>读取性能</strong> 和 <strong>系统响应速度</strong> 。</p>
+<p>当程序读取文件时，Linux 内核可能会：</p>
+<ul>
+<li><strong>提前读取相邻的数据块，即顺序预取（Read-Ahead）</strong> 。</li>
+<li><strong>基于访问模式预测未来的数据请求，即智能预取（Adaptive Readahead）</strong> 。</li>
+<li><strong>结合缓存管理（Page Cache）减少磁盘 I&#x2F;O，提高性能</strong></li>
+</ul>
+<p>Linux 文件系统预取主要依赖于以下几种机制：</p>
+<ul>
+<li><strong>Page Cache（页缓存）</strong> 。Linux 通过 Page Cache 缓存已经读取的数据，以 <strong>减少磁盘 I&#x2F;O，提高性能</strong> 。<ul>
+<li>当进程请求读取文件时，内核会先检查 Page Cache，如果数据已存在，则直接返回，避免磁盘读取。</li>
+<li>如果数据不在缓存中，Linux 会从磁盘加载数据，并存入 Page Cache，方便后续访问。</li>
+</ul>
+</li>
+<li><strong>Read-Ahead（预读机制）</strong> 是 Linux 预取的核心机制之一，它会 <strong>提前加载文件数据，减少未来读取时的磁盘 I&#x2F;O</strong> 。<ul>
+<li>当应用程序顺序读取文件时，Linux 会自动预取更多的数据，提高性能。</li>
+<li>Linux 预取大小 <strong>动态调整</strong> ，如果发现访问是顺序的，会增加预取数据量。</li>
+</ul>
+</li>
+<li><strong>Readahead 调优参数</strong> 。Linux 通过 <code>/sys/class/bdi/</code> 目录下的参数进行 Read-Ahead 调优<ul>
+<li><code>/sys/class/bdi/default/read_ahead_kb</code> 这个值通常默认为 128 KB 或 256 KB，表示内核每次读取至少 128 KB 以优化性能。</li>
+<li><code>echo 1024 &gt; /sys/class/bdi/default/read_ahead_kb</code> 设置为 <code>1024 KB（1MB）</code>，适用于 <strong>大文件顺序读取</strong> 。</li>
+<li><strong>Fadvise 和 Madvise 提示</strong> 。Linux 提供了 <code>posix_fadvise()</code> 和 <code>madvise()</code> ，让应用程序 <strong>主动提示内核</strong> 预取策略<ul>
+<li><code>posix_fadvise(fd, offset, len, POSIX_FADV_WILLNEED)</code> 提示内核： <strong>这个文件很快会被读取，可以提前加载进 Page Cache</strong> 。</li>
+<li><code>posix_fadvise(fd, offset, len, POSIX_FADV_SEQUENTIAL)</code> 告诉内核： <strong>文件是顺序读取的，可以增大 Read-Ahead</strong> 。</li>
+</ul>
+</li>
+</ul>
+</li>
+<li><strong>Prefetching Daemon（预取守护进程）</strong></li>
+</ul>
+<p><strong>查看和设置当前 Read-Ahead 的值，单位为 <code>Block</code>，一般为 512B</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">lsblk</span> </span><br><span class="line">NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT</span><br><span class="line">sda      8:0    0  9.1T  0 disk </span><br><span class="line">├─sda1   8:1    0    1M  0 part </span><br><span class="line">├─sda2   8:2    0    1G  0 part /boot</span><br><span class="line">├─sda3   8:3    0   32G  0 part [SWAP]</span><br><span class="line">└─sda4   8:4    0  9.1T  0 part /</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">blockdev --getra /dev/sda</span></span><br><span class="line">256</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">blockdev --setra 512 /dev/sda</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">blockdev --getra /dev/sda</span></span><br><span class="line">512</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
 <h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a target="_blank" rel="noopener" href="https://s.csms.tech/file/Systems.Performance.Enterprise.and.the.Cloud.2nd.Edition.2020.12.pdf">Systems Performance: Enterprise and the Cloud v2</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a target="_blank" rel="noopener" href="https://s.csms.tech/file/Systems.Performance.Enterprise.and.the.Cloud.2nd.Edition.2020.12.pdf">Systems Performance: Enterprise and the Cloud v2</a> #8.2.1 File System Interfaces<a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>
       
