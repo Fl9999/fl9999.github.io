@@ -923,7 +923,7 @@
 <p>在此场景下， <strong>需要修改各个 Node 的配置，强制指定 <code>flanneld</code> 使用公网 IP 作为 Tunnel 端地址</strong></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl edit node k8s-master-1</span></span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Node</span><br><span class="line">metadata:</span><br><span class="line">  annotations:</span><br><span class="line">    flannel.alpha.coreos.com/backend-data: &#x27;&#123;&quot;VNI&quot;:1,&quot;VtepMAC&quot;:&quot;56:4d:28:fa:f3:ce&quot;&#125;&#x27;</span><br><span class="line">    flannel.alpha.coreos.com/backend-type: vxlan</span><br><span class="line">    flannel.alpha.coreos.com/kube-subnet-manager: &quot;true&quot;</span><br><span class="line">    flannel.alpha.coreos.com/public-ip: &lt;k8s-master-1 Public IP&gt;</span><br><span class="line">    flannel.alpha.coreos.com/public-ip-overwrite: &lt;k8s-master-1 Public IP&gt;</span><br><span class="line">    kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/containerd/containerd.sock</span><br><span class="line">    node.alpha.kubernetes.io/ttl: &quot;0&quot;</span><br><span class="line">    volumes.kubernetes.io/controller-managed-attach-detach: &quot;true&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 
-<h2 id="kubelet-配置"><a href="#kubelet-配置" class="headerlink" title="kubelet 配置"></a>kubelet 配置</h2><p>默认情况下，<code>kubelet</code> 将使用本机绑定的 IP 向集群上报（注册）本节点的信息，在云主机的场景下，其通常为内网 IP</p>
+<h2 id="kubelet-配置"><a href="#kubelet-配置" class="headerlink" title="kubelet 配置"></a>kubelet 配置</h2><p>默认情况下，<code>kubelet</code> 将使用本机绑定的 IP 向集群上报（注册）本节点的信息，在云主机的场景下，其通常为内网 IP 。 <strong><code>kubelet</code> 要求 <code>--node-ip</code> （上报&#x2F;注册的节点 IP） 必须存在于主机的网络接口中，否则会拒绝启动或更新节点状态。</strong></p>
 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl get nodes -o wide</span></span><br><span class="line">NAME            STATUS   ROLES           AGE     VERSION   INTERNAL-IP      EXTERNAL-IP   OS-IMAGE                            KERNEL-VERSION               CONTAINER-RUNTIME</span><br><span class="line">k8s-master-1    Ready    control-plane   3d16h   v1.32.3   111.111.112.35   &lt;none&gt;        Ubuntu 24.04.2 LTS                  6.11.0-19-generic            containerd://1.7.25</span><br><span class="line">k8s-master-2    Ready    control-plane   5d19h   v1.32.2   172.31.27.52     &lt;none&gt;        Rocky Linux 8.10 (Green Obsidian)   6.13.5-1.el8.elrepo.x86_64   containerd://1.6.32</span><br><span class="line">k8s-master-3    Ready    control-plane   4d21h   v1.32.3   172.31.36.21     &lt;none&gt;        CentOS Linux 7 (Core)               5.15.80-200.el7.x86_64       containerd://2.0.0</span><br></pre></td></tr></table></figure>
 
 <p>在此场景下，如果要在 Master 节点上连接到其他节点上的 Pod 或者查看其日志信息会报错：</p>
@@ -931,20 +931,13 @@
 
 <p><strong>此问题原因</strong> ： </p>
 <ul>
-<li><strong>节点注册的 IP 错误</strong> ： <code>kubelet</code> 默认使用内网 IP 注册到 Kubernetes API Server。</li>
+<li><strong>节点注册的 IP 不可达</strong> ： <code>kubelet</code> 默认使用内网 IP 注册到 Kubernetes API Server。</li>
 <li><strong><code>kube-apiserver</code> 的 IP 选择策略</strong> ： 默认优先使用 InternalIP，而非公网 IP（EIP）。</li>
 </ul>
 <p><strong>解决方案如下</strong> ：</p>
 <ol>
-<li><p><strong>强制 kubelet 使用公网 IP（EIP）注册节点</strong></p>
-<p>修改 <em>每个节点</em> 的 kubelet 配置，指定公网 IP 作为节点 IP。</p>
-<ol>
-<li>编辑 <code>kubelet</code> 的 systemd 配置文件（通常位于 <code>/etc/systemd/system/kubelet.service.d/10-kubeadm.conf</code> ），添加 <code>--node-ip</code> 参数（替换 <EIP> 为节点的公网 IP）： <figure class="highlight shell"><figcaption><span>/etc/systemd/system/kubelet.service.d/10-kubeadm.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">ExecStart=/usr/bin/kubelet \</span><br><span class="line">    --node-ip=&lt;EIP&gt; \          # 示例：--node-ip=203.0.113.10</span><br><span class="line">    --address=0.0.0.0 \        # 允许监听所有接口（或指定为 EIP）</span><br><span class="line">    ...其他参数...</span><br></pre></td></tr></table></figure></li>
-<li>重启 kubelet： <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl daemon-reload</span><br><span class="line">sudo systemctl restart kubelet</span><br></pre></td></tr></table></figure></li>
-</ol>
-</li>
 <li><p><strong>配置 kube-apiserver 优先使用 ExternalIP</strong></p>
-<p> <strong>修改控制平面节点的 kube-apiserver 启动参数，使其优先选择 ExternalIP</strong></p>
+<p> <strong>修改控制平面节点的 <code>kube-apiserver</code> 启动参数，使其优先选择 ExternalIP</strong></p>
 <ol>
 <li>编辑 <code>kube-apiserver</code> 的 Manifest 文件（ <code>/etc/kubernetes/manifests/kube-apiserver.yaml</code> ），添加或修改 <code>--kubelet-preferred-address-types</code> 参数 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - command:</span><br><span class="line">    - kube-apiserver</span><br><span class="line">    - --kubelet-preferred-address-types=ExternalIP,InternalIP,Hostname  # 将 ExternalIP 放在最前</span><br><span class="line">    ...</span><br></pre></td></tr></table></figure>
 <strong>kube-apiserver 会自动重启（无需手动操作）</strong> 。</li>
