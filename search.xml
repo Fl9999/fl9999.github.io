@@ -18810,6 +18810,112 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes Pod</title>
+    <url>/202304271425/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pod 是由一个或多个容器构成的集合，被 Kubernetes 作为一个整体进行部署和调度，是 Kubernetes 调度的最小单元。同一个 Pod 内的容器共享 <a href="/202304031317/" title="network namespace">network namespace</a>、<a href="/202304191340/" title="UTS nanespace">UTS nanespace</a></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7</li>
+<li>Kubernetes v1.24.7</li>
+</ul>
+<h1 id="Pod-创建过程"><a href="#Pod-创建过程" class="headerlink" title="Pod 创建过程"></a>Pod 创建过程</h1><p>当用户在 Kubernetes 中创建了一个 Pod 后，CRI 和 CNI 协同创建 Pod 所属容器，并为 Pod 中的容器初始化网络协议栈的具体过程如下<br><img src="https://i.0920811.xyz/img_139.png"></p>
+<ol>
+<li><p>用户在 Kubernetes 中创建了一个 Pod 后，Kubelet 接收到创建新 Pod 的任务，首先调用 CRI 创建 Pod 内的容器</p>
+</li>
+<li><p>Pod 中第一个被创建的容器是 <code>pause</code> 容器。<code>pause</code> 容器中运行着一个功能非常简单的 C 程序，具体逻辑是把自己永远阻塞，没有实际的业务逻辑，主要功能是用来占用一个  <a href="/202304031317/" title="network namespace">network namespace</a>。</p>
+<p> 创建 <code>pause</code> 容器，使用 <a href="https://0920811.xyz/202208301536/#None-模式">docker none 网络模式</a>，创建出来的容器除了 lo 回环网卡外没有其他网络设备。</p>
+</li>
+<li><p>Pod 内的其他用户容器通过加入 <code>pause</code> 容器已占用的 network namespace 的方式共享同一个 network namespace。对应于 docker 的 <a href="https://0920811.xyz/202208301536/#Container-模式">Container 模式</a></p>
+<p> 其他用户容器都使用 <code>pause</code> 容器的主机名，但并不使用同一个 UTS namespace。</p>
+</li>
+<li><p>CNI 负责 Pod 中容器的网络初始化工作。主要为 Pod 内的 <code>pause</code> 容器添加 <code>eth0</code> 网卡、分配 IP、配置网关等。</p>
+</li>
+</ol>
+<h1 id="pause-容器"><a href="#pause-容器" class="headerlink" title="pause 容器"></a>pause 容器</h1><p><code>pause</code> 容器是 Pod 中被创建的第一个容器，Pod 中的其他容器通过使用 <code>pause</code> 容器的 network namespace 共享网络协议栈和主机名。它是 Pod 中其他容器的父容器。</p>
+<blockquote>
+<p>1.8 以后版本默认不启用 PID namespace 共享。每个容器拥有独立的 PID namespace。</p>
+</blockquote>
+<p>以下步骤通过 docker 演示 Pod 容器创建的整个过程。首先，创建 <code>pause</code> 容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --name=test-pause \</span><br><span class="line">	--hostname=test-pause \</span><br><span class="line">	--network=none \</span><br><span class="line">	--workdir=/ \</span><br><span class="line">	--log-opt max-size=100m \</span><br><span class="line">	--runtime=runc \</span><br><span class="line">	--detach=true \</span><br><span class="line">	k8s.gcr.io/pause:3.4.1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>然后在 Pod 中运行其他容器，本示例启动 2 个应用容器，一个 nginx 容器，里面启动了 nginx 服务，一个自定义的容器，里面包含常用工具</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_nginx_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             nginx</span></span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_centos_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             centos7:my ping 127.1</span>             </span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker ps -a</span></span><br><span class="line">CONTAINER ID   IMAGE                    COMMAND                  CREATED          STATUS          PORTS     NAMES</span><br><span class="line">54d57add44d2   centos7:my               &quot;ping 127.1&quot;             3 seconds ago    Up 2 seconds              pod_centos_test</span><br><span class="line">cd0c661774e2   nginx                    &quot;/docker-entrypoint.…&quot;   2 minutes ago    Up 2 minutes              pod_nginx_test</span><br><span class="line">0eec8dd9d164   k8s.gcr.io/pause:3.4.1   &quot;/pause&quot;                 10 minutes ago   Up 10 minutes             test-pause             </span><br></pre></td></tr></table></figure>
+<p>进入 <code>pod_centos_test</code> 容器，查看网络、端口、主机名信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">hostname</span></span><br><span class="line">test-pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">s -elf</span></span><br><span class="line">F S UID         PID   PPID  C PRI  NI ADDR SZ WCHAN  STIME TTY          TIME CMD</span><br><span class="line">4 S root          1      0  0  80   0 -  6218 skb_wa 17:01 ?        00:00:00 ping 127.1</span><br><span class="line">4 S root          7      0  0  80   0 -  2959 do_wai 17:02 pts/0    00:00:00 bash</span><br><span class="line">0 R root         30      7  0  80   0 - 12935 -      17:08 pts/0    00:00:00 ps -elf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span></span><br><span class="line">Active Internet connections (servers and established)</span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      -                   </span><br><span class="line">tcp6       0      0 :::80                   :::*                    LISTEN      - </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00</span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl  localhost:80</span></span><br><span class="line">&lt;!DOCTYPE html&gt;</span><br><span class="line">&lt;html&gt;</span><br><span class="line">&lt;head&gt;</span><br><span class="line">&lt;title&gt;Welcome to nginx!&lt;/title&gt;</span><br><span class="line">&lt;style&gt;</span><br><span class="line">html &#123; color-scheme: light dark; &#125;</span><br><span class="line">body &#123; width: 35em; margin: 0 auto;</span><br><span class="line">font-family: Tahoma, Verdana, Arial, sans-serif; &#125;</span><br><span class="line">&lt;/style&gt;</span><br><span class="line">&lt;/head&gt;</span><br><span class="line">&lt;body&gt;</span><br><span class="line">&lt;h1&gt;Welcome to nginx!&lt;/h1&gt;</span><br><span class="line">&lt;p&gt;If you see this page, the nginx web server is successfully installed and</span><br><span class="line">working. Further configuration is required.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;For online documentation and support please refer to</span><br><span class="line">&lt;a href=&quot;http://nginx.org/&quot;&gt;nginx.org&lt;/a&gt;.&lt;br/&gt;</span><br><span class="line">Commercial support is available at</span><br><span class="line">&lt;a href=&quot;http://nginx.com/&quot;&gt;nginx.com&lt;/a&gt;.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;&lt;em&gt;Thank you for using nginx.&lt;/em&gt;&lt;/p&gt;</span><br><span class="line">&lt;/body&gt;</span><br><span class="line">&lt;/html&gt;       </span><br></pre></td></tr></table></figure>
+<ul>
+<li>Pod 中的容器主机名相同，都使用 <code>pause</code> 容器的主机名，但实际并未共享 UTS namespace。<blockquote>
+<p>可以通过找到对应 docker 容器的进程 PID，找到对应进程的 namespace 信息对比确认</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep ping</span></span><br><span class="line">4 S root      35333  35311  0  80   0 -  6218 skb_wa 01:01 ?        00:00:00 ping 127.1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/35333/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 ipc -&gt; ipc:[4026532664]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 mnt -&gt; mnt:[4026532662]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 pid -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 pid_for_children -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 uts -&gt; uts:[4026532663]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root      34909  34887  0  80   0 -  2233 sigsus 00:59 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34909/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 ipc -&gt; ipc:[4026532660]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 mnt -&gt; mnt:[4026532658]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 pid -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 pid_for_children -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 uts -&gt; uts:[4026532659]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep pause</span></span><br><span class="line">4 S root      34239  34221  0  80   0 -   241 ia32_s 00:51 ?        00:00:00 /pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34239/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 ipc -&gt; ipc:[4026532585]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 mnt -&gt; mnt:[4026532583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 pid -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 pid_for_children -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 uts -&gt; uts:[4026532584]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>以上观察可以看到，Pod 中的容器共享了 network namespace，未共享 UTS namespace。Kubernetes 中 Pod 中的容器同理。</p>
+</blockquote>
+</li>
+<li>Pod 中容器的 PID namespace 进行了隔离，各个容器的 PID 进行了隔离，PID namespace 不同。</li>
+<li>Pod 中的容器共享了 network namespace，具有相同的网络信息（网卡、IP、端口资源）</li>
+<li>Pod 中的容器直接可以通过 <code>localhost</code> 互相访问</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="Pod-和-Kubernetes-API-服务交互"><a href="#Pod-和-Kubernetes-API-服务交互" class="headerlink" title="Pod 和 Kubernetes API 服务交互"></a>Pod 和 Kubernetes API 服务交互</h1><p><a href="https://kubernetes.io/zh-cn/docs/concepts/workloads/pods/downward-api/"><code>downwardAPI</code></a> 提供了一种简单的方式，可以将 Pod 的 Metadata 和状态数据通过<strong>环境变量</strong>或者 <strong>Volume</strong> 传递（挂载）到 Pod 中，允许内部进程使用。但这种方式仅仅可以暴露一个 Pod 自身的 Metadata ，而且只能暴露一部分数据，某些情况下，应用可能需要知道其他 Pod 的信息，甚至集群中其他资源的信息，这种情况下，<code>downwardAPI</code> 的方式就无能为力了。</p>
+<p>Pod 启动时，系统会主动将部分信息以环境变量的形式注入到每个 Pod 中，比如自定义的 Service 的部分信息，Kubernetes API Service 的信息等，可以登陆 Pod，检查系统环境变量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">printenv</span> | grep <span class="string">&quot;SERVICE&quot;</span></span></span><br><span class="line">KUBERNETES_SERVICE_PORT_HTTPS=443</span><br><span class="line">TEST_API_SERVICE_PORT=tcp://10.106.126.96:10302</span><br><span class="line">KUBERNETES_SERVICE_PORT=443</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PROTO=tcp</span><br><span class="line">TEST_API_SERVICE_SERVICE_HOST=10.106.126.96</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP=tcp://10.106.126.96:10302</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT_TEST_API_PORD=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_ADDR=10.106.126.96</span><br><span class="line">KUBERNETES_SERVICE_HOST=10.96.0.1</span><br></pre></td></tr></table></figure>
+<p>以上示例中的 Pod ，在启动时，系统主动注入了相同 namespace 中的 Service 的信息，包括 Service IP 地址、端口等信息，以及 Kubernetes API Service 的 IP 及端口信息。</p>
+<blockquote>
+<p>Pod 中要使用 Service 的环境变量，要确保 Service 在 Pod 启动之前被创建，否则 Pod 中不存在相关环境变量。</p>
+</blockquote>
+<p>Pod 启动时，系统除了主动注入环境变量，还通过创建 <code>projected</code> 的 Volume 的方式给每个 Pod 挂载了以下信息</p>
+<ul>
+<li>所属 namespace 的默认 ServiceAccount 的 token（<code>serviceAccountToken</code>）</li>
+<li>集群的 CA 证书（<code>configMap</code>）</li>
+<li>Pod 的所属 namespace 信息（<code>downwardAPI</code>）</li>
+</ul>
+<p>可以通过以下命令验证上述信息。其中的 Volume <code>kube-api-access-8ch7r</code> 为系统自动生成并挂载到了 Pod 中的容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit pod -n ops ops-centos7-bfc4d75b5-kjcfs</span></span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    app: ops-centos7</span><br><span class="line">  name: ops-centos7-bfc4d75b5-kjcfs</span><br><span class="line">  namespace: ops</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - command:</span><br><span class="line">    - ping</span><br><span class="line">    - 127.0.0.1</span><br><span class="line">    image: centos:centos7.9.2009</span><br><span class="line">    name: ops-centos7</span><br><span class="line">	</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount</span><br><span class="line">      name: kube-api-access-8ch7r</span><br><span class="line">      readOnly: true</span><br><span class="line"></span><br><span class="line">  volumes:</span><br><span class="line">  - name: kube-api-access-8ch7r</span><br><span class="line">    projected:</span><br><span class="line">      defaultMode: 420</span><br><span class="line">      sources:</span><br><span class="line">      - serviceAccountToken:</span><br><span class="line">          expirationSeconds: 3607</span><br><span class="line">          path: token</span><br><span class="line">      - configMap:</span><br><span class="line">          items:</span><br><span class="line">          - key: ca.crt</span><br><span class="line">            path: ca.crt</span><br><span class="line">          name: kube-root-ca.crt</span><br><span class="line">      - downwardAPI:</span><br><span class="line">          items:</span><br><span class="line">          - fieldRef:</span><br><span class="line">              apiVersion: v1</span><br><span class="line">              fieldPath: metadata.namespace</span><br><span class="line">            path: namespace</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>卷 <code>kube-api-access-8ch7r</code> 主要包含 3 部分内容</p>
+<ul>
+<li><code>serviceAccountToken</code> 每个 namespace 都有个默认的 ServiceAccount，在没有为 Pod 配置 ServiceAccount 的情况下，系统会自动将默认的 ServiceAccount 挂载到 Pod 中的每个容器，作为运行在 Pod 中的进程和 API Server 交互时认证授权的身份（主体）。<a href="/202305161451/" title="ServiceAccount 使用说明参考">ServiceAccount 使用说明参考</a></li>
+<li><code>configMap</code> - 以 <code>configMap</code> 的方式为 Pod 中的容器挂载了集群的 CA 证书</li>
+<li><code>downwardAPI</code> - 以 <code>downwardAPI</code> 的方式，让 Pod 中的容器可以获取到 Pod 所在的 namespace 信息。</li>
+</ul>
+<p>以上内容被挂载到了容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录中，可以在容器中检查此目录</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /var/run/secrets/kubernetes.io/serviceaccount/</span></span><br><span class="line">ca.crt  namespace  token</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="在-Pod-中通过-curl-命令请求-Kubernetes-API"><a href="#在-Pod-中通过-curl-命令请求-Kubernetes-API" class="headerlink" title="在 Pod 中通过 curl 命令请求 Kubernetes API"></a>在 Pod 中通过 curl 命令请求 Kubernetes API</h2><p>默认情况下，Kubernetes API Service 的 Service 名称为 <code>kubernetes</code>，因此在集群内部，可以通过 FQDN <code>kubernetes.default.svc.cluster.local</code> 访问 Kubernetes API Service</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.96.0.1    &lt;none&gt;        443/TCP   156d</span><br></pre></td></tr></table></figure>
+
+<p>在 Pod 中尝试访问 Kubernetes API Service，</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">curl: (60) SSL certificate problem: unable to get local issuer certificate</span><br><span class="line">More details here: https://curl.haxx.se/docs/sslcerts.html</span><br><span class="line"></span><br><span class="line">curl failed to verify the legitimacy of the server and therefore could not</span><br><span class="line">establish a secure connection to it. To learn more about this situation and</span><br><span class="line">how to fix it, please visit the web page mentioned above.</span><br></pre></td></tr></table></figure>
+<p>以上报错，是因为通过 https 访问 Kubernetes API Service，但是无法验证证书。最简单的规避此问题的方法是使用 <code>curl</code> 命令的 <code>-k, --insecure</code> 选项忽略验证证书，但这是存在安全隐患的，不建议在生产环境使用。</p>
+<p>Pod 启动时，系统已经将集群的 CA 证书注入到了每个容器，因此可以使用 CA 证书来验证服务器证书。执行以下命令，使用 CA 证书重新访问 Kubernetes API Service</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;kind&quot;: &quot;Status&quot;,</span><br><span class="line">  &quot;apiVersion&quot;: &quot;v1&quot;,</span><br><span class="line">  &quot;metadata&quot;: &#123;&#125;,</span><br><span class="line">  &quot;status&quot;: &quot;Failure&quot;,</span><br><span class="line">  &quot;message&quot;: &quot;forbidden: User \&quot;system:anonymous\&quot; cannot get path \&quot;/\&quot;&quot;,</span><br><span class="line">  &quot;reason&quot;: &quot;Forbidden&quot;,</span><br><span class="line">  &quot;details&quot;: &#123;&#125;,</span><br><span class="line">  &quot;code&quot;: 403</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>可以看到，使用 CA 证书后，HTTPS 连接成功，Kubernetes API 返回了响应。以上 Kubernetes API 输出中，表面此次请求使用的是匿名用户，不具有 API 服务器的授权，因此拒绝访问。</p>
+<blockquote>
+<p>默认情况下，Pod 使用的是 namespace 中的默认的 ServiceAccount token，默认不具有任何权限。</p>
+</blockquote>
+<p><a href="https://0920811.xyz/202305161451/#RBAC-配置示例">参考 RBAC 配置认证鉴权使 Pod 的容器可以和 Kubernetes API Server 通信</a></p>
+<h1 id="Pod-计算资源限制"><a href="#Pod-计算资源限制" class="headerlink" title="Pod 计算资源限制"></a>Pod 计算资源限制</h1><p>创建 Pod 时，可以指定<strong>容器</strong>对 CPU 和 Memory 的资源请求量（<code>requests</code>）和资源限制量（’limits&#96;），他们不是针对 Pod，而是针对 Pod 中的容器。Pod 对资源的请求量和限制量是它所包含的所有容器的请求量和限制量之和。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: $&#123;NAME&#125;</span><br><span class="line">  namespace: $&#123;NAMESPACE&#125;</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: $&#123;NAME&#125;</span><br><span class="line">    image: nginx:1.14.2</span><br><span class="line">    ports:</span><br><span class="line">    - containerPort: 80</span><br><span class="line">      name: http-web</span><br><span class="line">      </span><br><span class="line">    resources:</span><br><span class="line">      requests:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br><span class="line">      limits:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>如果为容器的资源申请指定了 <code>limits</code>，但未指定 <code>requests</code>，并且没有应用准入时机制为该资源设置默认请求， 然后 Kubernetes 将复制你所指定的限制值，将其用作资源的请求值。</p>
+</blockquote>
+<h2 id="资源类型"><a href="#资源类型" class="headerlink" title="资源类型"></a>资源类型</h2><p>CPU 和 内存 都是 资源类型。每种资源类型具有其基本单位。 CPU 表达的是计算处理能力，其单位是 Kubernetes CPU。内存的单位是字节。<sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[资源类型](https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types)
+">[2]</span></a></sup></p>
+<h3 id="CPU-资源单位"><a href="#CPU-资源单位" class="headerlink" title="CPU 资源单位"></a>CPU 资源单位</h3><p>CPU 资源的限制和请求以 “cpu” 为单位。 在 Kubernetes 中，一个 CPU 等于 1 个物理 CPU 核 或者 1 个虚拟核， 取决于节点是一台物理主机还是运行在某物理主机上的虚拟机。</p>
+<blockquote>
+<p>1 CPU &#x3D; 1000m 的 CPU 资源</p>
+</blockquote>
+<h3 id="Memory-资源单位"><a href="#Memory-资源单位" class="headerlink" title="Memory 资源单位"></a>Memory 资源单位</h3><p>memory 的限制和请求以字节为单位。 你可以使用普通的整数，或者带有以下 数量后缀 的定点数字来表示内存：E、P、T、G、M、k。 你也可以使用对应的 2 的幂数：Ei、Pi、Ti、Gi、Mi、Ki。</p>
+<h2 id="查看节点资源总量"><a href="#查看节点资源总量" class="headerlink" title="查看节点资源总量"></a>查看节点资源总量</h2><p>通过以下命令输出，可以看到节点的资源总量和可分配资源量</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">...</span><br><span class="line">Capacity:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  524276716Ki</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             32068748Ki</span><br><span class="line">  pods:               110</span><br><span class="line">Allocatable:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  483173420666</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             31966348Ki</span><br><span class="line">  pods:               110</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/reference/kubernetes-api/workload-resources/pod-v1/#%E8%B5%84%E6%BA%90">resources</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types">资源类型</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Kubernetes 权限控制</title>
     <url>/202305161451/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -33273,6 +33379,210 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>wireshark 抓包工具使用</title>
+    <url>/202211251613/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="wiresark-显示过滤器使用方法"><a href="#wiresark-显示过滤器使用方法" class="headerlink" title="wiresark 显示过滤器使用方法"></a>wiresark 显示过滤器使用方法</h1><p>Wireshark 提供了两种过滤器</p>
+<ul>
+<li><strong>捕获过滤器</strong>：在抓包之前就设定好过滤条件，然后只抓取符合条件的数据包。</li>
+<li><strong>显示过滤器</strong>：在已捕获的数据包集合中设置过滤条件，隐藏不想显示的数据包，只显示符合条件的数据包。</li>
+</ul>
+<p>这两种过滤器所使用的语法是完全不同的，捕捉网卡数据的其实并不是 Wireshark，而是 WinPcap，要按 WinPcap 的规则来，显示过滤器就是 Wireshark 对已捕捉的数据进行筛选。</p>
+<h2 id="显示过滤器中常用的关系计算符号"><a href="#显示过滤器中常用的关系计算符号" class="headerlink" title="显示过滤器中常用的关系计算符号"></a>显示过滤器中常用的关系计算符号</h2><table>
+<thead>
+<tr>
+<th>符号</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>eq</code><br/><code>==</code></td>
+<td>等于</td>
+<td><code>ip.src==10.10.10.10</code> <br/><code>ip.src eq 10.10.10.10</code></td>
+</tr>
+<tr>
+<td><code>ne</code><br/><code>!=</code></td>
+<td>不等于</td>
+<td><code>ip.src!=10.10.10.10</code> <br/><code>ip.src ne 10.10.10.10</code></td>
+</tr>
+<tr>
+<td><code>gt</code><br/><code>&gt;</code></td>
+<td>大于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>lt</code><br/><code>&lt;</code></td>
+<td>小于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ge</code><br/><code>&gt;=</code></td>
+<td>大于等于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>le</code><br/><code>&lt;=</code></td>
+<td>小于等于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>contains</code></td>
+<td>包含</td>
+<td><code>http.host contains com</code></td>
+</tr>
+</tbody></table>
+<h2 id="显示过滤器中常用的逻辑计算符号"><a href="#显示过滤器中常用的逻辑计算符号" class="headerlink" title="显示过滤器中常用的逻辑计算符号"></a>显示过滤器中常用的逻辑计算符号</h2><table>
+<thead>
+<tr>
+<th>符号</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>and</code><br/><code>&amp;&amp;</code></td>
+<td>与</td>
+<td><code>http.host contains com &amp;&amp; ip.src == 44.199.163.86</code><br/><code>http.host contains com and ip.src == 44.199.163.86</code></td>
+</tr>
+<tr>
+<td><code>or</code><br/><code>||</code></td>
+<td>或</td>
+<td></td>
+</tr>
+<tr>
+<td><code>not</code><br/><code>!</code></td>
+<td>非</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="常用示例"><a href="#常用示例" class="headerlink" title="常用示例"></a>常用示例</h2><h3 id="针对-IP-过滤"><a href="#针对-IP-过滤" class="headerlink" title="针对 IP 过滤"></a>针对 IP 过滤</h3><ul>
+<li>对源地址进行过滤<br><code>ip.src == 192.168.0.1</code></li>
+<li>对目的地址进行过滤<br><code>ip.dst == 192.168.0.1</code></li>
+<li>对源地址或者目的地址进行过滤<br><code>ip.addr == 192.168.0.1</code></li>
+<li>如果想排除以上的数据包，只需要将其用括号囊括，然后使用 <code>!</code> 即可<br><code>!(ip.addr == 192.168.0.1)</code></li>
+</ul>
+<h3 id="针对协议过滤"><a href="#针对协议过滤" class="headerlink" title="针对协议过滤"></a>针对协议过滤</h3><p>针对某种协议的数据包，表达式很简单仅仅需要把协议的名字（必须小写）输入即可</p>
+<p>常见协议：<br><code>tcp</code><br><code>udp</code><br><code>arp</code><br><code>icmp</code><br><code>http</code><br><code>smtp</code><br><code>ftp</code><br><code>dns</code><br><code>msnms</code><br><code>ip</code><br><code>ssl</code><br><code>oicq</code><br><code>bootp</code></p>
+<h3 id="针对端口过滤"><a href="#针对端口过滤" class="headerlink" title="针对端口过滤"></a>针对端口过滤</h3><ul>
+<li>捕获某一端口的数据包（以 tcp 协议为例）<br><code>tcp.port == 80</code></li>
+<li>捕获多端口的数据包，可以使用 <code>and</code> 来连接，下面是捕获高于某端口的表达式（以 udp 协议为例）<br><code>udp.port &gt;= 2048</code></li>
+</ul>
+<h3 id="针对-http-请求的一些过滤实例"><a href="#针对-http-请求的一些过滤实例" class="headerlink" title="针对 http 请求的一些过滤实例"></a>针对 http 请求的一些过滤实例</h3><ul>
+<li>过滤出请求地址中包含 <code>user</code> 的请求，不包括域名<br><code>http.request.uri contains &quot;User&quot;</code></li>
+<li>精确过滤域名<br><code>http.host==baidu.com</code></li>
+<li>模糊过滤域名<br><code>http.host contains &quot;baidu&quot;</code></li>
+<li>过滤请求的 content_type 类型<br><code>http.content_type ==&quot;text/html&quot;</code><br>-过滤 http 请求方法<br><code>http.request.method==&quot;POST&quot;</code></li>
+<li>过滤 tcp 端口<br><code>tcp.port==80</code><br><code>http &amp;&amp; tcp.port==80 or tcp.port==5566</code></li>
+<li>过滤 http 响应状态码<br><code>http.response.code==302</code></li>
+<li>过滤含有指定 cookie 的 http 数据包<br><code>http.cookie contains &quot;userid&quot;</code></li>
+</ul>
+]]></content>
+      <categories>
+        <category>TCPIP</category>
+      </categories>
+      <tags>
+        <tag>wireshark</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>xray 部署使用</title>
+    <url>/20260303033711/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Docker-部署步骤"><a href="#Docker-部署步骤" class="headerlink" title="Docker 部署步骤"></a>Docker 部署步骤</h1><p>创建配置文件 <code>config.json</code></p>
+<figure class="highlight json"><figcaption><span>config.json</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;log&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;loglevel&quot;</span><span class="punctuation">:</span> <span class="string">&quot;debug&quot;</span><span class="punctuation">,</span>    <span class="comment">/* 为了观察运行情况或者定位问题，可以开启debug 日志 */</span></span><br><span class="line">    <span class="attr">&quot;access&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;error&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">,</span>    </span><br><span class="line">  <span class="attr">&quot;inbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;port&quot;</span><span class="punctuation">:</span> <span class="number">443</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;vless&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;settings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;clients&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">         <span class="punctuation">&#123;</span></span><br><span class="line">           <span class="attr">&quot;id&quot;</span><span class="punctuation">:</span> <span class="string">&quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</span><span class="punctuation">,</span> </span><br><span class="line">           <span class="attr">&quot;flow&quot;</span><span class="punctuation">:</span> <span class="string">&quot;xtls-rprx-vision&quot;</span></span><br><span class="line">         <span class="punctuation">&#125;</span></span><br><span class="line">        <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;decryption&quot;</span><span class="punctuation">:</span> <span class="string">&quot;none&quot;</span></span><br><span class="line">    <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;streamSettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;network&quot;</span><span class="punctuation">:</span> <span class="string">&quot;tcp&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;security&quot;</span><span class="punctuation">:</span> <span class="string">&quot;reality&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;realitySettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">        <span class="attr">&quot;show&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;dest&quot;</span><span class="punctuation">:</span> <span class="string">&quot;www.microsoft.com:443&quot;</span><span class="punctuation">,</span>   </span><br><span class="line">        <span class="attr">&quot;xver&quot;</span><span class="punctuation">:</span> <span class="number">0</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;serverNames&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;www.microsoft.com&quot;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;privateKey&quot;</span><span class="punctuation">:</span> <span class="string">&quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;shortIds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;a1b2c3d4&quot;</span><span class="punctuation">]</span></span><br><span class="line">      <span class="punctuation">&#125;</span></span><br><span class="line">    <span class="punctuation">&#125;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;outbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span><span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;freedom&quot;</span><span class="punctuation">&#125;</span><span class="punctuation">]</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><p><code>&quot;id&quot;: &quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</code> 可以自行生成</p>
+</li>
+<li><p><code>&quot;dest&quot;: &quot;www.microsoft.com:443&quot;</code> 伪装的网站地址</p>
+</li>
+<li><p><code>&quot;privateKey&quot;: &quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</code> 私钥，公司钥对可以使用如下命令生成</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">docker run --<span class="built_in">rm</span> teddysun/xray xray x25519</span></span><br><span class="line">PrivateKey: iBKDmvNMfFOAzNPOLRlnJLzoaYbHKs9RFatpW1ELeks</span><br><span class="line">Password: OV_SMIonfy1cEzxnDGZff9x0HeuhuqLyrIj0dLqAaHw</span><br><span class="line">Hash32: 1fEp1041YBnLfSvQYVsRfvGJEA8ZV_LjqFGtQKwaWG0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>PrivateKey</code> 对应私钥（ <code>privateKey</code> ）</li>
+<li><code>Password</code> 对应公钥（ Public Key ），要发送给客户端使用</li>
+</ul>
+</li>
+</ul>
+<p><code>docker-compose.yaml</code> 配置如下：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">xray:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">teddysun/xray:latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">xray</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">always</span></span><br><span class="line">    <span class="attr">network_mode:</span> <span class="string">&quot;host&quot;</span> <span class="comment"># 使用 host 模式性能更佳，且直接映射 443 端口</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/config.json:/etc/xray/config.json</span></span><br><span class="line">    <span class="attr">logging:</span></span><br><span class="line">      <span class="attr">driver:</span> <span class="string">&quot;json-file&quot;</span></span><br><span class="line">      <span class="attr">options:</span></span><br><span class="line">        <span class="attr">max-size:</span> <span class="string">&quot;10m&quot;</span></span><br><span class="line">        <span class="attr">max-file:</span> <span class="string">&quot;3&quot;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>正常启动后，在客户端如下配置：</p>
+<ul>
+<li><p>类型： <code>VLESS</code></p>
+</li>
+<li><p>地址（Address）： <code>&lt;SERVER IP&gt;</code></p>
+</li>
+<li><p>端口（Port）： <code>443</code> # 对应配置文件中的 <code>inbounds.port</code> </p>
+</li>
+<li><p>UUID： <code>&lt;UID&gt;</code>  # 对应配置文件中的 <code>inbounds.settings.clients.id</code></p>
+</li>
+<li><p>流（Flow）： <code>xtls-rprx-vision</code>  # 对应配置文件中的 <code>inbounds.settings.clients.flow</code></p>
+</li>
+<li><p>传输协议(Transport protocol(network))： <code>TCP</code>   # 对应配置文件中的 <code>inbounds.streamSettings.network</code></p>
+</li>
+<li><p>TLS&#x2F;安全： <code>Reality</code>   # 对应配置文件中的 <code>inbounds.streamSettings.security</code></p>
+</li>
+<li><p>加密(Encryption): <code>none</code>  # 对应配置文件中的 <code>inbounds.settings.decryption</code></p>
+</li>
+<li><p>SNI： <code>www.microsoft.com</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.dest</code></p>
+</li>
+<li><p>短 ID（Short ID）： <code>a1b2c3d4</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.shortIds</code></p>
+</li>
+<li><p>公钥（Public key、密码、Password）： <code>&lt;公钥&gt;</code>  # <code>docker run --rm teddysun/xray xray x25519</code> 命令生成的 <code>Password</code></p>
+</li>
+</ul>
+<p>为了方便客户端导入，可以为配置生成以下链接，其中包含了客户端链接所需的参数：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</span><br></pre></td></tr></table></figure>
+
+<p>大多数客户端都支持从粘贴板复制以上内容自动导入配置。</p>
+<h1 id="Windows-中使用-v2rayN-连接-xray-server"><a href="#Windows-中使用-v2rayN-连接-xray-server" class="headerlink" title="Windows 中使用 v2rayN 连接 xray server"></a>Windows 中使用 v2rayN 连接 xray server</h1><ul>
+<li><strong>v2rayN</strong> 版本： v7.18.0</li>
+</ul>
+<p>Windows 下载 <strong>v2rayN</strong> ，将其解压后，运行程序 <code>v2rayN.exe</code> 即可打开程序。复制配置链接（ <code>vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</code> ），在 <strong>v2rayN</strong> 主界面点击 <strong>Configuration -&gt; Import Share Links from clipboard</strong> 即可自动导入配置<br><img src="https://i.0920811.xyz/img_429.png"><br><img src="https://i.0920811.xyz/img_428.png"></p>
+<p>默认情况下， <strong>v2rayN</strong> 会测试到 <code>google.com</code> 的连接来验证服务端是否正常，国内服务器此测试必定失败，因此可以修改此测试目标。参考以下步骤：</p>
+<ol>
+<li>导航到 <strong>Settings -&gt; v2rayN settings: Speed Ping Test URL</strong> ，此处默认值为 <code>google.com</code> ，将其改为国内服务器可以访问的地址如 <code>https://www.baidu.com</code><br><img src="https://i.0920811.xyz/img_430.png"></li>
+</ol>
+<p>要验证 <strong>xray server</strong> 工作正常，可以在 <strong>v2rayN</strong> 客户端进行 <strong>延迟检测（Test real delay）</strong> 。右键要检测的 <strong>xray server</strong> 选择 <strong>Test real delay</strong></p>
+<p><img src="https://i.0920811.xyz/img_433.png"></p>
+<p>如果能够获取到延迟数据，说明 xray 工作正常，如果未获取到延迟数据，可以登陆服务器，通过命令 <code>docker logs</code> 检查服务端日志<br><img src="https://i.0920811.xyz/img_434.png"></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>xshell 常用配置</title>
+    <url>/202208101059/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>xshell7</li>
+</ul>
+<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="字体配置"><a href="#字体配置" class="headerlink" title="字体配置"></a>字体配置</h2><p>(菜单栏)查看 &gt; 工具栏 &gt; 标准按钮  </p>
+<p><img src="https://i.0920811.xyz/img_36.png"></p>
+<p>中文字体和英文字体需要单独配置，建议配置默认会话属性</p>
+<p>(菜单栏)文件 &gt; 默认会话属性，找到 <code>外观</code> 分别配置 <code>字体</code> 以及 <code>亚洲字体</code>:</p>
+<p><img src="https://i.0920811.xyz/img_225.png"></p>
+<span id="more"></span>
+
+<h2 id="Meta-键配置"><a href="#Meta-键配置" class="headerlink" title="Meta 键配置"></a>Meta 键配置</h2><p>(菜单栏)文件 &gt; 当前会话属性:<br><img src="https://i.0920811.xyz/img_37.png"></p>
+<p>终端中使用 <code>Alt .</code> 可自动补齐上一条命令的最后一个参数  </p>
+<h2 id="配置-选中即复制"><a href="#配置-选中即复制" class="headerlink" title="配置 选中即复制"></a>配置 选中即复制</h2><p>工具-&gt;选项<br><img src="https://i.0920811.xyz/img_38.png"></p>
+<p>选择 <code>键盘和鼠标</code><br><img src="https://i.0920811.xyz/img_39.png"></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>xshell</category>
+      </categories>
+      <tags>
+        <tag>xshell</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>YAML 语法格式</title>
     <url>/202405171109/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>YAML（YAML Ain’t Markup Language）是一种专门用于数据序列化的格式，常用于配置文件、数据交换等场景。它以其可读性和简洁性而受到开发者的青睐。YAML设计的目标是易于人类阅读和编写，并且易于与其他编程语言进行交互。下面是YAML语法的详细介绍</p>
@@ -37174,78 +37484,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>xray 部署使用</title>
-    <url>/20260303033711/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Docker-部署步骤"><a href="#Docker-部署步骤" class="headerlink" title="Docker 部署步骤"></a>Docker 部署步骤</h1><p>创建配置文件 <code>config.json</code></p>
-<figure class="highlight json"><figcaption><span>config.json</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;log&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;loglevel&quot;</span><span class="punctuation">:</span> <span class="string">&quot;debug&quot;</span><span class="punctuation">,</span>    <span class="comment">/* 为了观察运行情况或者定位问题，可以开启debug 日志 */</span></span><br><span class="line">    <span class="attr">&quot;access&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;error&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">,</span>    </span><br><span class="line">  <span class="attr">&quot;inbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;port&quot;</span><span class="punctuation">:</span> <span class="number">443</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;vless&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;settings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;clients&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">         <span class="punctuation">&#123;</span></span><br><span class="line">           <span class="attr">&quot;id&quot;</span><span class="punctuation">:</span> <span class="string">&quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</span><span class="punctuation">,</span> </span><br><span class="line">           <span class="attr">&quot;flow&quot;</span><span class="punctuation">:</span> <span class="string">&quot;xtls-rprx-vision&quot;</span></span><br><span class="line">         <span class="punctuation">&#125;</span></span><br><span class="line">        <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;decryption&quot;</span><span class="punctuation">:</span> <span class="string">&quot;none&quot;</span></span><br><span class="line">    <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;streamSettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;network&quot;</span><span class="punctuation">:</span> <span class="string">&quot;tcp&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;security&quot;</span><span class="punctuation">:</span> <span class="string">&quot;reality&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;realitySettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">        <span class="attr">&quot;show&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;dest&quot;</span><span class="punctuation">:</span> <span class="string">&quot;www.microsoft.com:443&quot;</span><span class="punctuation">,</span>   </span><br><span class="line">        <span class="attr">&quot;xver&quot;</span><span class="punctuation">:</span> <span class="number">0</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;serverNames&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;www.microsoft.com&quot;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;privateKey&quot;</span><span class="punctuation">:</span> <span class="string">&quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;shortIds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;a1b2c3d4&quot;</span><span class="punctuation">]</span></span><br><span class="line">      <span class="punctuation">&#125;</span></span><br><span class="line">    <span class="punctuation">&#125;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;outbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span><span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;freedom&quot;</span><span class="punctuation">&#125;</span><span class="punctuation">]</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><p><code>&quot;id&quot;: &quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</code> 可以自行生成</p>
-</li>
-<li><p><code>&quot;dest&quot;: &quot;www.microsoft.com:443&quot;</code> 伪装的网站地址</p>
-</li>
-<li><p><code>&quot;privateKey&quot;: &quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</code> 私钥，公司钥对可以使用如下命令生成</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">docker run --<span class="built_in">rm</span> teddysun/xray xray x25519</span></span><br><span class="line">PrivateKey: iBKDmvNMfFOAzNPOLRlnJLzoaYbHKs9RFatpW1ELeks</span><br><span class="line">Password: OV_SMIonfy1cEzxnDGZff9x0HeuhuqLyrIj0dLqAaHw</span><br><span class="line">Hash32: 1fEp1041YBnLfSvQYVsRfvGJEA8ZV_LjqFGtQKwaWG0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><code>PrivateKey</code> 对应私钥（ <code>privateKey</code> ）</li>
-<li><code>Password</code> 对应公钥（ Public Key ），要发送给客户端使用</li>
-</ul>
-</li>
-</ul>
-<p><code>docker-compose.yaml</code> 配置如下：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">xray:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">teddysun/xray:latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">xray</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">always</span></span><br><span class="line">    <span class="attr">network_mode:</span> <span class="string">&quot;host&quot;</span> <span class="comment"># 使用 host 模式性能更佳，且直接映射 443 端口</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/config.json:/etc/xray/config.json</span></span><br><span class="line">    <span class="attr">logging:</span></span><br><span class="line">      <span class="attr">driver:</span> <span class="string">&quot;json-file&quot;</span></span><br><span class="line">      <span class="attr">options:</span></span><br><span class="line">        <span class="attr">max-size:</span> <span class="string">&quot;10m&quot;</span></span><br><span class="line">        <span class="attr">max-file:</span> <span class="string">&quot;3&quot;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>正常启动后，在客户端如下配置：</p>
-<ul>
-<li><p>类型： <code>VLESS</code></p>
-</li>
-<li><p>地址（Address）： <code>&lt;SERVER IP&gt;</code></p>
-</li>
-<li><p>端口（Port）： <code>443</code> # 对应配置文件中的 <code>inbounds.port</code> </p>
-</li>
-<li><p>UUID： <code>&lt;UID&gt;</code>  # 对应配置文件中的 <code>inbounds.settings.clients.id</code></p>
-</li>
-<li><p>流（Flow）： <code>xtls-rprx-vision</code>  # 对应配置文件中的 <code>inbounds.settings.clients.flow</code></p>
-</li>
-<li><p>传输协议(Transport protocol(network))： <code>TCP</code>   # 对应配置文件中的 <code>inbounds.streamSettings.network</code></p>
-</li>
-<li><p>TLS&#x2F;安全： <code>Reality</code>   # 对应配置文件中的 <code>inbounds.streamSettings.security</code></p>
-</li>
-<li><p>加密(Encryption): <code>none</code>  # 对应配置文件中的 <code>inbounds.settings.decryption</code></p>
-</li>
-<li><p>SNI： <code>www.microsoft.com</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.dest</code></p>
-</li>
-<li><p>短 ID（Short ID）： <code>a1b2c3d4</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.shortIds</code></p>
-</li>
-<li><p>公钥（Public key、密码、Password）： <code>&lt;公钥&gt;</code>  # <code>docker run --rm teddysun/xray xray x25519</code> 命令生成的 <code>Password</code></p>
-</li>
-</ul>
-<p>为了方便客户端导入，可以为配置生成以下链接，其中包含了客户端链接所需的参数：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</span><br></pre></td></tr></table></figure>
-
-<p>大多数客户端都支持从粘贴板复制以上内容自动导入配置。</p>
-<h1 id="Windows-中使用-v2rayN-连接-xray-server"><a href="#Windows-中使用-v2rayN-连接-xray-server" class="headerlink" title="Windows 中使用 v2rayN 连接 xray server"></a>Windows 中使用 v2rayN 连接 xray server</h1><ul>
-<li><strong>v2rayN</strong> 版本： v7.18.0</li>
-</ul>
-<p>Windows 下载 <strong>v2rayN</strong> ，将其解压后，运行程序 <code>v2rayN.exe</code> 即可打开程序。复制配置链接（ <code>vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</code> ），在 <strong>v2rayN</strong> 主界面点击 <strong>Configuration -&gt; Import Share Links from clipboard</strong> 即可自动导入配置<br><img src="https://i.0920811.xyz/img_429.png"><br><img src="https://i.0920811.xyz/img_428.png"></p>
-<p>默认情况下， <strong>v2rayN</strong> 会测试到 <code>google.com</code> 的连接来验证服务端是否正常，国内服务器此测试必定失败，因此可以修改此测试目标。参考以下步骤：</p>
-<ol>
-<li>导航到 <strong>Settings -&gt; v2rayN settings: Speed Ping Test URL</strong> ，此处默认值为 <code>google.com</code> ，将其改为国内服务器可以访问的地址如 <code>https://www.baidu.com</code><br><img src="https://i.0920811.xyz/img_430.png"></li>
-</ol>
-<p>要验证 <strong>xray server</strong> 工作正常，可以在 <strong>v2rayN</strong> 客户端进行 <strong>延迟检测（Test real delay）</strong> 。右键要检测的 <strong>xray server</strong> 选择 <strong>Test real delay</strong></p>
-<p><img src="https://i.0920811.xyz/img_433.png"></p>
-<p>如果能够获取到延迟数据，说明 xray 工作正常，如果未获取到延迟数据，可以登陆服务器，通过命令 <code>docker logs</code> 检查服务端日志<br><img src="https://i.0920811.xyz/img_434.png"></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>六十四卦之天水讼</title>
     <url>/20250904163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天水讼"><a href="#天水讼" class="headerlink" title="天水讼"></a>天水讼</h1><p><img src="https://i.0920811.xyz/img_345.png"></p>
@@ -37412,138 +37650,6 @@ width: 20%;
       <categories>
         <category>易学</category>
       </categories>
-  </entry>
-  <entry>
-    <title>wireshark 抓包工具使用</title>
-    <url>/202211251613/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="wiresark-显示过滤器使用方法"><a href="#wiresark-显示过滤器使用方法" class="headerlink" title="wiresark 显示过滤器使用方法"></a>wiresark 显示过滤器使用方法</h1><p>Wireshark 提供了两种过滤器</p>
-<ul>
-<li><strong>捕获过滤器</strong>：在抓包之前就设定好过滤条件，然后只抓取符合条件的数据包。</li>
-<li><strong>显示过滤器</strong>：在已捕获的数据包集合中设置过滤条件，隐藏不想显示的数据包，只显示符合条件的数据包。</li>
-</ul>
-<p>这两种过滤器所使用的语法是完全不同的，捕捉网卡数据的其实并不是 Wireshark，而是 WinPcap，要按 WinPcap 的规则来，显示过滤器就是 Wireshark 对已捕捉的数据进行筛选。</p>
-<h2 id="显示过滤器中常用的关系计算符号"><a href="#显示过滤器中常用的关系计算符号" class="headerlink" title="显示过滤器中常用的关系计算符号"></a>显示过滤器中常用的关系计算符号</h2><table>
-<thead>
-<tr>
-<th>符号</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>eq</code><br/><code>==</code></td>
-<td>等于</td>
-<td><code>ip.src==10.10.10.10</code> <br/><code>ip.src eq 10.10.10.10</code></td>
-</tr>
-<tr>
-<td><code>ne</code><br/><code>!=</code></td>
-<td>不等于</td>
-<td><code>ip.src!=10.10.10.10</code> <br/><code>ip.src ne 10.10.10.10</code></td>
-</tr>
-<tr>
-<td><code>gt</code><br/><code>&gt;</code></td>
-<td>大于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>lt</code><br/><code>&lt;</code></td>
-<td>小于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>ge</code><br/><code>&gt;=</code></td>
-<td>大于等于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>le</code><br/><code>&lt;=</code></td>
-<td>小于等于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>contains</code></td>
-<td>包含</td>
-<td><code>http.host contains com</code></td>
-</tr>
-</tbody></table>
-<h2 id="显示过滤器中常用的逻辑计算符号"><a href="#显示过滤器中常用的逻辑计算符号" class="headerlink" title="显示过滤器中常用的逻辑计算符号"></a>显示过滤器中常用的逻辑计算符号</h2><table>
-<thead>
-<tr>
-<th>符号</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>and</code><br/><code>&amp;&amp;</code></td>
-<td>与</td>
-<td><code>http.host contains com &amp;&amp; ip.src == 44.199.163.86</code><br/><code>http.host contains com and ip.src == 44.199.163.86</code></td>
-</tr>
-<tr>
-<td><code>or</code><br/><code>||</code></td>
-<td>或</td>
-<td></td>
-</tr>
-<tr>
-<td><code>not</code><br/><code>!</code></td>
-<td>非</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="常用示例"><a href="#常用示例" class="headerlink" title="常用示例"></a>常用示例</h2><h3 id="针对-IP-过滤"><a href="#针对-IP-过滤" class="headerlink" title="针对 IP 过滤"></a>针对 IP 过滤</h3><ul>
-<li>对源地址进行过滤<br><code>ip.src == 192.168.0.1</code></li>
-<li>对目的地址进行过滤<br><code>ip.dst == 192.168.0.1</code></li>
-<li>对源地址或者目的地址进行过滤<br><code>ip.addr == 192.168.0.1</code></li>
-<li>如果想排除以上的数据包，只需要将其用括号囊括，然后使用 <code>!</code> 即可<br><code>!(ip.addr == 192.168.0.1)</code></li>
-</ul>
-<h3 id="针对协议过滤"><a href="#针对协议过滤" class="headerlink" title="针对协议过滤"></a>针对协议过滤</h3><p>针对某种协议的数据包，表达式很简单仅仅需要把协议的名字（必须小写）输入即可</p>
-<p>常见协议：<br><code>tcp</code><br><code>udp</code><br><code>arp</code><br><code>icmp</code><br><code>http</code><br><code>smtp</code><br><code>ftp</code><br><code>dns</code><br><code>msnms</code><br><code>ip</code><br><code>ssl</code><br><code>oicq</code><br><code>bootp</code></p>
-<h3 id="针对端口过滤"><a href="#针对端口过滤" class="headerlink" title="针对端口过滤"></a>针对端口过滤</h3><ul>
-<li>捕获某一端口的数据包（以 tcp 协议为例）<br><code>tcp.port == 80</code></li>
-<li>捕获多端口的数据包，可以使用 <code>and</code> 来连接，下面是捕获高于某端口的表达式（以 udp 协议为例）<br><code>udp.port &gt;= 2048</code></li>
-</ul>
-<h3 id="针对-http-请求的一些过滤实例"><a href="#针对-http-请求的一些过滤实例" class="headerlink" title="针对 http 请求的一些过滤实例"></a>针对 http 请求的一些过滤实例</h3><ul>
-<li>过滤出请求地址中包含 <code>user</code> 的请求，不包括域名<br><code>http.request.uri contains &quot;User&quot;</code></li>
-<li>精确过滤域名<br><code>http.host==baidu.com</code></li>
-<li>模糊过滤域名<br><code>http.host contains &quot;baidu&quot;</code></li>
-<li>过滤请求的 content_type 类型<br><code>http.content_type ==&quot;text/html&quot;</code><br>-过滤 http 请求方法<br><code>http.request.method==&quot;POST&quot;</code></li>
-<li>过滤 tcp 端口<br><code>tcp.port==80</code><br><code>http &amp;&amp; tcp.port==80 or tcp.port==5566</code></li>
-<li>过滤 http 响应状态码<br><code>http.response.code==302</code></li>
-<li>过滤含有指定 cookie 的 http 数据包<br><code>http.cookie contains &quot;userid&quot;</code></li>
-</ul>
-]]></content>
-      <categories>
-        <category>TCPIP</category>
-      </categories>
-      <tags>
-        <tag>wireshark</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>xshell 常用配置</title>
-    <url>/202208101059/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>xshell7</li>
-</ul>
-<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="字体配置"><a href="#字体配置" class="headerlink" title="字体配置"></a>字体配置</h2><p>(菜单栏)查看 &gt; 工具栏 &gt; 标准按钮  </p>
-<p><img src="https://i.0920811.xyz/img_36.png"></p>
-<p>中文字体和英文字体需要单独配置，建议配置默认会话属性</p>
-<p>(菜单栏)文件 &gt; 默认会话属性，找到 <code>外观</code> 分别配置 <code>字体</code> 以及 <code>亚洲字体</code>:</p>
-<p><img src="https://i.0920811.xyz/img_225.png"></p>
-<span id="more"></span>
-
-<h2 id="Meta-键配置"><a href="#Meta-键配置" class="headerlink" title="Meta 键配置"></a>Meta 键配置</h2><p>(菜单栏)文件 &gt; 当前会话属性:<br><img src="https://i.0920811.xyz/img_37.png"></p>
-<p>终端中使用 <code>Alt .</code> 可自动补齐上一条命令的最后一个参数  </p>
-<h2 id="配置-选中即复制"><a href="#配置-选中即复制" class="headerlink" title="配置 选中即复制"></a>配置 选中即复制</h2><p>工具-&gt;选项<br><img src="https://i.0920811.xyz/img_38.png"></p>
-<p>选择 <code>键盘和鼠标</code><br><img src="https://i.0920811.xyz/img_39.png"></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>xshell</category>
-      </categories>
-      <tags>
-        <tag>xshell</tag>
-      </tags>
   </entry>
   <entry>
     <title>六十四卦之天地否</title>
@@ -38000,459 +38106,6 @@ width: 20%;
 </li>
 <li><p>程颐</p>
 <p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天山遁</title>
-    <url>/20251122162040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
-<p>天山遁，下（内）艮（山、止）上乾（天、健），遁者，退也。是阳消阴息的十二消息卦之一，处于柔爻长而刚爻退的过程中。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁，亨，小利贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：遁亨，遁而亨也。刚当位而应，与时行也。小利贞，浸而长也。遁之时义大矣哉！</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下有山，遁。君子以远小人，不恶而严。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>遁亨，遁而亨也</strong> ： 遁卦从乾卦一阴生得天风姤，再生一阴至天山遁，为阴长阳消的过程。天地自然都是在阴阳消息中不停运动，不论阴长阳消还是阴消阳长都是自然之道，都是亨通。在阴长阳消的自然大势中，阴来阳往、刚屈柔伸，对刚爻（阳）来说，遁（退）就是亨。刚爻为大，柔爻为小，刚往柔来，小利贞。</li>
-<li><strong>刚当位而应，与时行也</strong> ： 指九五刚爻正应六二。六二为全卦主爻，代表柔爻的上涨势头。全卦阳爻多于阴爻，刚爻势大，九五刚爻尊位得正，是为当位，但阴长阳退为大势所趋，九五正应六二，能主动退让，是能顺应大势，即与时行也。</li>
-<li><strong>君子以远小人，不恶而严</strong> ： 恶，惹、招惹、惹怒。严，划清界限、界限分明。小人势长，远离小人，不招惹小人，但要和其划清界限，不同流合污。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁尾，厉。勿用有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：遁尾之厉，不往何灾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>遁尾，厉。勿用有攸往</strong> ： 遁尾，退避之际落在最后，喻“当遁而迟疑，落在人后”。</li>
-</ul>
-<p>初六处全卦最下，阴柔才弱，又居最外（艮下），本当最先见几而退；却迟钝观望，反成“尾”，故危。这一爻不宜行动，安分自首可保无灾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处遁之始而不能遁，至于尾，故厉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>尾者，遁之晚也。晚而遁，危厉之道也。</code></p>
-</li>
-<li><p><code>遁之时宜速，今至尾而后遁，是以危厉。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">执之用黄牛之革，莫之胜说。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：执用黄牛，固志也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>执之用黄牛之革，莫之胜说</strong> ： 执，捆住、扎住、抓住。革，皮革、坚韧的牛皮绳、革带。说，通脱，挣脱、脱开、解开。黄牛，黄为中央之色，牛性顺而皮韧，象征中德柔顺而坚定，与六二之正位相合。</li>
-</ul>
-<p>六二阴爻居阴位，柔得中得正，在下卦艮（山、止）中位，坚守中道，不为小人所动摇、不为外物所诱惑</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>以阴居中，志能自固，故莫之得动。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>能固其志，守遁之正，不为外物所夺。</code></p>
-</li>
-<li><p><code>黄牛之革，坚韧而不裂。六二止退得宜，故莫之胜说。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系遁，有疾厉，畜臣妾吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系遁之厉，有疾惫也；畜臣妾吉，不可大事也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>系遁，有疾厉，畜臣妾吉</strong> ： 系，被牵绊、羁绊、有所牵挂。疾厉，有疾病缠身得风险。臣妾，泛指从属、附属的人或事，也象征小事、内务。</li>
-</ul>
-<p>九三处内卦之极，刚居阳位，上临九四之“敌刚”，下比六二之“系私”，进退两难；欲遁而被私情、家事或旧部所牵，故成“系遁”。就像疾病缠身，不仅痛苦，而且消耗精力（象曰：有疾惫也），最终招致危险（“厉”）。在大环境不利、需要退避（遁）时，九三虽无法彻底脱身，但如果能将精力放在管理内务、巩固自身根基、处理身边的小事上，则是吉祥的。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>系遁者，不能得遁也。处动之极，欲进不得，欲退不能，有疾惫之象。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九三刚而不中，欲遁不得，宜于小事，而不可以大事也。</code></p>
-</li>
-<li><p><code>刚中处遁，心急志动，而遁不得，故有疾厉。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">好遁。君子吉，小人否。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子好遁，小人否也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>好遁。君子吉，小人否</strong> ： 好，乐于、喜欢、善于。君子识时务乐于退避，小人则不然（不乐于退避）。</li>
-</ul>
-<p>君子知道何时进、何时退，在小人壮大、时势不利时，能洞察先机，主动退避以保全自身，符合遁卦的卦义，故为吉祥。小人贪恋权力、地位和物质，即使面对危险，也不愿意放弃自己的所得。因此，在需要退避时，他们不乐于、不肯退避（“否”），最终会因时机错过而遭受灾祸。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处遁之时，得以退避，故好遁也。君子以退为吉，小人不能遁也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>遁之道在九四而得其正。能遁者，君子也；不能遁者，小人也。</code></p>
-</li>
-<li><p><code>九四虽刚，而处柔位，能好遁者，故吉。小人不能遁，故否。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">嘉遁，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：嘉遁贞吉，以正志也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>嘉遁贞吉，以正志也</strong> ： 嘉，美、善、值得赞颂、值得称颂。美好的退避、高尚的抽身、君子之退。</li>
-</ul>
-<p>九五刚尊得中而应六二，以刚健中正之德，主动让贤、让功，既契合时势规律，又坚守自身正道，故美其退曰“嘉遁”。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处尊而能遁，嘉之至也。志正故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>能遁于君位之尊，非迫也，自得也。其遁之美，在于是也。</code></p>
-</li>
-<li><p><code>九五居尊，能自遁避，不与小人争。其志正也，故贞吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">肥遁，无不利</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：肥遁无不利，无所疑也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>肥遁，无不利</strong> ： 肥，这里不是指肥胖，而是指丰裕、富足、安逸、从容。从容而退，满载而退，毫无顾虑、迟疑。</li>
-</ul>
-<p>上九阳爻居阴位，处卦之极、刚柔相济</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>肥者，大也。退避无害，得其全也，无不利也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>退而无所累，德全而去，谓之肥遁。</code></p>
-</li>
-<li><p><code>上九处遁之终，遁既得其全，故无不利也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天泽履</title>
-    <url>/20250917160539/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天泽履"><a href="#天泽履" class="headerlink" title="天泽履"></a>天泽履</h1><p><img src="https://i.0920811.xyz/img_350.png"></p>
-<p>天泽履，乾（天）上兑（泽）下。兑卦代表喜悦、和悦，象征着一种柔和、顺应的态度。乾卦代表刚健、强盛，象征着一种刚强、积极的力量。</p>
-<p>履，礼也。履进、行动的礼节、规矩。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，不咥人，亨。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：履，柔履刚也。说而应乎乾，是以履虎尾，不咥人，亨。刚中正，履帝位而不疚，光明也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：上天下泽，履;君子以辨上下，定民志。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>履虎尾，不咥（dié）人</strong> ： 履，脚步、践行、踩踏、行走、履行。 咥，噬咬、老虎噬咬的动作。象征着处于危险之中但能够谨慎行事，避免灾祸。兑为虎为口为悦，上为首，下为尾。悦而应互乾，是以履虎尾，不咥人。y</li>
-<li><strong>上天下泽，履;君子以辨上下，定民志</strong> ： 天在上、泽在下，天为尊、泽为卑，上下有别、秩序（如君臣、长幼、权责）分明。民众明确自身定位，不越位、不妄求，从而心态安定。</li>
-</ul>
-<p>履卦的核心是 <strong>礼与慎</strong> 。君子之道，在于守礼分，知上下有序，以安定人心。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>履虎尾者，危也。处危能无咥人者，以其得中正而应之也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>履者，行也。人道之行，贵乎中正。九五刚中正，履帝位，居尊而能正，不疚而光明。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>履，行也。兑为说，乾为健。以柔履刚，悦而应乾，则虽履虎尾，而不为害，亨也。九五刚中正，履帝位而不疚，光明正大之象。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">素履，往无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：素履之往，独行愿也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>素履</strong> ： 素，纯白、朴素、朴实、本真、不修饰、朴实无华。以朴素本真的态度行事，不刻意追求浮华或迎合他人</li>
-<li><strong>素履之往，独行愿也</strong> ： 强调这种朴素、诚实的态度是出于内心的真诚和自愿，而不是为了迎合他人或追求外在的回报。这里的 独行 表示独立自主的行为，愿 表示内心的愿望或意愿。</li>
-</ul>
-<p>初九爻通过强调以朴素、诚实的态度去行事的重要性，提醒我们在面对各种行动和决策时，要保持内心的真诚和自愿，坚守本心，不随波逐流。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>素履，质也。言其履行质直，不饰伪，虽独行，犹得无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>素，质也。履初而以质朴为履，往无咎。君子之行，以诚质为本。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>素履，质直而无文之行。处初而能守此，往则无咎。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履道坦坦，幽人贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：幽人贞吉，中不自乱也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>履道坦坦，幽人贞吉</strong> ： 坦坦，平顺、平坦宽广、宽阔无障碍。幽人，恬淡寡欲、幽居、安静、内心沉静、不浮躁、能坚守自我之人，幽 强调 内心的沉静收敛，不随外界喧嚣动摇。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>二以阳居阴，得中正之位。能安静自守，履道平正，故曰“幽人贞吉”。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九二刚中而居柔位，有中正之德，能安于幽处，不求显达，守正以行，吉也。幽人者，处中不乱，安静自守之象。贞正不改，故吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>履道坦坦，谓中正平易之道也。九二居中得正，如幽居之人，守正不乱，故吉。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">眇能视，跛能履，履虎尾，咥人，凶。武人为于大君。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：眇能视，不足以有明也。跛能履，不足以与行也。咥人之凶，位不当也。武人为于大君，志刚也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>眇能视，跛能履</strong> ： 眇，一只眼睛失明、目盲。跛，一只腿脚残疾。</li>
-<li><strong>武人为于大君</strong> ： 武人，武夫或有勇无谋的人。武人妄图代君主行事、掌控高位。进一步说明了六三爻的主体虽然有行动的意愿，但因为能力不足，最终会带来不利的结果。</li>
-</ul>
-<p>六三阴爻居阳位，位不当，爻辞以 <strong>残缺行动（眇能视，跛能履） 喻 能力缺陷，以 履虎尾被咥 表 险局恶果</strong> 。隐喻 自身能力有明显缺陷，却盲目高估自己，强行行动。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>眇而欲视，跛而欲履，皆以小德而强为大事，不胜其任，故履虎尾而凶。六三阴柔不中正，而在下体之上，志刚妄动，犹武人之在大君之前。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六三阴柔不中，处履之险，才德不足而妄为，故凶。眇视、跛履，皆喻小人之不足任大事。以小人之志，强行于大君之前，必至于凶。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六三阴柔而不中正，不能自定，而妄履其道，犹眇视、跛履，不足以有为。故履虎尾，咥人而凶。其志刚而欲为，犹武人之为大君用。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，愬愬终吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：愬愬终吉，志行也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>愬愬终吉，志行也</strong> ： 愬愬，通 肃肃，小心戒惧、谨慎不安的样子。志行 指 内心敬畏、态度谨慎、言行收敛（志）落到实处，转化为具体行动，虽处险境，但能保持戒惧，最后结果吉祥。</li>
-</ul>
-<p>九四阳爻居阴位，位不正，终吉，关键在于要认识到所处环境的危险，因此知危能惧，保持戒慎。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四以阳居阴，失正而不中，履危之时，故“愬愬”。然而知危能惧，虽失正而能戒慎，故终得吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四居近君之位，志欲上行，处危履虎尾之地，能戒惧而不敢妄动，故虽危而终吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九四以阳居阴，位不中正，履危之时，唯有愬愬自守，则终得吉。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">夬履，贞厉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：夬履贞厉，位正当也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>夬（guài）履贞历</strong> ： 夬，决断、果决、果断、刚决。要警惕过刚。</li>
-</ul>
-<p>九五阳爻居上卦中位，符合 <strong>尊位刚中正</strong> ，是 贞 的基础。虽能守正，但需警惕过刚，否则会有危险（贞历）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五刚健中正而居尊位，夬然决断以履其道，虽危厉，然其位正当，故能以正济。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五居尊位，刚健中正，履道决断。然履虎尾之危，虽正亦有厉，但以正道处之，故虽危而可安。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五履中正之道，决断而行，虽贞正犹有危险之象。以其位正当，故能无咎。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">视履考祥，其旋元吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：元吉在上，大有庆也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>视履考祥</strong> ： 视，看、观察、考察 。考，考察、总结。祥，吉祥、如意、吉，此处代指吉凶。通过回顾考察整个过程中的行事、想法，反思自己的行为及其结果。</li>
-<li><strong>其旋元吉</strong> ： 旋，回旋、回归、循环、归返。履卦上九是从夬卦九三和上六换位而来，反旋上位，全卦只有上九和六三互为为正应，故其旋元吉。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处履之终，能审视所履，考其吉凶而旋归于正，故元吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>上九居履之极，若能省察所履之道，反身自考，不失其正，则元吉而有大庆。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>上九履之终，能视所履而考其吉凶，则旋归于正，故元吉。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之水雷屯</title>
-    <url>/20250901163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水雷屯"><a href="#水雷屯" class="headerlink" title="水雷屯"></a>水雷屯</h1><p><img src="https://i.0920811.xyz/img_343.png"></p>
-<p>屯（zhun）卦，是 《周易》继乾、坤卦后首个揭示 <strong>事物初创阶段规律</strong> 得核心卦象。屯卦 <strong>下震上坎、震为雷为足为动、坎为水为云、内动外险，涉足入险，不可轻动</strong> ，象征 <strong>万物萌芽（初生）、草昧未开、事业初创时的 艰难（勿用 为现实约束、阻力）与希望（元亨利贞为根本潜力）并存</strong></p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">元，亨，利，贞。勿用有攸往。利建侯。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">屯，刚柔始交而难生。动乎险中，大亨贞。雷雨之动满盈。天造草昧，宜建侯而不宁。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：云雷屯;君子以经纶。</span><br></pre></td></tr></table></figure>
-<ul>
-<li><strong>建侯</strong> ： 侯，地基、基础、根基。建侯，打好根基，做事情之前先建立稳固得根据和团队。</li>
-<li><strong>刚柔始交而难生</strong> ： 刚柔始交，指乾（刚健）与坤（柔顺）的力量首次交汇，是 <strong>万物初创的起点（如天地初开、阴阳交汇生万物）</strong> ； <strong>难生 指 刚柔交汇时尚未形成稳定平衡，故产生艰难（事物初生，根基不稳，环境有挑战）</strong> </li>
-<li><strong>动乎险中，大亨贞</strong> ： 震为雷为动，坎为水（云）为险，事物虽然刚刚萌生，力量尚弱，根基不稳，面临艰难（难），但只要依正道（驯致其道，建侯），结果必然不错（大亨贞）</li>
-<li><strong>雷雨之动满盈，天造草昧</strong> ： 天地初创（阴阳初交），雷雨交加，万物萌生却混沌未判。 <strong>雷雨之动</strong> 象征 初创时既有推动发展得力量、生机活力（雷），又有滋养生长的资源（环境，雨），但（雷雨）满盈，意味着 <strong>环境 充满变数、混乱无序（如同雷雨天气的 狂暴与不确定）</strong> 。 <strong>天地草昧</strong> 指 天地创造万物时一片蒙昧、尚未开化，象征 初创领域规则未立、格局未定</li>
-<li><strong>经纶</strong> ： 理丝曰经，编丝曰纶，经为纵丝，纶为横丝，通常还以经指战略、纶指战术。整理丝缕，喻筹划、布局、分条理于混乱之中，引申为 治理天下、筹划大业、规划全局。</li>
-</ul>
-<p><strong>元，亨，利，贞 为 卦之四德，乾为万物之父，四德齐备。坤卦为万物之母，顺承于乾，在四德上有了一定限制，如 利牝马之贞。除乾坤之外，四德齐备的卦还有 屯、随、无妄、革 四卦</strong> 。这四卦的四德与乾坤的四德取义又有不同，四德的大体是具备的，但在普遍性、永恒性方面要小一些、差一等。 <strong>元 不再是创始、创造，而是开始。亨，是运动的顺利，不再是永久、持久的亨通。利，只是对自身有利，不再是对万物普遍性的有益。贞，是守正，不再是永久的正确不变。</strong></p>
-<p>屯卦是万物刚刚开始出生，有了繁衍发展的基础，持续发展下去会欣欣向荣，故有 元，亨，利，贞的特点。</p>
-<p>“有天地，然后万物生焉。盈天地之间者惟万物，故受之以屯。屯者，盈也。” 乾坤两卦后，接着是屯卦，“雷雨之动满盈”，震为雷，坎为雨，春雷发动，唤醒万物，春雨滋润，哺育万物，雷雨一动，万物齐出，盈满天地，象征屯之盈满。</p>
-<p>“屯，难也。像草木之初生，屯然而难。” 万物初生，如草木发于地下，艰难破土，始生不易，故有艰难之意。始生还未伸展开，故有团聚之意。万物始生，从无到有，故有充盈之意。</p>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">盘桓，利居贞，利建侯。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽盘桓，志行正也。以贵下贱，大得民也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>盘桓</strong> ： 徘徊盘旋。有阻力、有困难，无法直线前进，只能回环前进。</li>
-<li><strong>利居贞，利建侯</strong> ： 居，停留、坚守。贞，正道、根本。初创之期，阻碍多、根基不稳、方向不明，此时不应急于行动（不妄动），应先打好基础、巩固根基、凝聚基层，以待时（利建侯）</li>
-<li><strong>志行正也</strong> ： 虽面临困难，但是坚守正道、不偏离根本（居贞），内在的志向与行动方向（万物始生，困难阻力多，但天地生生之德，合乎天地正道）是正确的，不是消极等待，而是为未来积极准备、蓄力（居贞、建侯）</li>
-<li><strong>以贵下贱，大得民也</strong> ： 贵，指初九阳爻；下，指初九阳爻（贵）居于下位（最小爻位）。核心力量（贵）主动放下姿态，贴近基层（下，贱），最终能广泛凝聚基层支持，为后续发展奠定根基</li>
-</ul>
-<p>初九阳爻居阳为，位正，正应六四，守正而不偏，有利。</p>
-<p><strong>以贵下贱，大得民也。6t易经中，刚（阳）爻为贵，柔爻（阴爻）为贱，初九在三个柔爻之下，象征以尊贵身份居卑贱的阴爻之下，有谦恭敬人之美德</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>磐桓者，难也。难而不进，居正以待，建侯以辅，故利也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>屯之初难，宜磐桓以待时。虽不进，然志在正，不失其道。贵而能下贱，得众人之心。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>屯难之始，宜磐桓以待，居贞则利。初九阳刚在下，以贵而下贱，能得民心，利于建侯也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">屯如邅如，乘马班如。匪寇婚媾，女子贞不字，十年乃字。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之难，乘刚也；十年乃字，反常也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>屯如邅（zhan）如</strong> ： 屯，困难、艰难险阻、草木破土未伸、难行； 邅，阻滞不前、转、盘旋、徘徊不前。六二前临互卦艮，艮为阻为止，正应九五，九五在坎中，坎为险难，前进艰难险阻，困难重重，故为 <em>屯如邅如</em></li>
-<li><strong>乘马班如</strong> ： 班，分瑞玉也（古代帝王将玉分割赐给诸侯，玉原本为整体，分割后则 分散归属），分割、分散、无序，也有说通 <strong>盘，盘桓、盘旋</strong> 。乘马班如，马匹无序排列，无法统一前进，象征行动不顺，力量不一。</li>
-<li><strong>匪寇婚媾</strong> ： 不是盗寇（象征危险、对立、危险），而是联姻（合作、机遇）。九五在坎中，坎为盗寇，六二正应九五，上下阴阳正应，婚姻匹配正合，故言 <strong>匪寇婚媾</strong></li>
-<li><strong>女子贞不字，十年乃字</strong> ： 字，许嫁、出嫁成亲，另有怀孕、生育之说。女子，象征柔顺（阴），六二处中正之位，贞。 <strong>震是反生稼，稼是禾稼，反生是该生不生，不该生而生，该向上生而向下生，该向下生而向上生。六二在震里，反生，故不字</strong> 。六二在互卦坤中，坤数为十，故 <em>十年不字</em></li>
-<li><strong>乘刚</strong> ： 乘刚 指 六二阴爻 乘坐 在初九阳爻之上（爻位上六二居初九之上），象征 柔顺的辅助者（六二，女子）试图承载或推动刚健的核心力量（初九），却因自身阴柔力量不足，无法匹配刚健力量的强度与节奏，反而被刚健力量的惯性拖入困境。</li>
-<li><strong>十年乃字，反常也</strong> ： 反常，指返回常道。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>屯难也。六二以阴居阴，得中而应于六五，然上承九三之刚，故屯如邅如。</code></p>
-<blockquote>
-<p><strong>然上承九三之刚</strong> ，指 屯卦第三爻，阴爻居阳位，爻性为阴（柔），爻位为阳（刚，第三爻爻位为阳、刚）</p>
-</blockquote>
-</li>
-<li><p>程颐</p>
-<p>  <code>婚媾者，合也。虽似为难，非寇害也。女子守贞，不字于今，待久乃合。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>乘马班如，进退无常。匪寇而婚，非害也。女子守贞，十年乃字，必待时也。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">既鹿无虞，惟入于林中，君子几不如舍，往吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：既鹿无虞，以纵禽也。君子舍之，往吝穷也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>既鹿无虞</strong> ： 即鹿，追逐、寻找、猎取猎物；虞，古代执掌山林、兼作向导得官员</li>
-<li><strong>君子几不如舍</strong> ： 几，征兆、时机。即鹿无虞，惟入于林中，君子见到风险、危机征兆，应放弃，若 继续盲目前进，必然遭遇凶险。核心是 在风险显现前主动止损，而非在风险爆发后被动承受。</li>
-<li><strong>即鹿无虞，纵禽也</strong> ： 即鹿无虞，不但会导致猎物（机会）丢失，还会导致风险（入于林中）</li>
-<li><strong>君子舍之，往吝穷也</strong> ： 即鹿无虞，惟入于林中，君子如果还继续追逐，不但会导致机会丢失（纵禽），还会使自己深陷林中，使吝（凶险）升级为穷（绝境）</li>
-</ul>
-<p>六三阴爻（爻性）居阳位（爻位），不当位，下乘六二（柔爻，辅助者，无足够资源、支撑），上承六四（柔爻，上层，无明确指导、方向），处于 <strong>上下无刚健支撑</strong> 的孤立状态，如同 <strong>捕猎者无虞，若妄动（凭感觉），易陷入危险（惟入于林中）</strong> 。六三处下卦震之极，上临坎险（林中），正是动而遇险的象。</p>
-<p>事物初创之期，面对风险（基础环境不稳、资源不足、方向不定、风险不可控），应理性得主动舍弃机遇，不盲目前行（君子几不如舍），导致遭遇风险（扩大风险，往吝）。初创期得核心资源（资金、人力、信任）都及其宝贵，若因冒进而损失（沉没成本），则后续再遇机会，也无力把握，此时得 <strong>舍 是 保住根基，留待未来</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>既鹿无虞，失道而进也。惟入林中，危而无获也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>鹿者，利也。无虞而逐之，必失道而纵禽。君子知几，不如舍之，若往则吝穷。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>逐利而无所导，则失道而纵禽。君子知几而舍之，不往则已，往则吝穷矣。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘马班如，求婚媾， 往吉，无不利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：求而往，明也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>求婚媾，往吉</strong> ： 求 为 主动寻求、积极对接。婚媾 ，应爻在初九，为正应，男女相悦，婚姻好合。</li>
-<li><strong>求而往，明也</strong> ： 六四爻无不利，求而往，明也，六四紧邻九五，不能上合九五，九五虽是阳爻，但是正应在六二，六四能舍九五从初九，为明智之选。</li>
-</ul>
-<p>六四爻居上卦初爻，阴爻（爻性）居阴位（爻位），得正位，下（正）应初九，上承九五尊位（阳刚之主、核心刚健力量），形成 <strong>柔得正而应刚</strong> 的最佳格局。在屯卦 <strong>动乎险中 的大背景里，六四已脱离下卦震之 动，进入上卦坎之 险，但本身得位又得援（下应初九，上承九五，无不利），故能把 班如 的无序静止转为有利行动。</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>班如，不进也。欲进而未得，若能求正应以相合，则无不利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六四以阴居阴，得其位，近于尊，不自进而求应于初九，犹婚媾也，故无不利。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>乘马班如，犹豫不进之象。若能下求其应，则无不利。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">屯其膏，小贞吉，大贞凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：屯其膏，施未光也。</span><br></pre></td></tr></table></figure>
-
-
-<ul>
-<li><strong>屯其膏</strong> ： 屯，囤积、蓄积、累积、积累、聚集；膏，脂肪、油脂，引申为 恩泽、资源，象征 资源、财富、权力等。</li>
-<li><strong>小贞吉，大贞凶</strong> ： 九五和六二阴阳正应，应的范围小。九五不仅是上卦中位，还是全卦中位、尊位、天子之位，只与六二相应，有所私，恩泽不能广布，故 <em>大贞凶</em> 。占问小事吉祥，占问大事凶。</li>
-<li><strong>施未光也</strong> ： 施，施恩、分配（资源与权力）、给与；光，广泛、广大、普照。对应九五的 <strong>资源仅能支撑小范围行动，无法支撑大范围行动</strong></li>
-</ul>
-<p>九五阳爻居爻位，尊位居中且正，本是吉象，但处 <strong>屯难（刚柔始交而难生），坎（险）中</strong> 之时，聚而未伸展，环境艰难，九五虽居尊位，却 德泽未广施，占问小事吉祥，占问大事凶。。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五以阳居尊，宜大亨也。然屯难之时，恩泽未施，故屯其膏。小贞则吉，大贞则凶也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五尊位，才德足以施惠，然当屯难，膏泽未光。小贞则守正待时吉，大贞则妄图大施，必凶。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>屯膏，恩泽未施也。九五居尊，中正之德，当屯之时，不可大施；小贞则吉，大贞则凶。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘马班如，泣血涟如</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">泣血涟如，何可长也</span><br></pre></td></tr></table></figure>
-
-<p>上六阴爻居阴位，为 屯卦 最后一爻，为穷（困）极（尽）之位，既无正应（六三阴爻，敌而不应），又乘九五之刚，上下皆无出路，形成穷极之位。坎为水、为血，故泣泪至泣血（泣血涟如）。此爻在全周易中也属比较凶的，毫无出路，血泪涟涟也无用。</p>
-<p><strong>泣血涟如，何可长也</strong> ，物极必反，此种状态必然迅速结束：或破局，或崩溃，或转向新的循环。所谓 <strong>困极则变，屯极则亨</strong> 。失去机会者要主动总结经验教训，反思失败（被动）的根源，让这些失败经验成为新开端的催化剂</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>班如，迟疑也。屯难之极，忧苦涟如，故泣血也。然屯穷则变，故曰何可长也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>上六以阴柔居屯之极，穷迫忧苦，故泣血涟如。然屯极则必变，故曰何可长也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>处屯之极，穷迫之甚，忧痛之深，故有泣血之象。然屯极则变，必不可以长久。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -39824,109 +39477,456 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes Pod</title>
-    <url>/202304271425/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pod 是由一个或多个容器构成的集合，被 Kubernetes 作为一个整体进行部署和调度，是 Kubernetes 调度的最小单元。同一个 Pod 内的容器共享 <a href="/202304031317/" title="network namespace">network namespace</a>、<a href="/202304191340/" title="UTS nanespace">UTS nanespace</a></p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7</li>
-<li>Kubernetes v1.24.7</li>
-</ul>
-<h1 id="Pod-创建过程"><a href="#Pod-创建过程" class="headerlink" title="Pod 创建过程"></a>Pod 创建过程</h1><p>当用户在 Kubernetes 中创建了一个 Pod 后，CRI 和 CNI 协同创建 Pod 所属容器，并为 Pod 中的容器初始化网络协议栈的具体过程如下<br><img src="https://i.0920811.xyz/img_139.png"></p>
-<ol>
-<li><p>用户在 Kubernetes 中创建了一个 Pod 后，Kubelet 接收到创建新 Pod 的任务，首先调用 CRI 创建 Pod 内的容器</p>
-</li>
-<li><p>Pod 中第一个被创建的容器是 <code>pause</code> 容器。<code>pause</code> 容器中运行着一个功能非常简单的 C 程序，具体逻辑是把自己永远阻塞，没有实际的业务逻辑，主要功能是用来占用一个  <a href="/202304031317/" title="network namespace">network namespace</a>。</p>
-<p> 创建 <code>pause</code> 容器，使用 <a href="https://0920811.xyz/202208301536/#None-模式">docker none 网络模式</a>，创建出来的容器除了 lo 回环网卡外没有其他网络设备。</p>
-</li>
-<li><p>Pod 内的其他用户容器通过加入 <code>pause</code> 容器已占用的 network namespace 的方式共享同一个 network namespace。对应于 docker 的 <a href="https://0920811.xyz/202208301536/#Container-模式">Container 模式</a></p>
-<p> 其他用户容器都使用 <code>pause</code> 容器的主机名，但并不使用同一个 UTS namespace。</p>
-</li>
-<li><p>CNI 负责 Pod 中容器的网络初始化工作。主要为 Pod 内的 <code>pause</code> 容器添加 <code>eth0</code> 网卡、分配 IP、配置网关等。</p>
-</li>
-</ol>
-<h1 id="pause-容器"><a href="#pause-容器" class="headerlink" title="pause 容器"></a>pause 容器</h1><p><code>pause</code> 容器是 Pod 中被创建的第一个容器，Pod 中的其他容器通过使用 <code>pause</code> 容器的 network namespace 共享网络协议栈和主机名。它是 Pod 中其他容器的父容器。</p>
-<blockquote>
-<p>1.8 以后版本默认不启用 PID namespace 共享。每个容器拥有独立的 PID namespace。</p>
-</blockquote>
-<p>以下步骤通过 docker 演示 Pod 容器创建的整个过程。首先，创建 <code>pause</code> 容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --name=test-pause \</span><br><span class="line">	--hostname=test-pause \</span><br><span class="line">	--network=none \</span><br><span class="line">	--workdir=/ \</span><br><span class="line">	--log-opt max-size=100m \</span><br><span class="line">	--runtime=runc \</span><br><span class="line">	--detach=true \</span><br><span class="line">	k8s.gcr.io/pause:3.4.1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>然后在 Pod 中运行其他容器，本示例启动 2 个应用容器，一个 nginx 容器，里面启动了 nginx 服务，一个自定义的容器，里面包含常用工具</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_nginx_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             nginx</span></span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker run --name=pod_centos_test \</span></span><br><span class="line"><span class="language-bash">             --network=container:0eec8dd9d164 \</span></span><br><span class="line"><span class="language-bash">             --restart=no --log-opt max-size=100m \</span></span><br><span class="line"><span class="language-bash">             --runtime=runc --detach=<span class="literal">true</span> \</span></span><br><span class="line"><span class="language-bash">             centos7:my ping 127.1</span>             </span><br><span class="line">             </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">docker ps -a</span></span><br><span class="line">CONTAINER ID   IMAGE                    COMMAND                  CREATED          STATUS          PORTS     NAMES</span><br><span class="line">54d57add44d2   centos7:my               &quot;ping 127.1&quot;             3 seconds ago    Up 2 seconds              pod_centos_test</span><br><span class="line">cd0c661774e2   nginx                    &quot;/docker-entrypoint.…&quot;   2 minutes ago    Up 2 minutes              pod_nginx_test</span><br><span class="line">0eec8dd9d164   k8s.gcr.io/pause:3.4.1   &quot;/pause&quot;                 10 minutes ago   Up 10 minutes             test-pause             </span><br></pre></td></tr></table></figure>
-<p>进入 <code>pod_centos_test</code> 容器，查看网络、端口、主机名信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">hostname</span></span><br><span class="line">test-pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">s -elf</span></span><br><span class="line">F S UID         PID   PPID  C PRI  NI ADDR SZ WCHAN  STIME TTY          TIME CMD</span><br><span class="line">4 S root          1      0  0  80   0 -  6218 skb_wa 17:01 ?        00:00:00 ping 127.1</span><br><span class="line">4 S root          7      0  0  80   0 -  2959 do_wai 17:02 pts/0    00:00:00 bash</span><br><span class="line">0 R root         30      7  0  80   0 - 12935 -      17:08 pts/0    00:00:00 ps -elf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">netstat -anutp</span></span><br><span class="line">Active Internet connections (servers and established)</span><br><span class="line">Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    </span><br><span class="line">tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN      -                   </span><br><span class="line">tcp6       0      0 :::80                   :::*                    LISTEN      - </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ip add</span></span><br><span class="line">1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000</span><br><span class="line">    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00</span><br><span class="line">    inet 127.0.0.1/8 scope host lo</span><br><span class="line">       valid_lft forever preferred_lft forever</span><br><span class="line">       </span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl  localhost:80</span></span><br><span class="line">&lt;!DOCTYPE html&gt;</span><br><span class="line">&lt;html&gt;</span><br><span class="line">&lt;head&gt;</span><br><span class="line">&lt;title&gt;Welcome to nginx!&lt;/title&gt;</span><br><span class="line">&lt;style&gt;</span><br><span class="line">html &#123; color-scheme: light dark; &#125;</span><br><span class="line">body &#123; width: 35em; margin: 0 auto;</span><br><span class="line">font-family: Tahoma, Verdana, Arial, sans-serif; &#125;</span><br><span class="line">&lt;/style&gt;</span><br><span class="line">&lt;/head&gt;</span><br><span class="line">&lt;body&gt;</span><br><span class="line">&lt;h1&gt;Welcome to nginx!&lt;/h1&gt;</span><br><span class="line">&lt;p&gt;If you see this page, the nginx web server is successfully installed and</span><br><span class="line">working. Further configuration is required.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;For online documentation and support please refer to</span><br><span class="line">&lt;a href=&quot;http://nginx.org/&quot;&gt;nginx.org&lt;/a&gt;.&lt;br/&gt;</span><br><span class="line">Commercial support is available at</span><br><span class="line">&lt;a href=&quot;http://nginx.com/&quot;&gt;nginx.com&lt;/a&gt;.&lt;/p&gt;</span><br><span class="line"></span><br><span class="line">&lt;p&gt;&lt;em&gt;Thank you for using nginx.&lt;/em&gt;&lt;/p&gt;</span><br><span class="line">&lt;/body&gt;</span><br><span class="line">&lt;/html&gt;       </span><br></pre></td></tr></table></figure>
+    <title>六十四卦之天山遁</title>
+    <url>/20251122162040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
+<p>天山遁，下（内）艮（山、止）上乾（天、健），遁者，退也。是阳消阴息的十二消息卦之一，处于柔爻长而刚爻退的过程中。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁，亨，小利贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：遁亨，遁而亨也。刚当位而应，与时行也。小利贞，浸而长也。遁之时义大矣哉！</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下有山，遁。君子以远小人，不恶而严。</span><br></pre></td></tr></table></figure>
+
 <ul>
-<li>Pod 中的容器主机名相同，都使用 <code>pause</code> 容器的主机名，但实际并未共享 UTS namespace。<blockquote>
-<p>可以通过找到对应 docker 容器的进程 PID，找到对应进程的 namespace 信息对比确认</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep ping</span></span><br><span class="line">4 S root      35333  35311  0  80   0 -  6218 skb_wa 01:01 ?        00:00:00 ping 127.1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/35333/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 ipc -&gt; ipc:[4026532664]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 mnt -&gt; mnt:[4026532662]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 pid -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 pid_for_children -&gt; pid:[4026532665]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:13 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:02 uts -&gt; uts:[4026532663]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep nginx</span></span><br><span class="line">4 S root      34909  34887  0  80   0 -  2233 sigsus 00:59 ?        00:00:00 nginx: master process nginx -g daemon off;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34909/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 ipc -&gt; ipc:[4026532660]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 mnt -&gt; mnt:[4026532658]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 pid -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 pid_for_children -&gt; pid:[4026532661]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:14 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:00 uts -&gt; uts:[4026532659]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ps -elf | grep pause</span></span><br><span class="line">4 S root      34239  34221  0  80   0 -   241 ia32_s 00:51 ?        00:00:00 /pause</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> -l /proc/34239/ns/</span></span><br><span class="line">total 0</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 cgroup -&gt; cgroup:[4026531835]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 ipc -&gt; ipc:[4026532585]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 mnt -&gt; mnt:[4026532583]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 net -&gt; net:[4026532588]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 pid -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 pid_for_children -&gt; pid:[4026532586]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 01:15 user -&gt; user:[4026531837]</span><br><span class="line">lrwxrwxrwx 1 root root 0 Apr  8 00:51 uts -&gt; uts:[4026532584]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>以上观察可以看到，Pod 中的容器共享了 network namespace，未共享 UTS namespace。Kubernetes 中 Pod 中的容器同理。</p>
-</blockquote>
+<li><strong>遁亨，遁而亨也</strong> ： 遁卦从乾卦一阴生得天风姤，再生一阴至天山遁，为阴长阳消的过程。天地自然都是在阴阳消息中不停运动，不论阴长阳消还是阴消阳长都是自然之道，都是亨通。在阴长阳消的自然大势中，阴来阳往、刚屈柔伸，对刚爻（阳）来说，遁（退）就是亨。刚爻为大，柔爻为小，刚往柔来，小利贞。</li>
+<li><strong>刚当位而应，与时行也</strong> ： 指九五刚爻正应六二。六二为全卦主爻，代表柔爻的上涨势头。全卦阳爻多于阴爻，刚爻势大，九五刚爻尊位得正，是为当位，但阴长阳退为大势所趋，九五正应六二，能主动退让，是能顺应大势，即与时行也。</li>
+<li><strong>君子以远小人，不恶而严</strong> ： 恶，惹、招惹、惹怒。严，划清界限、界限分明。小人势长，远离小人，不招惹小人，但要和其划清界限，不同流合污。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁尾，厉。勿用有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：遁尾之厉，不往何灾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>遁尾，厉。勿用有攸往</strong> ： 遁尾，退避之际落在最后，喻“当遁而迟疑，落在人后”。</li>
+</ul>
+<p>初六处全卦最下，阴柔才弱，又居最外（艮下），本当最先见几而退；却迟钝观望，反成“尾”，故危。这一爻不宜行动，安分自首可保无灾。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处遁之始而不能遁，至于尾，故厉。</code></p>
 </li>
-<li>Pod 中容器的 PID namespace 进行了隔离，各个容器的 PID 进行了隔离，PID namespace 不同。</li>
-<li>Pod 中的容器共享了 network namespace，具有相同的网络信息（网卡、IP、端口资源）</li>
-<li>Pod 中的容器直接可以通过 <code>localhost</code> 互相访问</li>
+<li><p>程颐</p>
+<p>  <code>尾者，遁之晚也。晚而遁，危厉之道也。</code></p>
+</li>
+<li><p><code>遁之时宜速，今至尾而后遁，是以危厉。</code></p>
+</li>
 </ul>
-<span id="more"></span>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">执之用黄牛之革，莫之胜说。</span><br></pre></td></tr></table></figure>
 
-<h1 id="Pod-和-Kubernetes-API-服务交互"><a href="#Pod-和-Kubernetes-API-服务交互" class="headerlink" title="Pod 和 Kubernetes API 服务交互"></a>Pod 和 Kubernetes API 服务交互</h1><p><a href="https://kubernetes.io/zh-cn/docs/concepts/workloads/pods/downward-api/"><code>downwardAPI</code></a> 提供了一种简单的方式，可以将 Pod 的 Metadata 和状态数据通过<strong>环境变量</strong>或者 <strong>Volume</strong> 传递（挂载）到 Pod 中，允许内部进程使用。但这种方式仅仅可以暴露一个 Pod 自身的 Metadata ，而且只能暴露一部分数据，某些情况下，应用可能需要知道其他 Pod 的信息，甚至集群中其他资源的信息，这种情况下，<code>downwardAPI</code> 的方式就无能为力了。</p>
-<p>Pod 启动时，系统会主动将部分信息以环境变量的形式注入到每个 Pod 中，比如自定义的 Service 的部分信息，Kubernetes API Service 的信息等，可以登陆 Pod，检查系统环境变量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">printenv</span> | grep <span class="string">&quot;SERVICE&quot;</span></span></span><br><span class="line">KUBERNETES_SERVICE_PORT_HTTPS=443</span><br><span class="line">TEST_API_SERVICE_PORT=tcp://10.106.126.96:10302</span><br><span class="line">KUBERNETES_SERVICE_PORT=443</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_PROTO=tcp</span><br><span class="line">TEST_API_SERVICE_SERVICE_HOST=10.106.126.96</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP=tcp://10.106.126.96:10302</span><br><span class="line">TEST_API_SERVICE_SERVICE_PORT_TEST_API_PORD=10302</span><br><span class="line">TEST_API_SERVICE_PORT_10302_TCP_ADDR=10.106.126.96</span><br><span class="line">KUBERNETES_SERVICE_HOST=10.96.0.1</span><br></pre></td></tr></table></figure>
-<p>以上示例中的 Pod ，在启动时，系统主动注入了相同 namespace 中的 Service 的信息，包括 Service IP 地址、端口等信息，以及 Kubernetes API Service 的 IP 及端口信息。</p>
-<blockquote>
-<p>Pod 中要使用 Service 的环境变量，要确保 Service 在 Pod 启动之前被创建，否则 Pod 中不存在相关环境变量。</p>
-</blockquote>
-<p>Pod 启动时，系统除了主动注入环境变量，还通过创建 <code>projected</code> 的 Volume 的方式给每个 Pod 挂载了以下信息</p>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：执用黄牛，固志也。</span><br></pre></td></tr></table></figure>
+
 <ul>
-<li>所属 namespace 的默认 ServiceAccount 的 token（<code>serviceAccountToken</code>）</li>
-<li>集群的 CA 证书（<code>configMap</code>）</li>
-<li>Pod 的所属 namespace 信息（<code>downwardAPI</code>）</li>
+<li><strong>执之用黄牛之革，莫之胜说</strong> ： 执，捆住、扎住、抓住。革，皮革、坚韧的牛皮绳、革带。说，通脱，挣脱、脱开、解开。黄牛，黄为中央之色，牛性顺而皮韧，象征中德柔顺而坚定，与六二之正位相合。</li>
 </ul>
-<p>可以通过以下命令验证上述信息。其中的 Volume <code>kube-api-access-8ch7r</code> 为系统自动生成并挂载到了 Pod 中的容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl edit pod -n ops ops-centos7-bfc4d75b5-kjcfs</span></span><br><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  labels:</span><br><span class="line">    app: ops-centos7</span><br><span class="line">  name: ops-centos7-bfc4d75b5-kjcfs</span><br><span class="line">  namespace: ops</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - command:</span><br><span class="line">    - ping</span><br><span class="line">    - 127.0.0.1</span><br><span class="line">    image: centos:centos7.9.2009</span><br><span class="line">    name: ops-centos7</span><br><span class="line">	</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount</span><br><span class="line">      name: kube-api-access-8ch7r</span><br><span class="line">      readOnly: true</span><br><span class="line"></span><br><span class="line">  volumes:</span><br><span class="line">  - name: kube-api-access-8ch7r</span><br><span class="line">    projected:</span><br><span class="line">      defaultMode: 420</span><br><span class="line">      sources:</span><br><span class="line">      - serviceAccountToken:</span><br><span class="line">          expirationSeconds: 3607</span><br><span class="line">          path: token</span><br><span class="line">      - configMap:</span><br><span class="line">          items:</span><br><span class="line">          - key: ca.crt</span><br><span class="line">            path: ca.crt</span><br><span class="line">          name: kube-root-ca.crt</span><br><span class="line">      - downwardAPI:</span><br><span class="line">          items:</span><br><span class="line">          - fieldRef:</span><br><span class="line">              apiVersion: v1</span><br><span class="line">              fieldPath: metadata.namespace</span><br><span class="line">            path: namespace</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>卷 <code>kube-api-access-8ch7r</code> 主要包含 3 部分内容</p>
+<p>六二阴爻居阴位，柔得中得正，在下卦艮（山、止）中位，坚守中道，不为小人所动摇、不为外物所诱惑</p>
+<p><strong>古人注解</strong> ：</p>
 <ul>
-<li><code>serviceAccountToken</code> 每个 namespace 都有个默认的 ServiceAccount，在没有为 Pod 配置 ServiceAccount 的情况下，系统会自动将默认的 ServiceAccount 挂载到 Pod 中的每个容器，作为运行在 Pod 中的进程和 API Server 交互时认证授权的身份（主体）。<a href="/202305161451/" title="ServiceAccount 使用说明参考">ServiceAccount 使用说明参考</a></li>
-<li><code>configMap</code> - 以 <code>configMap</code> 的方式为 Pod 中的容器挂载了集群的 CA 证书</li>
-<li><code>downwardAPI</code> - 以 <code>downwardAPI</code> 的方式，让 Pod 中的容器可以获取到 Pod 所在的 namespace 信息。</li>
+<li><p>王弼</p>
+<p><code>以阴居中，志能自固，故莫之得动。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>能固其志，守遁之正，不为外物所夺。</code></p>
+</li>
+<li><p><code>黄牛之革，坚韧而不裂。六二止退得宜，故莫之胜说。</code></p>
+</li>
 </ul>
-<p>以上内容被挂载到了容器的 <code>/var/run/secrets/kubernetes.io/serviceaccount</code> 目录中，可以在容器中检查此目录</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /var/run/secrets/kubernetes.io/serviceaccount/</span></span><br><span class="line">ca.crt  namespace  token</span><br></pre></td></tr></table></figure>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系遁，有疾厉，畜臣妾吉。</span><br></pre></td></tr></table></figure>
 
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系遁之厉，有疾惫也；畜臣妾吉，不可大事也。</span><br></pre></td></tr></table></figure>
 
+<ul>
+<li><strong>系遁，有疾厉，畜臣妾吉</strong> ： 系，被牵绊、羁绊、有所牵挂。疾厉，有疾病缠身得风险。臣妾，泛指从属、附属的人或事，也象征小事、内务。</li>
+</ul>
+<p>九三处内卦之极，刚居阳位，上临九四之“敌刚”，下比六二之“系私”，进退两难；欲遁而被私情、家事或旧部所牵，故成“系遁”。就像疾病缠身，不仅痛苦，而且消耗精力（象曰：有疾惫也），最终招致危险（“厉”）。在大环境不利、需要退避（遁）时，九三虽无法彻底脱身，但如果能将精力放在管理内务、巩固自身根基、处理身边的小事上，则是吉祥的。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>系遁者，不能得遁也。处动之极，欲进不得，欲退不能，有疾惫之象。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九三刚而不中，欲遁不得，宜于小事，而不可以大事也。</code></p>
+</li>
+<li><p><code>刚中处遁，心急志动，而遁不得，故有疾厉。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">好遁。君子吉，小人否。</span><br></pre></td></tr></table></figure>
 
-<h2 id="在-Pod-中通过-curl-命令请求-Kubernetes-API"><a href="#在-Pod-中通过-curl-命令请求-Kubernetes-API" class="headerlink" title="在 Pod 中通过 curl 命令请求 Kubernetes API"></a>在 Pod 中通过 curl 命令请求 Kubernetes API</h2><p>默认情况下，Kubernetes API Service 的 Service 名称为 <code>kubernetes</code>，因此在集群内部，可以通过 FQDN <code>kubernetes.default.svc.cluster.local</code> 访问 Kubernetes API Service</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.96.0.1    &lt;none&gt;        443/TCP   156d</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子好遁，小人否也。</span><br></pre></td></tr></table></figure>
 
-<p>在 Pod 中尝试访问 Kubernetes API Service，</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">curl: (60) SSL certificate problem: unable to get local issuer certificate</span><br><span class="line">More details here: https://curl.haxx.se/docs/sslcerts.html</span><br><span class="line"></span><br><span class="line">curl failed to verify the legitimacy of the server and therefore could not</span><br><span class="line">establish a secure connection to it. To learn more about this situation and</span><br><span class="line">how to fix it, please visit the web page mentioned above.</span><br></pre></td></tr></table></figure>
-<p>以上报错，是因为通过 https 访问 Kubernetes API Service，但是无法验证证书。最简单的规避此问题的方法是使用 <code>curl</code> 命令的 <code>-k, --insecure</code> 选项忽略验证证书，但这是存在安全隐患的，不建议在生产环境使用。</p>
-<p>Pod 启动时，系统已经将集群的 CA 证书注入到了每个容器，因此可以使用 CA 证书来验证服务器证书。执行以下命令，使用 CA 证书重新访问 Kubernetes API Service</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">curl --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc.cluster.local</span></span><br><span class="line">&#123;</span><br><span class="line">  &quot;kind&quot;: &quot;Status&quot;,</span><br><span class="line">  &quot;apiVersion&quot;: &quot;v1&quot;,</span><br><span class="line">  &quot;metadata&quot;: &#123;&#125;,</span><br><span class="line">  &quot;status&quot;: &quot;Failure&quot;,</span><br><span class="line">  &quot;message&quot;: &quot;forbidden: User \&quot;system:anonymous\&quot; cannot get path \&quot;/\&quot;&quot;,</span><br><span class="line">  &quot;reason&quot;: &quot;Forbidden&quot;,</span><br><span class="line">  &quot;details&quot;: &#123;&#125;,</span><br><span class="line">  &quot;code&quot;: 403</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>可以看到，使用 CA 证书后，HTTPS 连接成功，Kubernetes API 返回了响应。以上 Kubernetes API 输出中，表面此次请求使用的是匿名用户，不具有 API 服务器的授权，因此拒绝访问。</p>
-<blockquote>
-<p>默认情况下，Pod 使用的是 namespace 中的默认的 ServiceAccount token，默认不具有任何权限。</p>
-</blockquote>
-<p><a href="https://0920811.xyz/202305161451/#RBAC-配置示例">参考 RBAC 配置认证鉴权使 Pod 的容器可以和 Kubernetes API Server 通信</a></p>
-<h1 id="Pod-计算资源限制"><a href="#Pod-计算资源限制" class="headerlink" title="Pod 计算资源限制"></a>Pod 计算资源限制</h1><p>创建 Pod 时，可以指定<strong>容器</strong>对 CPU 和 Memory 的资源请求量（<code>requests</code>）和资源限制量（’limits&#96;），他们不是针对 Pod，而是针对 Pod 中的容器。Pod 对资源的请求量和限制量是它所包含的所有容器的请求量和限制量之和。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: $&#123;NAME&#125;</span><br><span class="line">  namespace: $&#123;NAMESPACE&#125;</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: $&#123;NAME&#125;</span><br><span class="line">    image: nginx:1.14.2</span><br><span class="line">    ports:</span><br><span class="line">    - containerPort: 80</span><br><span class="line">      name: http-web</span><br><span class="line">      </span><br><span class="line">    resources:</span><br><span class="line">      requests:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br><span class="line">      limits:</span><br><span class="line">        cpu: 200m</span><br><span class="line">        memory: 10Mi</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>如果为容器的资源申请指定了 <code>limits</code>，但未指定 <code>requests</code>，并且没有应用准入时机制为该资源设置默认请求， 然后 Kubernetes 将复制你所指定的限制值，将其用作资源的请求值。</p>
-</blockquote>
-<h2 id="资源类型"><a href="#资源类型" class="headerlink" title="资源类型"></a>资源类型</h2><p>CPU 和 内存 都是 资源类型。每种资源类型具有其基本单位。 CPU 表达的是计算处理能力，其单位是 Kubernetes CPU。内存的单位是字节。<sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[资源类型](https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types)
-">[2]</span></a></sup></p>
-<h3 id="CPU-资源单位"><a href="#CPU-资源单位" class="headerlink" title="CPU 资源单位"></a>CPU 资源单位</h3><p>CPU 资源的限制和请求以 “cpu” 为单位。 在 Kubernetes 中，一个 CPU 等于 1 个物理 CPU 核 或者 1 个虚拟核， 取决于节点是一台物理主机还是运行在某物理主机上的虚拟机。</p>
-<blockquote>
-<p>1 CPU &#x3D; 1000m 的 CPU 资源</p>
-</blockquote>
-<h3 id="Memory-资源单位"><a href="#Memory-资源单位" class="headerlink" title="Memory 资源单位"></a>Memory 资源单位</h3><p>memory 的限制和请求以字节为单位。 你可以使用普通的整数，或者带有以下 数量后缀 的定点数字来表示内存：E、P、T、G、M、k。 你也可以使用对应的 2 的幂数：Ei、Pi、Ti、Gi、Mi、Ki。</p>
-<h2 id="查看节点资源总量"><a href="#查看节点资源总量" class="headerlink" title="查看节点资源总量"></a>查看节点资源总量</h2><p>通过以下命令输出，可以看到节点的资源总量和可分配资源量</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get nodes</span></span><br><span class="line">...</span><br><span class="line">Capacity:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  524276716Ki</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             32068748Ki</span><br><span class="line">  pods:               110</span><br><span class="line">Allocatable:</span><br><span class="line">  cpu:                16</span><br><span class="line">  ephemeral-storage:  483173420666</span><br><span class="line">  hugepages-1Gi:      0</span><br><span class="line">  hugepages-2Mi:      0</span><br><span class="line">  memory:             31966348Ki</span><br><span class="line">  pods:               110</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<ul>
+<li><strong>好遁。君子吉，小人否</strong> ： 好，乐于、喜欢、善于。君子识时务乐于退避，小人则不然（不乐于退避）。</li>
+</ul>
+<p>君子知道何时进、何时退，在小人壮大、时势不利时，能洞察先机，主动退避以保全自身，符合遁卦的卦义，故为吉祥。小人贪恋权力、地位和物质，即使面对危险，也不愿意放弃自己的所得。因此，在需要退避时，他们不乐于、不肯退避（“否”），最终会因时机错过而遭受灾祸。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处遁之时，得以退避，故好遁也。君子以退为吉，小人不能遁也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>遁之道在九四而得其正。能遁者，君子也；不能遁者，小人也。</code></p>
+</li>
+<li><p><code>九四虽刚，而处柔位，能好遁者，故吉。小人不能遁，故否。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">嘉遁，贞吉。</span><br></pre></td></tr></table></figure>
 
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/reference/kubernetes-api/workload-resources/pod-v1/#%E8%B5%84%E6%BA%90">resources</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/manage-resources-containers/#resource-types">资源类型</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：嘉遁贞吉，以正志也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>嘉遁贞吉，以正志也</strong> ： 嘉，美、善、值得赞颂、值得称颂。美好的退避、高尚的抽身、君子之退。</li>
+</ul>
+<p>九五刚尊得中而应六二，以刚健中正之德，主动让贤、让功，既契合时势规律，又坚守自身正道，故美其退曰“嘉遁”。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处尊而能遁，嘉之至也。志正故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>能遁于君位之尊，非迫也，自得也。其遁之美，在于是也。</code></p>
+</li>
+<li><p><code>九五居尊，能自遁避，不与小人争。其志正也，故贞吉。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">肥遁，无不利</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：肥遁无不利，无所疑也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>肥遁，无不利</strong> ： 肥，这里不是指肥胖，而是指丰裕、富足、安逸、从容。从容而退，满载而退，毫无顾虑、迟疑。</li>
+</ul>
+<p>上九阳爻居阴位，处卦之极、刚柔相济</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>肥者，大也。退避无害，得其全也，无不利也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>退而无所累，德全而去，谓之肥遁。</code></p>
+</li>
+<li><p><code>上九处遁之终，遁既得其全，故无不利也。</code></p>
+</li>
+</ul>
+]]></content>
       <categories>
-        <category>Kubernetes</category>
+        <category>易学</category>
       </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之天泽履</title>
+    <url>/20250917160539/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天泽履"><a href="#天泽履" class="headerlink" title="天泽履"></a>天泽履</h1><p><img src="https://i.0920811.xyz/img_350.png"></p>
+<p>天泽履，乾（天）上兑（泽）下。兑卦代表喜悦、和悦，象征着一种柔和、顺应的态度。乾卦代表刚健、强盛，象征着一种刚强、积极的力量。</p>
+<p>履，礼也。履进、行动的礼节、规矩。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，不咥人，亨。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：履，柔履刚也。说而应乎乾，是以履虎尾，不咥人，亨。刚中正，履帝位而不疚，光明也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：上天下泽，履;君子以辨上下，定民志。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>履虎尾，不咥（dié）人</strong> ： 履，脚步、践行、踩踏、行走、履行。 咥，噬咬、老虎噬咬的动作。象征着处于危险之中但能够谨慎行事，避免灾祸。兑为虎为口为悦，上为首，下为尾。悦而应互乾，是以履虎尾，不咥人。y</li>
+<li><strong>上天下泽，履;君子以辨上下，定民志</strong> ： 天在上、泽在下，天为尊、泽为卑，上下有别、秩序（如君臣、长幼、权责）分明。民众明确自身定位，不越位、不妄求，从而心态安定。</li>
+</ul>
+<p>履卦的核心是 <strong>礼与慎</strong> 。君子之道，在于守礼分，知上下有序，以安定人心。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>履虎尾者，危也。处危能无咥人者，以其得中正而应之也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>履者，行也。人道之行，贵乎中正。九五刚中正，履帝位，居尊而能正，不疚而光明。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>履，行也。兑为说，乾为健。以柔履刚，悦而应乾，则虽履虎尾，而不为害，亨也。九五刚中正，履帝位而不疚，光明正大之象。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">素履，往无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：素履之往，独行愿也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>素履</strong> ： 素，纯白、朴素、朴实、本真、不修饰、朴实无华。以朴素本真的态度行事，不刻意追求浮华或迎合他人</li>
+<li><strong>素履之往，独行愿也</strong> ： 强调这种朴素、诚实的态度是出于内心的真诚和自愿，而不是为了迎合他人或追求外在的回报。这里的 独行 表示独立自主的行为，愿 表示内心的愿望或意愿。</li>
+</ul>
+<p>初九爻通过强调以朴素、诚实的态度去行事的重要性，提醒我们在面对各种行动和决策时，要保持内心的真诚和自愿，坚守本心，不随波逐流。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>素履，质也。言其履行质直，不饰伪，虽独行，犹得无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>素，质也。履初而以质朴为履，往无咎。君子之行，以诚质为本。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>素履，质直而无文之行。处初而能守此，往则无咎。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履道坦坦，幽人贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：幽人贞吉，中不自乱也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>履道坦坦，幽人贞吉</strong> ： 坦坦，平顺、平坦宽广、宽阔无障碍。幽人，恬淡寡欲、幽居、安静、内心沉静、不浮躁、能坚守自我之人，幽 强调 内心的沉静收敛，不随外界喧嚣动摇。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>二以阳居阴，得中正之位。能安静自守，履道平正，故曰“幽人贞吉”。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九二刚中而居柔位，有中正之德，能安于幽处，不求显达，守正以行，吉也。幽人者，处中不乱，安静自守之象。贞正不改，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>履道坦坦，谓中正平易之道也。九二居中得正，如幽居之人，守正不乱，故吉。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">眇能视，跛能履，履虎尾，咥人，凶。武人为于大君。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：眇能视，不足以有明也。跛能履，不足以与行也。咥人之凶，位不当也。武人为于大君，志刚也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>眇能视，跛能履</strong> ： 眇，一只眼睛失明、目盲。跛，一只腿脚残疾。</li>
+<li><strong>武人为于大君</strong> ： 武人，武夫或有勇无谋的人。武人妄图代君主行事、掌控高位。进一步说明了六三爻的主体虽然有行动的意愿，但因为能力不足，最终会带来不利的结果。</li>
+</ul>
+<p>六三阴爻居阳位，位不当，爻辞以 <strong>残缺行动（眇能视，跛能履） 喻 能力缺陷，以 履虎尾被咥 表 险局恶果</strong> 。隐喻 自身能力有明显缺陷，却盲目高估自己，强行行动。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>眇而欲视，跛而欲履，皆以小德而强为大事，不胜其任，故履虎尾而凶。六三阴柔不中正，而在下体之上，志刚妄动，犹武人之在大君之前。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六三阴柔不中，处履之险，才德不足而妄为，故凶。眇视、跛履，皆喻小人之不足任大事。以小人之志，强行于大君之前，必至于凶。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六三阴柔而不中正，不能自定，而妄履其道，犹眇视、跛履，不足以有为。故履虎尾，咥人而凶。其志刚而欲为，犹武人之为大君用。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，愬愬终吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：愬愬终吉，志行也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>愬愬终吉，志行也</strong> ： 愬愬，通 肃肃，小心戒惧、谨慎不安的样子。志行 指 内心敬畏、态度谨慎、言行收敛（志）落到实处，转化为具体行动，虽处险境，但能保持戒惧，最后结果吉祥。</li>
+</ul>
+<p>九四阳爻居阴位，位不正，终吉，关键在于要认识到所处环境的危险，因此知危能惧，保持戒慎。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四以阳居阴，失正而不中，履危之时，故“愬愬”。然而知危能惧，虽失正而能戒慎，故终得吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四居近君之位，志欲上行，处危履虎尾之地，能戒惧而不敢妄动，故虽危而终吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九四以阳居阴，位不中正，履危之时，唯有愬愬自守，则终得吉。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">夬履，贞厉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：夬履贞厉，位正当也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>夬（guài）履贞历</strong> ： 夬，决断、果决、果断、刚决。要警惕过刚。</li>
+</ul>
+<p>九五阳爻居上卦中位，符合 <strong>尊位刚中正</strong> ，是 贞 的基础。虽能守正，但需警惕过刚，否则会有危险（贞历）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五刚健中正而居尊位，夬然决断以履其道，虽危厉，然其位正当，故能以正济。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五居尊位，刚健中正，履道决断。然履虎尾之危，虽正亦有厉，但以正道处之，故虽危而可安。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五履中正之道，决断而行，虽贞正犹有危险之象。以其位正当，故能无咎。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">视履考祥，其旋元吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：元吉在上，大有庆也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>视履考祥</strong> ： 视，看、观察、考察 。考，考察、总结。祥，吉祥、如意、吉，此处代指吉凶。通过回顾考察整个过程中的行事、想法，反思自己的行为及其结果。</li>
+<li><strong>其旋元吉</strong> ： 旋，回旋、回归、循环、归返。履卦上九是从夬卦九三和上六换位而来，反旋上位，全卦只有上九和六三互为为正应，故其旋元吉。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处履之终，能审视所履，考其吉凶而旋归于正，故元吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>上九居履之极，若能省察所履之道，反身自考，不失其正，则元吉而有大庆。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>上九履之终，能视所履而考其吉凶，则旋归于正，故元吉。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之水雷屯</title>
+    <url>/20250901163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水雷屯"><a href="#水雷屯" class="headerlink" title="水雷屯"></a>水雷屯</h1><p><img src="https://i.0920811.xyz/img_343.png"></p>
+<p>屯（zhun）卦，是 《周易》继乾、坤卦后首个揭示 <strong>事物初创阶段规律</strong> 得核心卦象。屯卦 <strong>下震上坎、震为雷为足为动、坎为水为云、内动外险，涉足入险，不可轻动</strong> ，象征 <strong>万物萌芽（初生）、草昧未开、事业初创时的 艰难（勿用 为现实约束、阻力）与希望（元亨利贞为根本潜力）并存</strong></p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">元，亨，利，贞。勿用有攸往。利建侯。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">屯，刚柔始交而难生。动乎险中，大亨贞。雷雨之动满盈。天造草昧，宜建侯而不宁。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：云雷屯;君子以经纶。</span><br></pre></td></tr></table></figure>
+<ul>
+<li><strong>建侯</strong> ： 侯，地基、基础、根基。建侯，打好根基，做事情之前先建立稳固得根据和团队。</li>
+<li><strong>刚柔始交而难生</strong> ： 刚柔始交，指乾（刚健）与坤（柔顺）的力量首次交汇，是 <strong>万物初创的起点（如天地初开、阴阳交汇生万物）</strong> ； <strong>难生 指 刚柔交汇时尚未形成稳定平衡，故产生艰难（事物初生，根基不稳，环境有挑战）</strong> </li>
+<li><strong>动乎险中，大亨贞</strong> ： 震为雷为动，坎为水（云）为险，事物虽然刚刚萌生，力量尚弱，根基不稳，面临艰难（难），但只要依正道（驯致其道，建侯），结果必然不错（大亨贞）</li>
+<li><strong>雷雨之动满盈，天造草昧</strong> ： 天地初创（阴阳初交），雷雨交加，万物萌生却混沌未判。 <strong>雷雨之动</strong> 象征 初创时既有推动发展得力量、生机活力（雷），又有滋养生长的资源（环境，雨），但（雷雨）满盈，意味着 <strong>环境 充满变数、混乱无序（如同雷雨天气的 狂暴与不确定）</strong> 。 <strong>天地草昧</strong> 指 天地创造万物时一片蒙昧、尚未开化，象征 初创领域规则未立、格局未定</li>
+<li><strong>经纶</strong> ： 理丝曰经，编丝曰纶，经为纵丝，纶为横丝，通常还以经指战略、纶指战术。整理丝缕，喻筹划、布局、分条理于混乱之中，引申为 治理天下、筹划大业、规划全局。</li>
+</ul>
+<p><strong>元，亨，利，贞 为 卦之四德，乾为万物之父，四德齐备。坤卦为万物之母，顺承于乾，在四德上有了一定限制，如 利牝马之贞。除乾坤之外，四德齐备的卦还有 屯、随、无妄、革 四卦</strong> 。这四卦的四德与乾坤的四德取义又有不同，四德的大体是具备的，但在普遍性、永恒性方面要小一些、差一等。 <strong>元 不再是创始、创造，而是开始。亨，是运动的顺利，不再是永久、持久的亨通。利，只是对自身有利，不再是对万物普遍性的有益。贞，是守正，不再是永久的正确不变。</strong></p>
+<p>屯卦是万物刚刚开始出生，有了繁衍发展的基础，持续发展下去会欣欣向荣，故有 元，亨，利，贞的特点。</p>
+<p>“有天地，然后万物生焉。盈天地之间者惟万物，故受之以屯。屯者，盈也。” 乾坤两卦后，接着是屯卦，“雷雨之动满盈”，震为雷，坎为雨，春雷发动，唤醒万物，春雨滋润，哺育万物，雷雨一动，万物齐出，盈满天地，象征屯之盈满。</p>
+<p>“屯，难也。像草木之初生，屯然而难。” 万物初生，如草木发于地下，艰难破土，始生不易，故有艰难之意。始生还未伸展开，故有团聚之意。万物始生，从无到有，故有充盈之意。</p>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">盘桓，利居贞，利建侯。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽盘桓，志行正也。以贵下贱，大得民也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>盘桓</strong> ： 徘徊盘旋。有阻力、有困难，无法直线前进，只能回环前进。</li>
+<li><strong>利居贞，利建侯</strong> ： 居，停留、坚守。贞，正道、根本。初创之期，阻碍多、根基不稳、方向不明，此时不应急于行动（不妄动），应先打好基础、巩固根基、凝聚基层，以待时（利建侯）</li>
+<li><strong>志行正也</strong> ： 虽面临困难，但是坚守正道、不偏离根本（居贞），内在的志向与行动方向（万物始生，困难阻力多，但天地生生之德，合乎天地正道）是正确的，不是消极等待，而是为未来积极准备、蓄力（居贞、建侯）</li>
+<li><strong>以贵下贱，大得民也</strong> ： 贵，指初九阳爻；下，指初九阳爻（贵）居于下位（最小爻位）。核心力量（贵）主动放下姿态，贴近基层（下，贱），最终能广泛凝聚基层支持，为后续发展奠定根基</li>
+</ul>
+<p>初九阳爻居阳为，位正，正应六四，守正而不偏，有利。</p>
+<p><strong>以贵下贱，大得民也。6t易经中，刚（阳）爻为贵，柔爻（阴爻）为贱，初九在三个柔爻之下，象征以尊贵身份居卑贱的阴爻之下，有谦恭敬人之美德</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>磐桓者，难也。难而不进，居正以待，建侯以辅，故利也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>屯之初难，宜磐桓以待时。虽不进，然志在正，不失其道。贵而能下贱，得众人之心。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>屯难之始，宜磐桓以待，居贞则利。初九阳刚在下，以贵而下贱，能得民心，利于建侯也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">屯如邅如，乘马班如。匪寇婚媾，女子贞不字，十年乃字。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之难，乘刚也；十年乃字，反常也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>屯如邅（zhan）如</strong> ： 屯，困难、艰难险阻、草木破土未伸、难行； 邅，阻滞不前、转、盘旋、徘徊不前。六二前临互卦艮，艮为阻为止，正应九五，九五在坎中，坎为险难，前进艰难险阻，困难重重，故为 <em>屯如邅如</em></li>
+<li><strong>乘马班如</strong> ： 班，分瑞玉也（古代帝王将玉分割赐给诸侯，玉原本为整体，分割后则 分散归属），分割、分散、无序，也有说通 <strong>盘，盘桓、盘旋</strong> 。乘马班如，马匹无序排列，无法统一前进，象征行动不顺，力量不一。</li>
+<li><strong>匪寇婚媾</strong> ： 不是盗寇（象征危险、对立、危险），而是联姻（合作、机遇）。九五在坎中，坎为盗寇，六二正应九五，上下阴阳正应，婚姻匹配正合，故言 <strong>匪寇婚媾</strong></li>
+<li><strong>女子贞不字，十年乃字</strong> ： 字，许嫁、出嫁成亲，另有怀孕、生育之说。女子，象征柔顺（阴），六二处中正之位，贞。 <strong>震是反生稼，稼是禾稼，反生是该生不生，不该生而生，该向上生而向下生，该向下生而向上生。六二在震里，反生，故不字</strong> 。六二在互卦坤中，坤数为十，故 <em>十年不字</em></li>
+<li><strong>乘刚</strong> ： 乘刚 指 六二阴爻 乘坐 在初九阳爻之上（爻位上六二居初九之上），象征 柔顺的辅助者（六二，女子）试图承载或推动刚健的核心力量（初九），却因自身阴柔力量不足，无法匹配刚健力量的强度与节奏，反而被刚健力量的惯性拖入困境。</li>
+<li><strong>十年乃字，反常也</strong> ： 反常，指返回常道。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>屯难也。六二以阴居阴，得中而应于六五，然上承九三之刚，故屯如邅如。</code></p>
+<blockquote>
+<p><strong>然上承九三之刚</strong> ，指 屯卦第三爻，阴爻居阳位，爻性为阴（柔），爻位为阳（刚，第三爻爻位为阳、刚）</p>
+</blockquote>
+</li>
+<li><p>程颐</p>
+<p>  <code>婚媾者，合也。虽似为难，非寇害也。女子守贞，不字于今，待久乃合。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>乘马班如，进退无常。匪寇而婚，非害也。女子守贞，十年乃字，必待时也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">既鹿无虞，惟入于林中，君子几不如舍，往吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：既鹿无虞，以纵禽也。君子舍之，往吝穷也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>既鹿无虞</strong> ： 即鹿，追逐、寻找、猎取猎物；虞，古代执掌山林、兼作向导得官员</li>
+<li><strong>君子几不如舍</strong> ： 几，征兆、时机。即鹿无虞，惟入于林中，君子见到风险、危机征兆，应放弃，若 继续盲目前进，必然遭遇凶险。核心是 在风险显现前主动止损，而非在风险爆发后被动承受。</li>
+<li><strong>即鹿无虞，纵禽也</strong> ： 即鹿无虞，不但会导致猎物（机会）丢失，还会导致风险（入于林中）</li>
+<li><strong>君子舍之，往吝穷也</strong> ： 即鹿无虞，惟入于林中，君子如果还继续追逐，不但会导致机会丢失（纵禽），还会使自己深陷林中，使吝（凶险）升级为穷（绝境）</li>
+</ul>
+<p>六三阴爻（爻性）居阳位（爻位），不当位，下乘六二（柔爻，辅助者，无足够资源、支撑），上承六四（柔爻，上层，无明确指导、方向），处于 <strong>上下无刚健支撑</strong> 的孤立状态，如同 <strong>捕猎者无虞，若妄动（凭感觉），易陷入危险（惟入于林中）</strong> 。六三处下卦震之极，上临坎险（林中），正是动而遇险的象。</p>
+<p>事物初创之期，面对风险（基础环境不稳、资源不足、方向不定、风险不可控），应理性得主动舍弃机遇，不盲目前行（君子几不如舍），导致遭遇风险（扩大风险，往吝）。初创期得核心资源（资金、人力、信任）都及其宝贵，若因冒进而损失（沉没成本），则后续再遇机会，也无力把握，此时得 <strong>舍 是 保住根基，留待未来</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>既鹿无虞，失道而进也。惟入林中，危而无获也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>鹿者，利也。无虞而逐之，必失道而纵禽。君子知几，不如舍之，若往则吝穷。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>逐利而无所导，则失道而纵禽。君子知几而舍之，不往则已，往则吝穷矣。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘马班如，求婚媾， 往吉，无不利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：求而往，明也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>求婚媾，往吉</strong> ： 求 为 主动寻求、积极对接。婚媾 ，应爻在初九，为正应，男女相悦，婚姻好合。</li>
+<li><strong>求而往，明也</strong> ： 六四爻无不利，求而往，明也，六四紧邻九五，不能上合九五，九五虽是阳爻，但是正应在六二，六四能舍九五从初九，为明智之选。</li>
+</ul>
+<p>六四爻居上卦初爻，阴爻（爻性）居阴位（爻位），得正位，下（正）应初九，上承九五尊位（阳刚之主、核心刚健力量），形成 <strong>柔得正而应刚</strong> 的最佳格局。在屯卦 <strong>动乎险中 的大背景里，六四已脱离下卦震之 动，进入上卦坎之 险，但本身得位又得援（下应初九，上承九五，无不利），故能把 班如 的无序静止转为有利行动。</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>班如，不进也。欲进而未得，若能求正应以相合，则无不利。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六四以阴居阴，得其位，近于尊，不自进而求应于初九，犹婚媾也，故无不利。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>乘马班如，犹豫不进之象。若能下求其应，则无不利。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">屯其膏，小贞吉，大贞凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：屯其膏，施未光也。</span><br></pre></td></tr></table></figure>
+
+
+<ul>
+<li><strong>屯其膏</strong> ： 屯，囤积、蓄积、累积、积累、聚集；膏，脂肪、油脂，引申为 恩泽、资源，象征 资源、财富、权力等。</li>
+<li><strong>小贞吉，大贞凶</strong> ： 九五和六二阴阳正应，应的范围小。九五不仅是上卦中位，还是全卦中位、尊位、天子之位，只与六二相应，有所私，恩泽不能广布，故 <em>大贞凶</em> 。占问小事吉祥，占问大事凶。</li>
+<li><strong>施未光也</strong> ： 施，施恩、分配（资源与权力）、给与；光，广泛、广大、普照。对应九五的 <strong>资源仅能支撑小范围行动，无法支撑大范围行动</strong></li>
+</ul>
+<p>九五阳爻居爻位，尊位居中且正，本是吉象，但处 <strong>屯难（刚柔始交而难生），坎（险）中</strong> 之时，聚而未伸展，环境艰难，九五虽居尊位，却 德泽未广施，占问小事吉祥，占问大事凶。。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五以阳居尊，宜大亨也。然屯难之时，恩泽未施，故屯其膏。小贞则吉，大贞则凶也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五尊位，才德足以施惠，然当屯难，膏泽未光。小贞则守正待时吉，大贞则妄图大施，必凶。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>屯膏，恩泽未施也。九五居尊，中正之德，当屯之时，不可大施；小贞则吉，大贞则凶。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘马班如，泣血涟如</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">泣血涟如，何可长也</span><br></pre></td></tr></table></figure>
+
+<p>上六阴爻居阴位，为 屯卦 最后一爻，为穷（困）极（尽）之位，既无正应（六三阴爻，敌而不应），又乘九五之刚，上下皆无出路，形成穷极之位。坎为水、为血，故泣泪至泣血（泣血涟如）。此爻在全周易中也属比较凶的，毫无出路，血泪涟涟也无用。</p>
+<p><strong>泣血涟如，何可长也</strong> ，物极必反，此种状态必然迅速结束：或破局，或崩溃，或转向新的循环。所谓 <strong>困极则变，屯极则亨</strong> 。失去机会者要主动总结经验教训，反思失败（被动）的根源，让这些失败经验成为新开端的催化剂</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>班如，迟疑也。屯难之极，忧苦涟如，故泣血也。然屯穷则变，故曰何可长也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>上六以阴柔居屯之极，穷迫忧苦，故泣血涟如。然屯极则必变，故曰何可长也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>处屯之极，穷迫之甚，忧痛之深，故有泣血之象。然屯极则变，必不可以长久。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
   </entry>
 </search>
