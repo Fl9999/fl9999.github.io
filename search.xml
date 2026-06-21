@@ -23842,6 +23842,490 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux 进程管理</title>
+    <url>/202406260952/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong><code>Program</code></strong> 是一个静态实体，只是存储在操作系统中的文件（集合）</p>
+<p><strong><code>Process</code></strong> 是操作系统上的活动（Active）实体，是 <strong><code>Program</code></strong> 由操作系统加载到内存并运行之后的实体。</p>
+<p><strong><code>Process</code></strong> 运行过程中需要操作系统为其分配各种资源，如 CPU、Memory、Files、IO 等来完成其运行。</p>
+<p>如果一个 <strong><code>Program</code></strong> 被操作系统运行（启动）了多次，那么其产生的多个 <strong><code>Process</code></strong>  属于分割（单独）的实体。</p>
+<p>Linux 系统中调度的进程&#x2F;线程，通常被称为任务（Task）</p>
+<p>Linux 中常见的进程状态如下表：</p>
+<table>
+<thead>
+<tr>
+<th>状态标识</th>
+<th>状态名称</th>
+<th>状态说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>R</code></td>
+<td><code>task_running</code></td>
+<td>进程处于运行或就绪状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>S</code></td>
+<td><code>task_interruptible</code><br/> <code>sleeping</code></td>
+<td>可中断的睡眠状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>D</code></td>
+<td><code>task_uninterruptible</code></td>
+<td>不可中断的睡眠状态<br/>1. 它是一种睡眠状态，意味着处于此状态的进程不会消耗 CPU<br/>2. 睡眠的原因是等待某些资源（比如锁或者磁盘 IO），这也是非常多 D 状态的进程都处在处理 IO 操作的原因<br/>3. 是它不能被中断，这个要区别于 <code>硬件中断</code> 的中断，是指不希望在其获取到资源或者超时前被终止。因此他不会被信号唤醒，也就不会响应 <code>kill -9</code> 这类信号。这也是它跟 <code>S（可中断睡眠）</code>状态的区别</td>
+<td></td>
+</tr>
+<tr>
+<td><code>T</code></td>
+<td><code>task_stopped</code> <br/> <code>task_traced</code><br/><code>Traced</code></td>
+<td>暂停状态或跟踪状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Z</code></td>
+<td><code>task_dead</code> <br/> <code>exit_zombie</code><br/><code>zombie</code></td>
+<td>退出状态，进程成为僵尸进程</td>
+<td></td>
+</tr>
+<tr>
+<td><code>X</code></td>
+<td><code>task_dead</code> <br/> <code>exit_dead</code></td>
+<td>退出状态，进程即将被销毁</td>
+<td></td>
+</tr>
+<tr>
+<td><code>I</code></td>
+<td><code>idle</code></td>
+<td>空闲状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>+</code></td>
+<td></td>
+<td>表示关联了前台操作（Foreground Operation），比如前台运行的进程</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="进程调度"><a href="#进程调度" class="headerlink" title="进程调度"></a>进程调度</h1><p>Linux 中任务（Task）调度算法默认使用 CFS（Completely Fair Scheduler，内核版本 &gt;&#x3D; 2.6.23）.</p>
+<p>CFS 调度算法没有使用固定的进程（此处的进程可能是进程或者线程，Linux 中统称为 Task）优先级（Priority），而是根据进程的 <code>nice value</code> 为进程分配一定比例的（Proportional） CPU 计算时间。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Operating System Concepts v10 Online](https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf)  5.7.1 Example: Linux Scheduling">[1]</span></a></sup></p>
+<p><strong><code>nice</code> 的取值从 <code>-20</code> - <code>+19</code>，值越小，优先级越高，默认值为 <code>0</code></strong> 。优先级高的进程会被分配到更高比例的 CPU 处理时间。</p>
+<p>在 Linux 内核中，优先级分为两种：静态优先级和动态优先级。CFS 使用的是动态优先级，它是根据 <code>nice</code> 值计算出来的。</p>
+<p>CFS Scheduler 不会直接设定 Priorities，而是为每个 Task 维护变量 <code>vruntime（virtual runtime）</code>（可以检查系统 <code>/proc/&lt;PID&gt;/sched</code>），这个值记录了每个 task 使用了多少 CPU 时间。</p>
+<p>CFS 通过将进程的虚拟运行时间（<code>vruntime</code>）与其他进程的虚拟运行时间进行比较来决定调度优先级。权重越大，<code>vruntime</code> 增长越慢，意味着进程的优先级越高，能够更频繁地被调度。</p>
+<p>假入一个任务有默认的 Priority（<code>nice=0</code>），那么他的 <code>vruntime</code> 和实际使用的 CPU 时间相同。例如一个 <code>nice=0</code> 的进程使用了 CPU 200ms，那么他的 <code>vruntime=200ms</code>。<strong>低优先级（low priority，<code>nice&gt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&gt;200ms</code>，相反的，一个 <strong>高优先级（high priority,<code>nice&lt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&lt;200ms</code>。<strong>基于此，CFS Scheduler 在选择下一个要执行的任务时，会选择 <code>vruntime</code> 最小的任务来运行</strong>。如果有高优先级的任务就绪（可执行），它会抢占（preemptive）正在执行的低优先级的任务。</p>
+<p>假如 Linux 中有 2 个优先级一样的任务（<code>nice=0</code>），一个进程为 I&#x2F;O-bound，另一个为 CPU-bound。通常情况下，在一个 CPU 周期内，I&#x2F;O-bound 的任务会使用很少的 CPU 时间就会因等待 IO 而中断在 CPU 上的执行并进入 CPU 的等待调度队列（schedule queue），而 CPU-bound 的任务会用尽分配给它的整个 CPU 周期。执行一段时间之后， I&#x2F;O-bound 的任务的 <code>vruntime</code> 的值会显著的小于 CPU-bound 的任务的 <code>vruntime</code>，导致 I&#x2F;O-bound 的任务拥有比 CPU-bound 的任务更高的优先级，当 I&#x2F;O-bound 的任务就绪（IO 返回数据）时，它会立即抢占 CPU 开始执行。</p>
+<blockquote>
+<p><code>nice</code> 只能针对单一的进程调整优先级，无法同时将优先级配置关联到相关进程，如 子进程或者同一个服务中的其他进程</p>
+</blockquote>
+<h2 id="修改-nice-的值"><a href="#修改-nice-的值" class="headerlink" title="修改 nice 的值"></a>修改 nice 的值</h2><p>在 Linux 中，<code>nice</code> 值用于调整进程的优先级，数值范围从 <code>-20</code>（ <strong>最高优先级</strong> ）到 <code>19</code>（ <strong>最低优先级</strong> ）。较低的 <code>nice</code> 值表示进程有更高的优先级，会更频繁地获得 CPU 时间，而较高的 <code>nice</code> 值表示进程有较低的优先级。</p>
+<p>你可以使用 <code>nice</code> 和 <code>renice</code> 命令来修改进程的 <code>nice</code> 值</p>
+<blockquote>
+<p>普通用户（<code>root</code> 之外的用户）启动应用程序时默认只能配置初始 <code>nice</code> 值 <code>0-19</code></p>
+<p>普通用户（<code>root</code> 之外的用户）修改正在运行的应用程序的 <code>nice</code> 值，只能改大，不能改小。比如进程启动时，其 <code>nice</code> 为 <code>10</code>，拥有权限的普通用户只能将其 <code>nice</code> 值改为大于 <code>10</code> 的值。 </p>
+</blockquote>
+<h3 id="nice-命令"><a href="#nice-命令" class="headerlink" title="nice 命令"></a>nice 命令</h3><p><strong><code>nice</code> 命令用于在启动进程时指定 <code>nice</code> 值</strong> 。如果不指定，默认 <code>nice</code> 值为 <code>0</code>。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">nice -n 10 command</span><br></pre></td></tr></table></figure>
+
+<h3 id="renice-命令"><a href="#renice-命令" class="headerlink" title="renice 命令"></a>renice 命令</h3><p><code>renice</code> 命令可以修改已经在运行的进程的 <code>nice</code> 值。需要提供进程 ID（ <strong>PID</strong> ）来指定要修改的进程。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">renice &lt;nice_value&gt; -p &lt;PID&gt;</span><br></pre></td></tr></table></figure>
+<p>如果想要一次修改多个进程的 <code>nice</code> 值，可以传递多个 PID：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo renice 10 -p 1234 2345 3456</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="Linux-进程资源控制-cgroups"><a href="#Linux-进程资源控制-cgroups" class="headerlink" title="Linux 进程资源控制 cgroups"></a>Linux 进程资源控制 cgroups</h1><p><code>cgroups</code> 可以将一个任务（<code>task</code>）标识（绑定）到一个特殊的 <strong>控制组（<code>Control Group</code>）</strong> ，此任务启动的子进程可以继承父进程的 <strong>控制组（<code>Control Group</code>）</strong> </p>
+<p><strong>控制组（<code>Control Group</code>）</strong> 可以限制的资源类型如下：</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>blkio</code></td>
+<td><strong>Storage</strong> <br/>限制到存储设备（如 Hard Disk、USB Drivers等）的请求</td>
+</tr>
+<tr>
+<td><code>cpu</code></td>
+<td><strong>CPU</strong> <br/>限制 CPU 调度</td>
+</tr>
+<tr>
+<td><code>cpuacct</code></td>
+<td><strong>Process Accounting</strong> <br/>上报 CPU 使用状态，可以用于统计客户端使用的处理量并进行收费</td>
+</tr>
+<tr>
+<td><code>cpuset</code></td>
+<td><strong>CPU Assignment</strong> <br/>在多处理器的系统上，将 Task 分配到特定的处理器以及关联的内存</td>
+</tr>
+<tr>
+<td><code>devices</code></td>
+<td><strong>Device Access</strong> <br/>限制 <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 对目标设备类型的使用</td>
+</tr>
+<tr>
+<td><code>freezer</code></td>
+<td><strong>Suspend&#x2F;Resume</strong> <br/>暂停&#x2F;恢复  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task</td>
+</tr>
+<tr>
+<td><code>memory</code></td>
+<td><strong>Memory Usage</strong>  <br/>限制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的内存</td>
+</tr>
+<tr>
+<td><code>net_cls</code></td>
+<td><strong>Network Bandwidth</strong> <br/> 制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的网络流量，主要通过对网络流量打上 <code>cgroups</code> 相关标签实现</td>
+</tr>
+<tr>
+<td><code>net_prio</code></td>
+<td><strong>Network Traffic</strong> <br/> 控制  <strong>控制组（<code>Control Group</code>）</strong> 中的网络流量的优先级</td>
+</tr>
+<tr>
+<td><code>ns</code></td>
+<td><strong>Namespaces</strong> <br/> 将 <code>cgroups</code> 分配到不同的 Namespaces，如此同一个 <code>cgroups</code> 中的进程只能看到本 Namespace 中的进程</td>
+</tr>
+</tbody></table>
+<h1 id="Linux-进程管理"><a href="#Linux-进程管理" class="headerlink" title="Linux 进程管理"></a>Linux 进程管理</h1><h2 id="进程命令名和进程可执行文件名"><a href="#进程命令名和进程可执行文件名" class="headerlink" title="进程命令名和进程可执行文件名"></a>进程命令名和进程可执行文件名</h2><p>在系统中遇到以下进程：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ps -elf | grep 18686</span></span><br><span class="line">5 S root     18686  1239  0  80   0 - 46620 pipe_w 15:50 ?        00:00:00 /usr/sbin/CROND -n</span><br><span class="line">0 R root     18694 18686  7  80   0 - 610547 -     15:50 ?        00:00:02 /usr/local/php73/bin/php /home/www/admin/artisan PullData</span><br><span class="line">0 S root     18754 18686  0  80   0 - 22453 pipe_w 15:50 ?        00:00:00 /usr/sbin/sendmail -FCronDaemon -i -odi -oem -oi -t -f root</span><br></pre></td></tr></table></figure>
+<p>其中 PID 为 <code>18686</code> 的进程名为 <code>/usr/sbin/CROND</code>，其启动了另外两个子进程。但是在系统中检查，并不存在路径 <code>/usr/sbin/CROND</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">ls</span> -l /usr/sbin/CROND</span></span><br><span class="line">ls: cannot access /usr/sbin/CROND: No such file or directory</span><br></pre></td></tr></table></figure>
+
+<p>出现此种现象，主要是因为 <em><strong>在启动时，进程的命令名是根据路径传递给 <code>execve()</code> 函数的参数决定的，而不是直接与系统中的文件进行匹配</strong></em>。</p>
+<p>在 Linux 系统中，<code>ps</code> 命令显示的进程信息是从 <code>/proc</code> 文件系统中获取的，而 <code>/proc</code> 文件系统包含有关正在运行的进程的信息，包括每个进程的命令名。因此，即使实际上系统中不存在 <code>/usr/sbin/CROND</code> 文件，但如果进程的命令名是 <code>/usr/sbin/CROND</code>，那么 <code>ps</code> 命令仍然会显示进程的命令名为 <code>/usr/sbin/CROND</code>。</p>
+<p><em><strong>进程的命令名可以查看 <code>/proc/&lt;PID&gt;/cmdline</code> 文件</strong></em>，本示例中显示如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/18686/cmdline</span> </span><br><span class="line">/usr/sbin/CROND-n</span><br></pre></td></tr></table></figure>
+
+<p>对应的系统上的可执行文件的名称可以查看 <code>/proc/&lt;PID&gt;/stat</code>、<code>/proc/&lt;PID&gt;/comm</code>、<code>/proc/&lt;PID&gt;/status</code> 等文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/comm</span> </span><br><span class="line">crond</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/status</span> </span><br><span class="line">Name:	crond</span><br><span class="line">Umask:	0022</span><br><span class="line">State:	S (sleeping)</span><br><span class="line">Tgid:	900</span><br><span class="line">Ngid:	0</span><br><span class="line">Pid:	900</span><br><span class="line">PPid:	1239</span><br><span class="line">TracerPid:	0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/stat</span></span><br><span class="line">900 (crond) S 1239 1239 1239 0 -1 4202816 1627 0 0 0 0 0 0 0 20 0 1 0 139129633 190955520 1478 18446744073709551615 94685936058368 94685936118156 140733000396032 140733000262488 140427856103840 0 0 4096 16387 18446744071797306256 0 0 17 3 0 0 0 0 0 94685938219080 94685938221648 94685948321792 140733000400770 140733000400789 140733000400789 140733000400872 0</span><br></pre></td></tr></table></figure>
+
+<p>在本示例中，实际执行的命令为 <code>crond</code></p>
+<h2 id="进程状态检查"><a href="#进程状态检查" class="headerlink" title="进程状态检查"></a>进程状态检查</h2><h3 id="top-命令"><a href="#top-命令" class="headerlink" title="top 命令"></a>top 命令</h3><p>使用 <code>top</code> 命令可以查看系统负载、CPU 和 内存使用情况。也可以查看单个进程的具体信息。</p>
+<p><code>htop</code> 是 <code>top</code> 命令的一个变种，它提供了更多的交互性、定制性以及其他一些功能，但是它同时使用了相比 <code>top</code> 更多的资源（4 倍多的 <code>syscalls</code>）</p>
+<p><strong><code>top</code> 命令常用选项</strong></p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-H</code></td>
+<td><code>Threads Mode</code>，线程模式。默认情况 <code>top</code> 展示进程的简要信息，使用此选项显示进程中的线程状态。<br/>对应交互式命令 <code>H</code></td>
+<td></td>
+</tr>
+</tbody></table>
+<p><strong><code>top</code> 常用交互命令</strong></p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>P</code></td>
+<td>CPU Utilization 排序，默认排序方式</td>
+</tr>
+<tr>
+<td><code>M</code></td>
+<td>Memory Utilization 排序</td>
+</tr>
+<tr>
+<td><code>I</code></td>
+<td>Irix&#x2F;Solaris-Mode 切换。<br/>默认为 Itrix Mode,在这种模式下，如果某个进程使用了系统中的 2 个 CPU 的所有计算资源，则其 CPU 使用率展示为 200%，依此类推。<br/>在 Solaris Mode 下，进程的 CPU 使用率是整体 CPU 使用的资源除于 CPU 数。如在 4 CPU 的系统中，Itrix 模式下，进程 CPU 使用率为 200%，在 Solaris 模式下，则为 50%</td>
+</tr>
+</tbody></table>
+<ul>
+<li>显示单个进程的（线程）详细信息  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">top -H -p 1423</span></span><br><span class="line">top - 09:44:42 up 54 days, 23:53,  2 users,  load average: 8.82, 6.84, 7.21</span><br><span class="line">Threads:  15 total,   0 running,  15 sleeping,   0 stopped,   0 zombie</span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">Cpu(s): 40.9 us, 10.8 sy,  0.0 ni, 48.1 <span class="built_in">id</span>,  0.0 wa,  0.0 hi,  0.2 si,  0.0 st</span></span><br><span class="line">KiB Mem : 15790488 total,   466056 free,  7761544 used,  7562888 buff/cache</span><br><span class="line">KiB Swap:        0 total,        0 free,        0 used.  3895716 avail Mem </span><br><span class="line"></span><br><span class="line">  PID USER      PR  NI    VIRT    RES    SHR S %CPU %MEM     TIME+ COMMAND                                                                                  </span><br><span class="line"> 1423 root      20   0 1477368 778788   4260 S 39.5  4.9  11999:41 [watchdog:1:6]                                                                           </span><br><span class="line"> 2572 root      20   0 1477368 778788   4260 S 37.9  4.9  11363:48 [watchdog:1:6]                                                                           </span><br><span class="line"> 1436 root      20   0 1477368 778788   4260 S 34.2  4.9  11286:08 [watchdog:1:6]                                                                           </span><br><span class="line"> 1435 root      20   0 1477368 778788   4260 S 33.9  4.9  12059:53 [watchdog:1:6]                                                                           </span><br><span class="line"> 1434 root      20   0 1477368 778788   4260 S 33.2  4.9  10249:00 [watchdog:1:6]                                                                           </span><br><span class="line"> 1437 root      20   0 1477368 778788   4260 S 30.6  4.9  11717:47 [watchdog:1:6]                                                                           </span><br><span class="line"> 1431 root      20   0 1477368 778788   4260 S 28.9  4.9  11222:06 [watchdog:1:6]                                                                           </span><br><span class="line">21378 root      20   0 1477368 778788   4260 S 27.6  4.9  12143:35 [watchdog:1:6]                                                                           </span><br><span class="line"> 1433 root      20   0 1477368 778788   4260 S 17.6  4.9   8738:21 [watchdog:1:6]                                                                           </span><br><span class="line"> 1428 root      20   0 1477368 778788   4260 S  8.0  4.9   7650:56 [watchdog:1:6]                                                                           </span><br><span class="line"> 1429 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.04 [watchdog:1:6]                                                                           </span><br><span class="line"> 1430 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.05 [watchdog:1:6]                                                                           </span><br><span class="line"> 1432 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.03 [watchdog:1:6]                                                                           </span><br><span class="line"> 1438 root      20   0 1477368 778788   4260 S  0.0  4.9  12260:30 [watchdog:1:6]                                                                           </span><br><span class="line"> 1529 root      20   0 1477368 778788   4260 S  0.0  4.9  11068:39 [watchdog:1:6]</span><br></pre></td></tr></table></figure></li>
+</ul>
+<h3 id="pidstat"><a href="#pidstat" class="headerlink" title="pidstat"></a>pidstat</h3><p><code>pidstat</code> 命令用于检查 Linux 内核管理的进程的状态。帮助文档请查看 <code>man pidstat</code>。要查看特定的进程的信息，使用 <code>-p [PID|ALL]</code> 选项，查看子进程相关信息，参考 <code>-T [TASK | CHILD | ALL]</code> 选项</p>
+<p>命令常用选项</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-d</code></td>
+<td>报告 I&#x2F;O statistics</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-C comm</code></td>
+<td>查看 <code>command name</code> 的详细信息， <code>comm</code> 可以是正则表达式</td>
+<td><code>pidstat -C chrome -T CHILD 1 10</code></td>
+</tr>
+<tr>
+<td><code>-p &#123; pid[,...]   / SELF / ALL &#125;</code></td>
+<td>查看指定的 PID 或者所有（ALL） 进程的统计信息，不指定默认使用 <code>-p ALL</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-e program args</code></td>
+<td>使用指定的 <code>args</code> 运行 <code>program</code> 并使用 <code>pidstat</code> 监控其统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-l</code></td>
+<td>在统计输出中，包含详细的命令及其参数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-r</code></td>
+<td>统计进程的 <code>faults</code> 和 Memory 使用情况</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-T &#123; TASK  / CHILD / ALL &#125;</code> <br/><code>-t</code></td>
+<td>查看子进程相关统计信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-u</code></td>
+<td>CPU 使用率</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-w</code></td>
+<td>统计进程上下文切换（Context Switch）信息</td>
+<td></td>
+</tr>
+</tbody></table>
+<p><strong>查看指定的 PID 以及关联的子进程的统计信息</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -t -p 22737 1 1</span></span><br><span class="line">Linux 3.10.0-1160.49.1.el7.x86_64 (ecs-34a8) 	11/26/2024 	_x86_64_	(2 CPU)</span><br><span class="line"></span><br><span class="line">04:04:52 PM   UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">04:04:53 PM     0     22737         -    0.00    0.00    0.00    0.00     0  python3</span><br><span class="line">04:04:53 PM     0         -     22737    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22805    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22806    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22807    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22808    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22809    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22810    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line"></span><br><span class="line">Average:      UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">Average:        0     22737         -    0.00    0.00    0.00    0.00     -  python3</span><br><span class="line">Average:        0         -     22737    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22759    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22806    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22807    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22808    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22809    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22810    0.00    0.00    0.00    0.00     -  |__python3</span><br></pre></td></tr></table></figure>
+
+<p><strong>查看进程使用的内存以及 <code>faults</code> 统计信息</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -r | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">03:17:25 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command</span><br><span class="line">03:17:25 PM     0         1      0.97      0.00  168668   13552   0.08  systemd</span><br><span class="line">03:17:25 PM     0       147      1.85      0.00  228472  158232   0.98  systemd-journal</span><br><span class="line">03:17:25 PM     0       189      0.00      0.00  289100   27392   0.17  multipathd</span><br><span class="line">03:17:25 PM     0       199      0.00      0.00   12160    6376   0.04  systemd-udevd</span><br><span class="line">03:17:25 PM   118       512      0.00      0.00   14624    6400   0.04  systemd-oomd</span><br><span class="line">03:17:25 PM   100       551      0.00      0.00   16044    7296   0.05  systemd-network</span><br><span class="line">03:17:25 PM   101       553      0.00      0.00   26512   10240   0.06  systemd-resolve</span><br><span class="line">03:17:25 PM     0       643      0.00      0.00    2816    1920   0.01  acpid</span><br><span class="line">03:17:25 PM   123       644      0.00      0.00   19088    3840   0.02  avahi-daemon</span><br><span class="line">03:17:25 PM   102       645      0.00      0.00   31628    7436   0.05  dbus-daemon</span><br><span class="line">03:17:25 PM     0       646      0.00      0.00  278416   14852   0.09  NetworkManager</span><br><span class="line">03:17:25 PM     0       649      0.01      0.00  757540   17788   0.11  euc-analytics-a</span><br><span class="line">03:17:25 PM     0       653      0.00      0.00   82768    3840   0.02  irqbalance</span><br><span class="line">03:17:25 PM     0       656      0.00      0.00   48880   10368   0.06  networkd-dispat</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>查看进程使用的 CPU 统计信息</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -u -l | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">04:08:08 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command</span><br><span class="line">04:08:08 PM     0         1    0.04    0.02    0.00    0.02    0.06     1  /sbin/init</span><br><span class="line">04:08:08 PM     0         2    0.00    0.00    0.00    0.00    0.00     0  kthreadd</span><br><span class="line">04:08:08 PM     0        15    0.00    0.00    0.00    0.01    0.00     0  ksoftirqd/0</span><br><span class="line">04:08:08 PM     0        49    0.00    0.00    0.00    0.00    0.00     2  khugepaged</span><br><span class="line">04:08:08 PM     0        63    0.00    0.00    0.00    0.00    0.00     3  kworker/3:1H-kblockd</span><br><span class="line">04:08:08 PM     0        64    0.00    0.00    0.00    0.00    0.00     3  kswapd0</span><br><span class="line">04:08:08 PM     0        75    0.00    0.00    0.00    0.00    0.00     2  kworker/2:1H-kblockd</span><br><span class="line">04:08:08 PM     0       100    0.00    0.00    0.00    0.00    0.00     0  jbd2/nvme0n1p1-8</span><br><span class="line">04:08:08 PM     0       102    0.00    0.00    0.00    0.00    0.00     1  kworker/1:1H-kblockd</span><br><span class="line">04:08:08 PM     0       129    0.00    0.00    0.00    0.00    0.00     0  kworker/0:1H-kblockd</span><br><span class="line">04:08:08 PM     0       147    0.00    0.00    0.00    0.00    0.01     3  /lib/systemd/systemd-journald</span><br><span class="line">04:08:08 PM     0       189    0.00    0.00    0.00    0.00    0.01     3  /sbin/multipathd -d -s</span><br><span class="line">04:08:08 PM     0       199    0.00    0.00    0.00    0.00    0.00     3  /lib/systemd/systemd-udevd</span><br><span class="line">04:08:08 PM     0       382    0.00    0.00    0.00    0.00    0.00     2  jbd2/nvme1n1p1-8</span><br><span class="line">04:08:08 PM   118       512    0.05    0.05    0.00    0.00    0.10     3  /lib/systemd/systemd-oom</span><br><span class="line">d</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>在使用 <code>pidstat</code> 时如果未指定统计数据的采样间隔及采样次数，则 <strong>默认统计的是从系统启动以来的平均资源使用率，如果目标进程的运行时间相对于系统启动时间很短（例如仅几分钟），那么它的平均 CPU 使用率会趋近于 0</strong> 。比如以下示例：  </p>
+<p><em>未指定采样间隔及采样次数</em> ，统计结果显示进程的 CPU 使用率为 <code>0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat  | grep gzip</span></span><br><span class="line">01:37:06 PM     0       784    0.00    0.00    0.00    0.00     4  gzip</span><br></pre></td></tr></table></figure>
+
+<p><em>以下命令指定采样间隔和采样次数</em> ，统计结果显示 CPU 使用率较高</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat 1 1 | grep gzip</span></span><br><span class="line">01:37:14 PM     0      1974   15.69    1.96    0.00   87.65     7  gzip</span><br><span class="line">Average:        0      1974   15.69    1.96    0.00   87.65     -  gzip</span><br></pre></td></tr></table></figure>
+
+</blockquote>
+<h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a><br><a href="http://lionheartwang.github.io/blog/2018/06/05/linuxjin-cheng-zhuang-tai-shuo-ming/">Linux进程状态说明</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a>  5.7.1 Example: Linux Scheduling<a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux rsyslog 服务</title>
+    <url>/202208191014/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Centos 7</li>
+</ul>
+<p>系统默认的日志托管服务，部分系统服务（如 <code>crond</code>, 邮件系统，安全审计等）会将日志发送给 <code>rsyslog</code> 服务来进行日志管理。</p>
+<p><code>rsyslog</code> 服务是依赖其配置文件 <code>/etc/rsyslog.conf</code> 来确定哪个服务的什么等级的日志信息会被记录在哪个位置的。也就是说，日志服务的配置文件中主要定义了服务的名称、日志等级和日志记录位置。</p>
+<span id="more"></span>
+
+<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3><p>默认配置文件(<code>/etc/rsyslog.conf</code>)内容如下</p>
+<figure class="highlight shell"><figcaption><span>/etc/rsyslog.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">加载指定模块</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">ModLoad imuxsock <span class="comment"># provides support for local system logging (e.g. via logger command)</span></span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">ModLoad imjournal <span class="comment"># provides access to the systemd journal</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">放置 rsyslog 辅助文件的路径</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">WorkDirectory /var/lib/rsyslog</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">时间格式</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">ActionFileDefaultTemplate RSYSLOG_TraditionalFileFormat</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含其他配置</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">IncludeConfig /etc/rsyslog.d/*.conf</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">OmitLocalLogging on</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">IMJournalStateFile imjournal.state</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">日志记录规则</span></span><br><span class="line">*.info;mail.none;authpriv.none;cron.none                /var/log/messages</span><br><span class="line">authpriv.*                                              /var/log/secure</span><br><span class="line">mail.*                                                  -/var/log/maillog</span><br><span class="line">cron.*                                                  /var/log/cron</span><br><span class="line">*.emerg                                                 :omusrmsg:*</span><br><span class="line">uucp,news.crit                                          /var/log/spooler</span><br><span class="line">local7.*                                                /var/log/boot.log</span><br></pre></td></tr></table></figure>
+
+<p>其中最为关键的部分是日志记录规则，其配置格式如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">服务名称 连接符号 日志等级               日志记录位置</span></span><br><span class="line">authpriv.*                                              /var/log/secure</span><br></pre></td></tr></table></figure>
+<p>以上配置，指定认证相关服务 (<code>authpriv</code>) 的所有等级的日志，记录在 <code>/var/log/secure</code> 日志中</p>
+<p>多个服务可以指定同一个<code>日志记录位置</code>，多个 <code>服务名称 连接符号 日志等级</code> 中间使用 <code>;</code> 分割  </p>
+<figure class="highlight shell"><figcaption><span>/etc/rsyslog.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">*.info;mail.none;authpriv.none;cron.none                /var/log/messages</span><br></pre></td></tr></table></figure>
+<p>多个服务也可以共用同一个 <code>日志等级</code>，格式如下，多个 <code>服务名称</code> 使用 <code>,</code> 分割</p>
+<figure class="highlight shell"><figcaption><span>/etc/rsyslog.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">uucp,news.crit                                          /var/log/spooler</span><br></pre></td></tr></table></figure>
+
+<p><code>rsyslog</code> 服务可识别的服务如下</p>
+<table>
+<thead>
+<tr>
+<th>服务</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>auth</td>
+<td>安全和认证相关消息 (不推荐使用 <code>authpriv</code> 替代）</td>
+</tr>
+<tr>
+<td>authpirv</td>
+<td>安全和认证相关信息（私有的）</td>
+</tr>
+<tr>
+<td>cron</td>
+<td>系统定时任务 <code>cront</code> 和 <code>at</code> 产生的日志</td>
+</tr>
+<tr>
+<td>daemon</td>
+<td>和各个守护进程相关的日志</td>
+</tr>
+<tr>
+<td>ftp</td>
+<td>ftp守护进程产生的日志</td>
+</tr>
+<tr>
+<td>kern</td>
+<td>内核产生的日志（不是用户进程产生的）</td>
+</tr>
+<tr>
+<td>local0-local7</td>
+<td>为本地使用预留的服务</td>
+</tr>
+<tr>
+<td>lpr</td>
+<td>打印机产生的日志</td>
+</tr>
+<tr>
+<td>mail</td>
+<td>邮件收发信息</td>
+</tr>
+<tr>
+<td>news</td>
+<td>与新闻服务器相关的日志</td>
+</tr>
+<tr>
+<td>syslog</td>
+<td>有 <code>rsyslog</code> 服务产生的日志信息（虽然服务名称已经改为 <code>rsyslog</code> 服务，但是很多配置都还是沿用了 <code>syslogd</code> 的，这里并没有修改服务名）</td>
+</tr>
+<tr>
+<td>user</td>
+<td>用户等级类别的日志信息</td>
+</tr>
+<tr>
+<td>uucp</td>
+<td><code>uucp</code> 子系统的日志信息，<code>uucp</code> 是早期 Linux 系统进行数据传递的协议，后来也经常用在新闻组服务中。</td>
+</tr>
+</tbody></table>
+<p><code>rsyslog</code> 服务配置中可使用的连接符号如下</p>
+<table>
+<thead>
+<tr>
+<th>连接符号</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>.</code></td>
+<td>代表只要比后面的等级高的（包含该等级）日志都记录下来。比如： <code>cron.info</code> 代表 <code>crond</code> 服务产生的日志，只要日志等级大于等于 <code>info</code> 级别，就记录。</td>
+</tr>
+<tr>
+<td><code>.=</code></td>
+<td>代表只记录所需等级的日志，其他等级的都不记录。比如： <code>*.=emerg</code> 代表任何日志服务产生的日志，只要等级是 <code>emerg</code> 等级就记录。</td>
+</tr>
+<tr>
+<td><code>.!</code></td>
+<td>代表不等于，也就是除了该等级的日志外，其他等级的日志都记录。</td>
+</tr>
+</tbody></table>
+<p><code>rsyslog</code> 服务配置中可使用的日志等级如下</p>
+<table>
+<thead>
+<tr>
+<th>日志等级</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>debug</td>
+<td>一般的调试信息说明</td>
+</tr>
+<tr>
+<td>info</td>
+<td>基本的通知信息</td>
+</tr>
+<tr>
+<td>notice</td>
+<td>普通信息，但是有一定的重要性</td>
+</tr>
+<tr>
+<td>warning</td>
+<td>警告信息，但是还不会影响到服务或系统的运行</td>
+</tr>
+<tr>
+<td>err</td>
+<td>错误信息，一般达到 <code>err</code> 等级的信息以及可以影响到服务或系统的运行了</td>
+</tr>
+<tr>
+<td>crit</td>
+<td>临界状况信息，比 <code>err</code> 等级还要严重</td>
+</tr>
+<tr>
+<td>alert</td>
+<td>警告状态信息，比 <code>crit</code> 还要严重。必须立即采取行动</td>
+</tr>
+<tr>
+<td>emerg</td>
+<td>致命（毁灭）等级信息，系统已经无法使用了</td>
+</tr>
+<tr>
+<td>*</td>
+<td>代表所有等级的日志</td>
+</tr>
+<tr>
+<td>none</td>
+<td>忽略这个日志服务，该服务的所有日志都不再记录</td>
+</tr>
+</tbody></table>
+<p>可用的 <code>日志记录位置</code> 如下</p>
+<table>
+<thead>
+<tr>
+<th>日志记录位置</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/var/log/secure</code></td>
+<td>日志文件的绝对路径</td>
+<td><code>/var/log/secure</code></td>
+</tr>
+<tr>
+<td><code>/dev/lp0</code></td>
+<td>系统设备文件</td>
+<td>如 <code>/dev/lp0</code> 代表第一台打印机，如果日志保存位置是打印机设备，当有日志时就会在打印机上打印。</td>
+</tr>
+<tr>
+<td>远程主机</td>
+<td>可以选择使用 <code>TCP</code> (<code>@@192.168.0.210：514</code>) 和 <code>UDP</code> (<code>@192.168.0.210：514</code>) 协议传输日志信息</td>
+<td></td>
+</tr>
+</tbody></table>
+<p><code>日志记录位置</code> 之前可以加以下符号：</p>
+<ul>
+<li><code>-</code>  ： 表示延迟写入</li>
+</ul>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>rsyslog</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux Shell 脚本</title>
+    <url>/202306210936/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="脚本示例"><a href="#脚本示例" class="headerlink" title="脚本示例"></a>脚本示例</h1><h2 id="一分钟内访问指定-url-一百次"><a href="#一分钟内访问指定-url-一百次" class="headerlink" title="一分钟内访问指定 url 一百次"></a>一分钟内访问指定 url 一百次</h2><p>其中 <code>$&#123;COUNT&#125; * $&#123;SLEEP_INTERVAL&#125; = 60</code> ，要改变频率，可以更改这 2 个值</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/bash</span></span><br><span class="line"></span><br><span class="line">URL=&quot;url&quot;  # 指定要访问的 URL</span><br><span class="line">COUNT=200  # 指定访问次数</span><br><span class="line">SLEEP_INTERVAL=0.3  # 休眠时间间隔（秒）</span><br><span class="line"></span><br><span class="line">for ((i=1; i&lt;=COUNT; i++))</span><br><span class="line">do</span><br><span class="line">    echo &quot;Request $i: $(date)&quot;</span><br><span class="line">    curl -s -o /dev/null -w %&#123;http_code&#125; $URL </span><br><span class="line">    sleep $SLEEP_INTERVAL</span><br><span class="line">done</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>Shell 脚本</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux ss 命令</title>
     <url>/20240923151710/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>ss</code> 命令是一个查看 Linux 系统 <code>socket</code> 统计信息的工具，类似于 <code>netstat</code>，但是能显示更多的 TCP 和状态信息。</p>
@@ -32184,19 +32668,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux Shell 脚本</title>
-    <url>/202306210936/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="脚本示例"><a href="#脚本示例" class="headerlink" title="脚本示例"></a>脚本示例</h1><h2 id="一分钟内访问指定-url-一百次"><a href="#一分钟内访问指定-url-一百次" class="headerlink" title="一分钟内访问指定 url 一百次"></a>一分钟内访问指定 url 一百次</h2><p>其中 <code>$&#123;COUNT&#125; * $&#123;SLEEP_INTERVAL&#125; = 60</code> ，要改变频率，可以更改这 2 个值</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/bash</span></span><br><span class="line"></span><br><span class="line">URL=&quot;url&quot;  # 指定要访问的 URL</span><br><span class="line">COUNT=200  # 指定访问次数</span><br><span class="line">SLEEP_INTERVAL=0.3  # 休眠时间间隔（秒）</span><br><span class="line"></span><br><span class="line">for ((i=1; i&lt;=COUNT; i++))</span><br><span class="line">do</span><br><span class="line">    echo &quot;Request $i: $(date)&quot;</span><br><span class="line">    curl -s -o /dev/null -w %&#123;http_code&#125; $URL </span><br><span class="line">    sleep $SLEEP_INTERVAL</span><br><span class="line">done</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>Shell 脚本</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Outline VPN 使用</title>
     <url>/20240926135814/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://getoutline.org/">Outline 官网</a></p>
@@ -32330,477 +32801,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 进程管理</title>
-    <url>/202406260952/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong><code>Program</code></strong> 是一个静态实体，只是存储在操作系统中的文件（集合）</p>
-<p><strong><code>Process</code></strong> 是操作系统上的活动（Active）实体，是 <strong><code>Program</code></strong> 由操作系统加载到内存并运行之后的实体。</p>
-<p><strong><code>Process</code></strong> 运行过程中需要操作系统为其分配各种资源，如 CPU、Memory、Files、IO 等来完成其运行。</p>
-<p>如果一个 <strong><code>Program</code></strong> 被操作系统运行（启动）了多次，那么其产生的多个 <strong><code>Process</code></strong>  属于分割（单独）的实体。</p>
-<p>Linux 系统中调度的进程&#x2F;线程，通常被称为任务（Task）</p>
-<p>Linux 中常见的进程状态如下表：</p>
-<table>
-<thead>
-<tr>
-<th>状态标识</th>
-<th>状态名称</th>
-<th>状态说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>R</code></td>
-<td><code>task_running</code></td>
-<td>进程处于运行或就绪状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>S</code></td>
-<td><code>task_interruptible</code><br/> <code>sleeping</code></td>
-<td>可中断的睡眠状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>D</code></td>
-<td><code>task_uninterruptible</code></td>
-<td>不可中断的睡眠状态<br/>1. 它是一种睡眠状态，意味着处于此状态的进程不会消耗 CPU<br/>2. 睡眠的原因是等待某些资源（比如锁或者磁盘 IO），这也是非常多 D 状态的进程都处在处理 IO 操作的原因<br/>3. 是它不能被中断，这个要区别于 <code>硬件中断</code> 的中断，是指不希望在其获取到资源或者超时前被终止。因此他不会被信号唤醒，也就不会响应 <code>kill -9</code> 这类信号。这也是它跟 <code>S（可中断睡眠）</code>状态的区别</td>
-<td></td>
-</tr>
-<tr>
-<td><code>T</code></td>
-<td><code>task_stopped</code> <br/> <code>task_traced</code><br/><code>Traced</code></td>
-<td>暂停状态或跟踪状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Z</code></td>
-<td><code>task_dead</code> <br/> <code>exit_zombie</code><br/><code>zombie</code></td>
-<td>退出状态，进程成为僵尸进程</td>
-<td></td>
-</tr>
-<tr>
-<td><code>X</code></td>
-<td><code>task_dead</code> <br/> <code>exit_dead</code></td>
-<td>退出状态，进程即将被销毁</td>
-<td></td>
-</tr>
-<tr>
-<td><code>I</code></td>
-<td><code>idle</code></td>
-<td>空闲状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>+</code></td>
-<td></td>
-<td>表示关联了前台操作（Foreground Operation），比如前台运行的进程</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="进程调度"><a href="#进程调度" class="headerlink" title="进程调度"></a>进程调度</h1><p>Linux 中任务（Task）调度算法默认使用 CFS（Completely Fair Scheduler，内核版本 &gt;&#x3D; 2.6.23）.</p>
-<p>CFS 调度算法没有使用固定的进程（此处的进程可能是进程或者线程，Linux 中统称为 Task）优先级（Priority），而是根据进程的 <code>nice value</code> 为进程分配一定比例的（Proportional） CPU 计算时间。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Operating System Concepts v10 Online](https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf)  5.7.1 Example: Linux Scheduling">[1]</span></a></sup></p>
-<p><strong><code>nice</code> 的取值从 <code>-20</code> - <code>+19</code>，值越小，优先级越高，默认值为 <code>0</code></strong> 。优先级高的进程会被分配到更高比例的 CPU 处理时间。</p>
-<p>在 Linux 内核中，优先级分为两种：静态优先级和动态优先级。CFS 使用的是动态优先级，它是根据 <code>nice</code> 值计算出来的。</p>
-<p>CFS Scheduler 不会直接设定 Priorities，而是为每个 Task 维护变量 <code>vruntime（virtual runtime）</code>（可以检查系统 <code>/proc/&lt;PID&gt;/sched</code>），这个值记录了每个 task 使用了多少 CPU 时间。</p>
-<p>CFS 通过将进程的虚拟运行时间（<code>vruntime</code>）与其他进程的虚拟运行时间进行比较来决定调度优先级。权重越大，<code>vruntime</code> 增长越慢，意味着进程的优先级越高，能够更频繁地被调度。</p>
-<p>假入一个任务有默认的 Priority（<code>nice=0</code>），那么他的 <code>vruntime</code> 和实际使用的 CPU 时间相同。例如一个 <code>nice=0</code> 的进程使用了 CPU 200ms，那么他的 <code>vruntime=200ms</code>。<strong>低优先级（low priority，<code>nice&gt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&gt;200ms</code>，相反的，一个 <strong>高优先级（high priority,<code>nice&lt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&lt;200ms</code>。<strong>基于此，CFS Scheduler 在选择下一个要执行的任务时，会选择 <code>vruntime</code> 最小的任务来运行</strong>。如果有高优先级的任务就绪（可执行），它会抢占（preemptive）正在执行的低优先级的任务。</p>
-<p>假如 Linux 中有 2 个优先级一样的任务（<code>nice=0</code>），一个进程为 I&#x2F;O-bound，另一个为 CPU-bound。通常情况下，在一个 CPU 周期内，I&#x2F;O-bound 的任务会使用很少的 CPU 时间就会因等待 IO 而中断在 CPU 上的执行并进入 CPU 的等待调度队列（schedule queue），而 CPU-bound 的任务会用尽分配给它的整个 CPU 周期。执行一段时间之后， I&#x2F;O-bound 的任务的 <code>vruntime</code> 的值会显著的小于 CPU-bound 的任务的 <code>vruntime</code>，导致 I&#x2F;O-bound 的任务拥有比 CPU-bound 的任务更高的优先级，当 I&#x2F;O-bound 的任务就绪（IO 返回数据）时，它会立即抢占 CPU 开始执行。</p>
-<blockquote>
-<p><code>nice</code> 只能针对单一的进程调整优先级，无法同时将优先级配置关联到相关进程，如 子进程或者同一个服务中的其他进程</p>
-</blockquote>
-<h2 id="修改-nice-的值"><a href="#修改-nice-的值" class="headerlink" title="修改 nice 的值"></a>修改 nice 的值</h2><p>在 Linux 中，<code>nice</code> 值用于调整进程的优先级，数值范围从 <code>-20</code>（ <strong>最高优先级</strong> ）到 <code>19</code>（ <strong>最低优先级</strong> ）。较低的 <code>nice</code> 值表示进程有更高的优先级，会更频繁地获得 CPU 时间，而较高的 <code>nice</code> 值表示进程有较低的优先级。</p>
-<p>你可以使用 <code>nice</code> 和 <code>renice</code> 命令来修改进程的 <code>nice</code> 值</p>
-<blockquote>
-<p>普通用户（<code>root</code> 之外的用户）启动应用程序时默认只能配置初始 <code>nice</code> 值 <code>0-19</code></p>
-<p>普通用户（<code>root</code> 之外的用户）修改正在运行的应用程序的 <code>nice</code> 值，只能改大，不能改小。比如进程启动时，其 <code>nice</code> 为 <code>10</code>，拥有权限的普通用户只能将其 <code>nice</code> 值改为大于 <code>10</code> 的值。 </p>
-</blockquote>
-<h3 id="nice-命令"><a href="#nice-命令" class="headerlink" title="nice 命令"></a>nice 命令</h3><p><strong><code>nice</code> 命令用于在启动进程时指定 <code>nice</code> 值</strong> 。如果不指定，默认 <code>nice</code> 值为 <code>0</code>。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">nice -n 10 command</span><br></pre></td></tr></table></figure>
-
-<h3 id="renice-命令"><a href="#renice-命令" class="headerlink" title="renice 命令"></a>renice 命令</h3><p><code>renice</code> 命令可以修改已经在运行的进程的 <code>nice</code> 值。需要提供进程 ID（ <strong>PID</strong> ）来指定要修改的进程。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">renice &lt;nice_value&gt; -p &lt;PID&gt;</span><br></pre></td></tr></table></figure>
-<p>如果想要一次修改多个进程的 <code>nice</code> 值，可以传递多个 PID：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo renice 10 -p 1234 2345 3456</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="Linux-进程资源控制-cgroups"><a href="#Linux-进程资源控制-cgroups" class="headerlink" title="Linux 进程资源控制 cgroups"></a>Linux 进程资源控制 cgroups</h1><p><code>cgroups</code> 可以将一个任务（<code>task</code>）标识（绑定）到一个特殊的 <strong>控制组（<code>Control Group</code>）</strong> ，此任务启动的子进程可以继承父进程的 <strong>控制组（<code>Control Group</code>）</strong> </p>
-<p><strong>控制组（<code>Control Group</code>）</strong> 可以限制的资源类型如下：</p>
-<table>
-<thead>
-<tr>
-<th>Type</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>blkio</code></td>
-<td><strong>Storage</strong> <br/>限制到存储设备（如 Hard Disk、USB Drivers等）的请求</td>
-</tr>
-<tr>
-<td><code>cpu</code></td>
-<td><strong>CPU</strong> <br/>限制 CPU 调度</td>
-</tr>
-<tr>
-<td><code>cpuacct</code></td>
-<td><strong>Process Accounting</strong> <br/>上报 CPU 使用状态，可以用于统计客户端使用的处理量并进行收费</td>
-</tr>
-<tr>
-<td><code>cpuset</code></td>
-<td><strong>CPU Assignment</strong> <br/>在多处理器的系统上，将 Task 分配到特定的处理器以及关联的内存</td>
-</tr>
-<tr>
-<td><code>devices</code></td>
-<td><strong>Device Access</strong> <br/>限制 <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 对目标设备类型的使用</td>
-</tr>
-<tr>
-<td><code>freezer</code></td>
-<td><strong>Suspend&#x2F;Resume</strong> <br/>暂停&#x2F;恢复  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task</td>
-</tr>
-<tr>
-<td><code>memory</code></td>
-<td><strong>Memory Usage</strong>  <br/>限制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的内存</td>
-</tr>
-<tr>
-<td><code>net_cls</code></td>
-<td><strong>Network Bandwidth</strong> <br/> 制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的网络流量，主要通过对网络流量打上 <code>cgroups</code> 相关标签实现</td>
-</tr>
-<tr>
-<td><code>net_prio</code></td>
-<td><strong>Network Traffic</strong> <br/> 控制  <strong>控制组（<code>Control Group</code>）</strong> 中的网络流量的优先级</td>
-</tr>
-<tr>
-<td><code>ns</code></td>
-<td><strong>Namespaces</strong> <br/> 将 <code>cgroups</code> 分配到不同的 Namespaces，如此同一个 <code>cgroups</code> 中的进程只能看到本 Namespace 中的进程</td>
-</tr>
-</tbody></table>
-<h1 id="Linux-进程管理"><a href="#Linux-进程管理" class="headerlink" title="Linux 进程管理"></a>Linux 进程管理</h1><h2 id="进程命令名和进程可执行文件名"><a href="#进程命令名和进程可执行文件名" class="headerlink" title="进程命令名和进程可执行文件名"></a>进程命令名和进程可执行文件名</h2><p>在系统中遇到以下进程：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ps -elf | grep 18686</span></span><br><span class="line">5 S root     18686  1239  0  80   0 - 46620 pipe_w 15:50 ?        00:00:00 /usr/sbin/CROND -n</span><br><span class="line">0 R root     18694 18686  7  80   0 - 610547 -     15:50 ?        00:00:02 /usr/local/php73/bin/php /home/www/admin/artisan PullData</span><br><span class="line">0 S root     18754 18686  0  80   0 - 22453 pipe_w 15:50 ?        00:00:00 /usr/sbin/sendmail -FCronDaemon -i -odi -oem -oi -t -f root</span><br></pre></td></tr></table></figure>
-<p>其中 PID 为 <code>18686</code> 的进程名为 <code>/usr/sbin/CROND</code>，其启动了另外两个子进程。但是在系统中检查，并不存在路径 <code>/usr/sbin/CROND</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">ls</span> -l /usr/sbin/CROND</span></span><br><span class="line">ls: cannot access /usr/sbin/CROND: No such file or directory</span><br></pre></td></tr></table></figure>
-
-<p>出现此种现象，主要是因为 <em><strong>在启动时，进程的命令名是根据路径传递给 <code>execve()</code> 函数的参数决定的，而不是直接与系统中的文件进行匹配</strong></em>。</p>
-<p>在 Linux 系统中，<code>ps</code> 命令显示的进程信息是从 <code>/proc</code> 文件系统中获取的，而 <code>/proc</code> 文件系统包含有关正在运行的进程的信息，包括每个进程的命令名。因此，即使实际上系统中不存在 <code>/usr/sbin/CROND</code> 文件，但如果进程的命令名是 <code>/usr/sbin/CROND</code>，那么 <code>ps</code> 命令仍然会显示进程的命令名为 <code>/usr/sbin/CROND</code>。</p>
-<p><em><strong>进程的命令名可以查看 <code>/proc/&lt;PID&gt;/cmdline</code> 文件</strong></em>，本示例中显示如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/18686/cmdline</span> </span><br><span class="line">/usr/sbin/CROND-n</span><br></pre></td></tr></table></figure>
-
-<p>对应的系统上的可执行文件的名称可以查看 <code>/proc/&lt;PID&gt;/stat</code>、<code>/proc/&lt;PID&gt;/comm</code>、<code>/proc/&lt;PID&gt;/status</code> 等文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/comm</span> </span><br><span class="line">crond</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/status</span> </span><br><span class="line">Name:	crond</span><br><span class="line">Umask:	0022</span><br><span class="line">State:	S (sleeping)</span><br><span class="line">Tgid:	900</span><br><span class="line">Ngid:	0</span><br><span class="line">Pid:	900</span><br><span class="line">PPid:	1239</span><br><span class="line">TracerPid:	0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/stat</span></span><br><span class="line">900 (crond) S 1239 1239 1239 0 -1 4202816 1627 0 0 0 0 0 0 0 20 0 1 0 139129633 190955520 1478 18446744073709551615 94685936058368 94685936118156 140733000396032 140733000262488 140427856103840 0 0 4096 16387 18446744071797306256 0 0 17 3 0 0 0 0 0 94685938219080 94685938221648 94685948321792 140733000400770 140733000400789 140733000400789 140733000400872 0</span><br></pre></td></tr></table></figure>
-
-<p>在本示例中，实际执行的命令为 <code>crond</code></p>
-<h2 id="进程状态检查"><a href="#进程状态检查" class="headerlink" title="进程状态检查"></a>进程状态检查</h2><h3 id="top-命令"><a href="#top-命令" class="headerlink" title="top 命令"></a>top 命令</h3><p>使用 <code>top</code> 命令可以查看系统负载、CPU 和 内存使用情况。也可以查看单个进程的具体信息。</p>
-<p><code>htop</code> 是 <code>top</code> 命令的一个变种，它提供了更多的交互性、定制性以及其他一些功能，但是它同时使用了相比 <code>top</code> 更多的资源（4 倍多的 <code>syscalls</code>）</p>
-<p><strong><code>top</code> 命令常用选项</strong></p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-H</code></td>
-<td><code>Threads Mode</code>，线程模式。默认情况 <code>top</code> 展示进程的简要信息，使用此选项显示进程中的线程状态。<br/>对应交互式命令 <code>H</code></td>
-<td></td>
-</tr>
-</tbody></table>
-<p><strong><code>top</code> 常用交互命令</strong></p>
-<table>
-<thead>
-<tr>
-<th>命令</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>P</code></td>
-<td>CPU Utilization 排序，默认排序方式</td>
-</tr>
-<tr>
-<td><code>M</code></td>
-<td>Memory Utilization 排序</td>
-</tr>
-<tr>
-<td><code>I</code></td>
-<td>Irix&#x2F;Solaris-Mode 切换。<br/>默认为 Itrix Mode,在这种模式下，如果某个进程使用了系统中的 2 个 CPU 的所有计算资源，则其 CPU 使用率展示为 200%，依此类推。<br/>在 Solaris Mode 下，进程的 CPU 使用率是整体 CPU 使用的资源除于 CPU 数。如在 4 CPU 的系统中，Itrix 模式下，进程 CPU 使用率为 200%，在 Solaris 模式下，则为 50%</td>
-</tr>
-</tbody></table>
-<ul>
-<li>显示单个进程的（线程）详细信息  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">top -H -p 1423</span></span><br><span class="line">top - 09:44:42 up 54 days, 23:53,  2 users,  load average: 8.82, 6.84, 7.21</span><br><span class="line">Threads:  15 total,   0 running,  15 sleeping,   0 stopped,   0 zombie</span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">Cpu(s): 40.9 us, 10.8 sy,  0.0 ni, 48.1 <span class="built_in">id</span>,  0.0 wa,  0.0 hi,  0.2 si,  0.0 st</span></span><br><span class="line">KiB Mem : 15790488 total,   466056 free,  7761544 used,  7562888 buff/cache</span><br><span class="line">KiB Swap:        0 total,        0 free,        0 used.  3895716 avail Mem </span><br><span class="line"></span><br><span class="line">  PID USER      PR  NI    VIRT    RES    SHR S %CPU %MEM     TIME+ COMMAND                                                                                  </span><br><span class="line"> 1423 root      20   0 1477368 778788   4260 S 39.5  4.9  11999:41 [watchdog:1:6]                                                                           </span><br><span class="line"> 2572 root      20   0 1477368 778788   4260 S 37.9  4.9  11363:48 [watchdog:1:6]                                                                           </span><br><span class="line"> 1436 root      20   0 1477368 778788   4260 S 34.2  4.9  11286:08 [watchdog:1:6]                                                                           </span><br><span class="line"> 1435 root      20   0 1477368 778788   4260 S 33.9  4.9  12059:53 [watchdog:1:6]                                                                           </span><br><span class="line"> 1434 root      20   0 1477368 778788   4260 S 33.2  4.9  10249:00 [watchdog:1:6]                                                                           </span><br><span class="line"> 1437 root      20   0 1477368 778788   4260 S 30.6  4.9  11717:47 [watchdog:1:6]                                                                           </span><br><span class="line"> 1431 root      20   0 1477368 778788   4260 S 28.9  4.9  11222:06 [watchdog:1:6]                                                                           </span><br><span class="line">21378 root      20   0 1477368 778788   4260 S 27.6  4.9  12143:35 [watchdog:1:6]                                                                           </span><br><span class="line"> 1433 root      20   0 1477368 778788   4260 S 17.6  4.9   8738:21 [watchdog:1:6]                                                                           </span><br><span class="line"> 1428 root      20   0 1477368 778788   4260 S  8.0  4.9   7650:56 [watchdog:1:6]                                                                           </span><br><span class="line"> 1429 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.04 [watchdog:1:6]                                                                           </span><br><span class="line"> 1430 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.05 [watchdog:1:6]                                                                           </span><br><span class="line"> 1432 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.03 [watchdog:1:6]                                                                           </span><br><span class="line"> 1438 root      20   0 1477368 778788   4260 S  0.0  4.9  12260:30 [watchdog:1:6]                                                                           </span><br><span class="line"> 1529 root      20   0 1477368 778788   4260 S  0.0  4.9  11068:39 [watchdog:1:6]</span><br></pre></td></tr></table></figure></li>
-</ul>
-<h3 id="pidstat"><a href="#pidstat" class="headerlink" title="pidstat"></a>pidstat</h3><p><code>pidstat</code> 命令用于检查 Linux 内核管理的进程的状态。帮助文档请查看 <code>man pidstat</code>。要查看特定的进程的信息，使用 <code>-p [PID|ALL]</code> 选项，查看子进程相关信息，参考 <code>-T [TASK | CHILD | ALL]</code> 选项</p>
-<p>命令常用选项</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-d</code></td>
-<td>报告 I&#x2F;O statistics</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-C comm</code></td>
-<td>查看 <code>command name</code> 的详细信息， <code>comm</code> 可以是正则表达式</td>
-<td><code>pidstat -C chrome -T CHILD 1 10</code></td>
-</tr>
-<tr>
-<td><code>-p &#123; pid[,...]   / SELF / ALL &#125;</code></td>
-<td>查看指定的 PID 或者所有（ALL） 进程的统计信息，不指定默认使用 <code>-p ALL</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-e program args</code></td>
-<td>使用指定的 <code>args</code> 运行 <code>program</code> 并使用 <code>pidstat</code> 监控其统计数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-l</code></td>
-<td>在统计输出中，包含详细的命令及其参数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-r</code></td>
-<td>统计进程的 <code>faults</code> 和 Memory 使用情况</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-T &#123; TASK  / CHILD / ALL &#125;</code> <br/><code>-t</code></td>
-<td>查看子进程相关统计信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-u</code></td>
-<td>CPU 使用率</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-w</code></td>
-<td>统计进程上下文切换（Context Switch）信息</td>
-<td></td>
-</tr>
-</tbody></table>
-<p><strong>查看指定的 PID 以及关联的子进程的统计信息</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -t -p 22737 1 1</span></span><br><span class="line">Linux 3.10.0-1160.49.1.el7.x86_64 (ecs-34a8) 	11/26/2024 	_x86_64_	(2 CPU)</span><br><span class="line"></span><br><span class="line">04:04:52 PM   UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">04:04:53 PM     0     22737         -    0.00    0.00    0.00    0.00     0  python3</span><br><span class="line">04:04:53 PM     0         -     22737    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22805    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22806    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22807    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22808    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22809    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22810    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line"></span><br><span class="line">Average:      UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">Average:        0     22737         -    0.00    0.00    0.00    0.00     -  python3</span><br><span class="line">Average:        0         -     22737    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22759    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22806    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22807    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22808    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22809    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22810    0.00    0.00    0.00    0.00     -  |__python3</span><br></pre></td></tr></table></figure>
-
-<p><strong>查看进程使用的内存以及 <code>faults</code> 统计信息</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -r | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">03:17:25 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command</span><br><span class="line">03:17:25 PM     0         1      0.97      0.00  168668   13552   0.08  systemd</span><br><span class="line">03:17:25 PM     0       147      1.85      0.00  228472  158232   0.98  systemd-journal</span><br><span class="line">03:17:25 PM     0       189      0.00      0.00  289100   27392   0.17  multipathd</span><br><span class="line">03:17:25 PM     0       199      0.00      0.00   12160    6376   0.04  systemd-udevd</span><br><span class="line">03:17:25 PM   118       512      0.00      0.00   14624    6400   0.04  systemd-oomd</span><br><span class="line">03:17:25 PM   100       551      0.00      0.00   16044    7296   0.05  systemd-network</span><br><span class="line">03:17:25 PM   101       553      0.00      0.00   26512   10240   0.06  systemd-resolve</span><br><span class="line">03:17:25 PM     0       643      0.00      0.00    2816    1920   0.01  acpid</span><br><span class="line">03:17:25 PM   123       644      0.00      0.00   19088    3840   0.02  avahi-daemon</span><br><span class="line">03:17:25 PM   102       645      0.00      0.00   31628    7436   0.05  dbus-daemon</span><br><span class="line">03:17:25 PM     0       646      0.00      0.00  278416   14852   0.09  NetworkManager</span><br><span class="line">03:17:25 PM     0       649      0.01      0.00  757540   17788   0.11  euc-analytics-a</span><br><span class="line">03:17:25 PM     0       653      0.00      0.00   82768    3840   0.02  irqbalance</span><br><span class="line">03:17:25 PM     0       656      0.00      0.00   48880   10368   0.06  networkd-dispat</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>查看进程使用的 CPU 统计信息</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -u -l | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">04:08:08 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command</span><br><span class="line">04:08:08 PM     0         1    0.04    0.02    0.00    0.02    0.06     1  /sbin/init</span><br><span class="line">04:08:08 PM     0         2    0.00    0.00    0.00    0.00    0.00     0  kthreadd</span><br><span class="line">04:08:08 PM     0        15    0.00    0.00    0.00    0.01    0.00     0  ksoftirqd/0</span><br><span class="line">04:08:08 PM     0        49    0.00    0.00    0.00    0.00    0.00     2  khugepaged</span><br><span class="line">04:08:08 PM     0        63    0.00    0.00    0.00    0.00    0.00     3  kworker/3:1H-kblockd</span><br><span class="line">04:08:08 PM     0        64    0.00    0.00    0.00    0.00    0.00     3  kswapd0</span><br><span class="line">04:08:08 PM     0        75    0.00    0.00    0.00    0.00    0.00     2  kworker/2:1H-kblockd</span><br><span class="line">04:08:08 PM     0       100    0.00    0.00    0.00    0.00    0.00     0  jbd2/nvme0n1p1-8</span><br><span class="line">04:08:08 PM     0       102    0.00    0.00    0.00    0.00    0.00     1  kworker/1:1H-kblockd</span><br><span class="line">04:08:08 PM     0       129    0.00    0.00    0.00    0.00    0.00     0  kworker/0:1H-kblockd</span><br><span class="line">04:08:08 PM     0       147    0.00    0.00    0.00    0.00    0.01     3  /lib/systemd/systemd-journald</span><br><span class="line">04:08:08 PM     0       189    0.00    0.00    0.00    0.00    0.01     3  /sbin/multipathd -d -s</span><br><span class="line">04:08:08 PM     0       199    0.00    0.00    0.00    0.00    0.00     3  /lib/systemd/systemd-udevd</span><br><span class="line">04:08:08 PM     0       382    0.00    0.00    0.00    0.00    0.00     2  jbd2/nvme1n1p1-8</span><br><span class="line">04:08:08 PM   118       512    0.05    0.05    0.00    0.00    0.10     3  /lib/systemd/systemd-oom</span><br><span class="line">d</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>在使用 <code>pidstat</code> 时如果未指定统计数据的采样间隔及采样次数，则 <strong>默认统计的是从系统启动以来的平均资源使用率，如果目标进程的运行时间相对于系统启动时间很短（例如仅几分钟），那么它的平均 CPU 使用率会趋近于 0</strong> 。比如以下示例：  </p>
-<p><em>未指定采样间隔及采样次数</em> ，统计结果显示进程的 CPU 使用率为 <code>0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat  | grep gzip</span></span><br><span class="line">01:37:06 PM     0       784    0.00    0.00    0.00    0.00     4  gzip</span><br></pre></td></tr></table></figure>
-
-<p><em>以下命令指定采样间隔和采样次数</em> ，统计结果显示 CPU 使用率较高</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat 1 1 | grep gzip</span></span><br><span class="line">01:37:14 PM     0      1974   15.69    1.96    0.00   87.65     7  gzip</span><br><span class="line">Average:        0      1974   15.69    1.96    0.00   87.65     -  gzip</span><br></pre></td></tr></table></figure>
-
-</blockquote>
-<h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a><br><a href="http://lionheartwang.github.io/blog/2018/06/05/linuxjin-cheng-zhuang-tai-shuo-ming/">Linux进程状态说明</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a>  5.7.1 Example: Linux Scheduling<a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux rsyslog 服务</title>
-    <url>/202208191014/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Centos 7</li>
-</ul>
-<p>系统默认的日志托管服务，部分系统服务（如 <code>crond</code>, 邮件系统，安全审计等）会将日志发送给 <code>rsyslog</code> 服务来进行日志管理。</p>
-<p><code>rsyslog</code> 服务是依赖其配置文件 <code>/etc/rsyslog.conf</code> 来确定哪个服务的什么等级的日志信息会被记录在哪个位置的。也就是说，日志服务的配置文件中主要定义了服务的名称、日志等级和日志记录位置。</p>
-<span id="more"></span>
-
-<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3><p>默认配置文件(<code>/etc/rsyslog.conf</code>)内容如下</p>
-<figure class="highlight shell"><figcaption><span>/etc/rsyslog.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">加载指定模块</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">ModLoad imuxsock <span class="comment"># provides support for local system logging (e.g. via logger command)</span></span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">ModLoad imjournal <span class="comment"># provides access to the systemd journal</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">放置 rsyslog 辅助文件的路径</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">WorkDirectory /var/lib/rsyslog</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">时间格式</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">ActionFileDefaultTemplate RSYSLOG_TraditionalFileFormat</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含其他配置</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">IncludeConfig /etc/rsyslog.d/*.conf</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">OmitLocalLogging on</span></span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">IMJournalStateFile imjournal.state</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">日志记录规则</span></span><br><span class="line">*.info;mail.none;authpriv.none;cron.none                /var/log/messages</span><br><span class="line">authpriv.*                                              /var/log/secure</span><br><span class="line">mail.*                                                  -/var/log/maillog</span><br><span class="line">cron.*                                                  /var/log/cron</span><br><span class="line">*.emerg                                                 :omusrmsg:*</span><br><span class="line">uucp,news.crit                                          /var/log/spooler</span><br><span class="line">local7.*                                                /var/log/boot.log</span><br></pre></td></tr></table></figure>
-
-<p>其中最为关键的部分是日志记录规则，其配置格式如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">服务名称 连接符号 日志等级               日志记录位置</span></span><br><span class="line">authpriv.*                                              /var/log/secure</span><br></pre></td></tr></table></figure>
-<p>以上配置，指定认证相关服务 (<code>authpriv</code>) 的所有等级的日志，记录在 <code>/var/log/secure</code> 日志中</p>
-<p>多个服务可以指定同一个<code>日志记录位置</code>，多个 <code>服务名称 连接符号 日志等级</code> 中间使用 <code>;</code> 分割  </p>
-<figure class="highlight shell"><figcaption><span>/etc/rsyslog.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">*.info;mail.none;authpriv.none;cron.none                /var/log/messages</span><br></pre></td></tr></table></figure>
-<p>多个服务也可以共用同一个 <code>日志等级</code>，格式如下，多个 <code>服务名称</code> 使用 <code>,</code> 分割</p>
-<figure class="highlight shell"><figcaption><span>/etc/rsyslog.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">uucp,news.crit                                          /var/log/spooler</span><br></pre></td></tr></table></figure>
-
-<p><code>rsyslog</code> 服务可识别的服务如下</p>
-<table>
-<thead>
-<tr>
-<th>服务</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>auth</td>
-<td>安全和认证相关消息 (不推荐使用 <code>authpriv</code> 替代）</td>
-</tr>
-<tr>
-<td>authpirv</td>
-<td>安全和认证相关信息（私有的）</td>
-</tr>
-<tr>
-<td>cron</td>
-<td>系统定时任务 <code>cront</code> 和 <code>at</code> 产生的日志</td>
-</tr>
-<tr>
-<td>daemon</td>
-<td>和各个守护进程相关的日志</td>
-</tr>
-<tr>
-<td>ftp</td>
-<td>ftp守护进程产生的日志</td>
-</tr>
-<tr>
-<td>kern</td>
-<td>内核产生的日志（不是用户进程产生的）</td>
-</tr>
-<tr>
-<td>local0-local7</td>
-<td>为本地使用预留的服务</td>
-</tr>
-<tr>
-<td>lpr</td>
-<td>打印机产生的日志</td>
-</tr>
-<tr>
-<td>mail</td>
-<td>邮件收发信息</td>
-</tr>
-<tr>
-<td>news</td>
-<td>与新闻服务器相关的日志</td>
-</tr>
-<tr>
-<td>syslog</td>
-<td>有 <code>rsyslog</code> 服务产生的日志信息（虽然服务名称已经改为 <code>rsyslog</code> 服务，但是很多配置都还是沿用了 <code>syslogd</code> 的，这里并没有修改服务名）</td>
-</tr>
-<tr>
-<td>user</td>
-<td>用户等级类别的日志信息</td>
-</tr>
-<tr>
-<td>uucp</td>
-<td><code>uucp</code> 子系统的日志信息，<code>uucp</code> 是早期 Linux 系统进行数据传递的协议，后来也经常用在新闻组服务中。</td>
-</tr>
-</tbody></table>
-<p><code>rsyslog</code> 服务配置中可使用的连接符号如下</p>
-<table>
-<thead>
-<tr>
-<th>连接符号</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>.</code></td>
-<td>代表只要比后面的等级高的（包含该等级）日志都记录下来。比如： <code>cron.info</code> 代表 <code>crond</code> 服务产生的日志，只要日志等级大于等于 <code>info</code> 级别，就记录。</td>
-</tr>
-<tr>
-<td><code>.=</code></td>
-<td>代表只记录所需等级的日志，其他等级的都不记录。比如： <code>*.=emerg</code> 代表任何日志服务产生的日志，只要等级是 <code>emerg</code> 等级就记录。</td>
-</tr>
-<tr>
-<td><code>.!</code></td>
-<td>代表不等于，也就是除了该等级的日志外，其他等级的日志都记录。</td>
-</tr>
-</tbody></table>
-<p><code>rsyslog</code> 服务配置中可使用的日志等级如下</p>
-<table>
-<thead>
-<tr>
-<th>日志等级</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>debug</td>
-<td>一般的调试信息说明</td>
-</tr>
-<tr>
-<td>info</td>
-<td>基本的通知信息</td>
-</tr>
-<tr>
-<td>notice</td>
-<td>普通信息，但是有一定的重要性</td>
-</tr>
-<tr>
-<td>warning</td>
-<td>警告信息，但是还不会影响到服务或系统的运行</td>
-</tr>
-<tr>
-<td>err</td>
-<td>错误信息，一般达到 <code>err</code> 等级的信息以及可以影响到服务或系统的运行了</td>
-</tr>
-<tr>
-<td>crit</td>
-<td>临界状况信息，比 <code>err</code> 等级还要严重</td>
-</tr>
-<tr>
-<td>alert</td>
-<td>警告状态信息，比 <code>crit</code> 还要严重。必须立即采取行动</td>
-</tr>
-<tr>
-<td>emerg</td>
-<td>致命（毁灭）等级信息，系统已经无法使用了</td>
-</tr>
-<tr>
-<td>*</td>
-<td>代表所有等级的日志</td>
-</tr>
-<tr>
-<td>none</td>
-<td>忽略这个日志服务，该服务的所有日志都不再记录</td>
-</tr>
-</tbody></table>
-<p>可用的 <code>日志记录位置</code> 如下</p>
-<table>
-<thead>
-<tr>
-<th>日志记录位置</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/var/log/secure</code></td>
-<td>日志文件的绝对路径</td>
-<td><code>/var/log/secure</code></td>
-</tr>
-<tr>
-<td><code>/dev/lp0</code></td>
-<td>系统设备文件</td>
-<td>如 <code>/dev/lp0</code> 代表第一台打印机，如果日志保存位置是打印机设备，当有日志时就会在打印机上打印。</td>
-</tr>
-<tr>
-<td>远程主机</td>
-<td>可以选择使用 <code>TCP</code> (<code>@@192.168.0.210：514</code>) 和 <code>UDP</code> (<code>@192.168.0.210：514</code>) 协议传输日志信息</td>
-<td></td>
-</tr>
-</tbody></table>
-<p><code>日志记录位置</code> 之前可以加以下符号：</p>
-<ul>
-<li><code>-</code>  ： 表示延迟写入</li>
-</ul>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>rsyslog</tag>
       </tags>
   </entry>
   <entry>
@@ -37948,462 +37948,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之天雷无妄</title>
-    <url>/20251016103340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
-<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
-<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
-<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
-<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
-</li>
-<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
-
-<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
-</li>
-<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
-</li>
-<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
-</ul>
-<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
-</li>
-<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
-</li>
-<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
-<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
-</ul>
-<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
-</li>
-<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
-</li>
-<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
-</li>
-<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
-</li>
-<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
-</li>
-<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
-</li>
-<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
-
-<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
-</li>
-<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
-</li>
-<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天山遁</title>
-    <url>/20251122162040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
-<p>天山遁，下（内）艮（山、止）上乾（天、健），遁者，退也。是阳消阴息的十二消息卦之一，处于柔爻长而刚爻退的过程中。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁，亨，小利贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：遁亨，遁而亨也。刚当位而应，与时行也。小利贞，浸而长也。遁之时义大矣哉！</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下有山，遁。君子以远小人，不恶而严。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>遁亨，遁而亨也</strong> ： 遁卦从乾卦一阴生得天风姤，再生一阴至天山遁，为阴长阳消的过程。天地自然都是在阴阳消息中不停运动，不论阴长阳消还是阴消阳长都是自然之道，都是亨通。在阴长阳消的自然大势中，阴来阳往、刚屈柔伸，对刚爻（阳）来说，遁（退）就是亨。刚爻为大，柔爻为小，刚往柔来，小利贞。</li>
-<li><strong>刚当位而应，与时行也</strong> ： 指九五刚爻正应六二。六二为全卦主爻，代表柔爻的上涨势头。全卦阳爻多于阴爻，刚爻势大，九五刚爻尊位得正，是为当位，但阴长阳退为大势所趋，九五正应六二，能主动退让，是能顺应大势，即与时行也。</li>
-<li><strong>君子以远小人，不恶而严</strong> ： 恶，惹、招惹、惹怒。严，划清界限、界限分明。小人势长，远离小人，不招惹小人，但要和其划清界限，不同流合污。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁尾，厉。勿用有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：遁尾之厉，不往何灾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>遁尾，厉。勿用有攸往</strong> ： 遁尾，退避之际落在最后，喻“当遁而迟疑，落在人后”。</li>
-</ul>
-<p>初六处全卦最下，阴柔才弱，又居最外（艮下），本当最先见几而退；却迟钝观望，反成“尾”，故危。这一爻不宜行动，安分自首可保无灾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处遁之始而不能遁，至于尾，故厉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>尾者，遁之晚也。晚而遁，危厉之道也。</code></p>
-</li>
-<li><p><code>遁之时宜速，今至尾而后遁，是以危厉。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">执之用黄牛之革，莫之胜说。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：执用黄牛，固志也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>执之用黄牛之革，莫之胜说</strong> ： 执，捆住、扎住、抓住。革，皮革、坚韧的牛皮绳、革带。说，通脱，挣脱、脱开、解开。黄牛，黄为中央之色，牛性顺而皮韧，象征中德柔顺而坚定，与六二之正位相合。</li>
-</ul>
-<p>六二阴爻居阴位，柔得中得正，在下卦艮（山、止）中位，坚守中道，不为小人所动摇、不为外物所诱惑</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>以阴居中，志能自固，故莫之得动。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>能固其志，守遁之正，不为外物所夺。</code></p>
-</li>
-<li><p><code>黄牛之革，坚韧而不裂。六二止退得宜，故莫之胜说。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系遁，有疾厉，畜臣妾吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系遁之厉，有疾惫也；畜臣妾吉，不可大事也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>系遁，有疾厉，畜臣妾吉</strong> ： 系，被牵绊、羁绊、有所牵挂。疾厉，有疾病缠身得风险。臣妾，泛指从属、附属的人或事，也象征小事、内务。</li>
-</ul>
-<p>九三处内卦之极，刚居阳位，上临九四之“敌刚”，下比六二之“系私”，进退两难；欲遁而被私情、家事或旧部所牵，故成“系遁”。就像疾病缠身，不仅痛苦，而且消耗精力（象曰：有疾惫也），最终招致危险（“厉”）。在大环境不利、需要退避（遁）时，九三虽无法彻底脱身，但如果能将精力放在管理内务、巩固自身根基、处理身边的小事上，则是吉祥的。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>系遁者，不能得遁也。处动之极，欲进不得，欲退不能，有疾惫之象。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九三刚而不中，欲遁不得，宜于小事，而不可以大事也。</code></p>
-</li>
-<li><p><code>刚中处遁，心急志动，而遁不得，故有疾厉。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">好遁。君子吉，小人否。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子好遁，小人否也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>好遁。君子吉，小人否</strong> ： 好，乐于、喜欢、善于。君子识时务乐于退避，小人则不然（不乐于退避）。</li>
-</ul>
-<p>君子知道何时进、何时退，在小人壮大、时势不利时，能洞察先机，主动退避以保全自身，符合遁卦的卦义，故为吉祥。小人贪恋权力、地位和物质，即使面对危险，也不愿意放弃自己的所得。因此，在需要退避时，他们不乐于、不肯退避（“否”），最终会因时机错过而遭受灾祸。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处遁之时，得以退避，故好遁也。君子以退为吉，小人不能遁也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>遁之道在九四而得其正。能遁者，君子也；不能遁者，小人也。</code></p>
-</li>
-<li><p><code>九四虽刚，而处柔位，能好遁者，故吉。小人不能遁，故否。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">嘉遁，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：嘉遁贞吉，以正志也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>嘉遁贞吉，以正志也</strong> ： 嘉，美、善、值得赞颂、值得称颂。美好的退避、高尚的抽身、君子之退。</li>
-</ul>
-<p>九五刚尊得中而应六二，以刚健中正之德，主动让贤、让功，既契合时势规律，又坚守自身正道，故美其退曰“嘉遁”。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处尊而能遁，嘉之至也。志正故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>能遁于君位之尊，非迫也，自得也。其遁之美，在于是也。</code></p>
-</li>
-<li><p><code>九五居尊，能自遁避，不与小人争。其志正也，故贞吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">肥遁，无不利</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：肥遁无不利，无所疑也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>肥遁，无不利</strong> ： 肥，这里不是指肥胖，而是指丰裕、富足、安逸、从容。从容而退，满载而退，毫无顾虑、迟疑。</li>
-</ul>
-<p>上九阳爻居阴位，处卦之极、刚柔相济</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>肥者，大也。退避无害，得其全也，无不利也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>退而无所累，德全而去，谓之肥遁。</code></p>
-</li>
-<li><p><code>上九处遁之终，遁既得其全，故无不利也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天泽履</title>
-    <url>/20250917160539/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天泽履"><a href="#天泽履" class="headerlink" title="天泽履"></a>天泽履</h1><p><img src="https://i.0920811.xyz/img_350.png"></p>
-<p>天泽履，乾（天）上兑（泽）下。兑卦代表喜悦、和悦，象征着一种柔和、顺应的态度。乾卦代表刚健、强盛，象征着一种刚强、积极的力量。</p>
-<p>履，礼也。履进、行动的礼节、规矩。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，不咥人，亨。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：履，柔履刚也。说而应乎乾，是以履虎尾，不咥人，亨。刚中正，履帝位而不疚，光明也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：上天下泽，履;君子以辨上下，定民志。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>履虎尾，不咥（dié）人</strong> ： 履，脚步、践行、踩踏、行走、履行。 咥，噬咬、老虎噬咬的动作。象征着处于危险之中但能够谨慎行事，避免灾祸。兑为虎为口为悦，上为首，下为尾。悦而应互乾，是以履虎尾，不咥人。y</li>
-<li><strong>上天下泽，履;君子以辨上下，定民志</strong> ： 天在上、泽在下，天为尊、泽为卑，上下有别、秩序（如君臣、长幼、权责）分明。民众明确自身定位，不越位、不妄求，从而心态安定。</li>
-</ul>
-<p>履卦的核心是 <strong>礼与慎</strong> 。君子之道，在于守礼分，知上下有序，以安定人心。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>履虎尾者，危也。处危能无咥人者，以其得中正而应之也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>履者，行也。人道之行，贵乎中正。九五刚中正，履帝位，居尊而能正，不疚而光明。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>履，行也。兑为说，乾为健。以柔履刚，悦而应乾，则虽履虎尾，而不为害，亨也。九五刚中正，履帝位而不疚，光明正大之象。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">素履，往无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：素履之往，独行愿也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>素履</strong> ： 素，纯白、朴素、朴实、本真、不修饰、朴实无华。以朴素本真的态度行事，不刻意追求浮华或迎合他人</li>
-<li><strong>素履之往，独行愿也</strong> ： 强调这种朴素、诚实的态度是出于内心的真诚和自愿，而不是为了迎合他人或追求外在的回报。这里的 独行 表示独立自主的行为，愿 表示内心的愿望或意愿。</li>
-</ul>
-<p>初九爻通过强调以朴素、诚实的态度去行事的重要性，提醒我们在面对各种行动和决策时，要保持内心的真诚和自愿，坚守本心，不随波逐流。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>素履，质也。言其履行质直，不饰伪，虽独行，犹得无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>素，质也。履初而以质朴为履，往无咎。君子之行，以诚质为本。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>素履，质直而无文之行。处初而能守此，往则无咎。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履道坦坦，幽人贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：幽人贞吉，中不自乱也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>履道坦坦，幽人贞吉</strong> ： 坦坦，平顺、平坦宽广、宽阔无障碍。幽人，恬淡寡欲、幽居、安静、内心沉静、不浮躁、能坚守自我之人，幽 强调 内心的沉静收敛，不随外界喧嚣动摇。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>二以阳居阴，得中正之位。能安静自守，履道平正，故曰“幽人贞吉”。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九二刚中而居柔位，有中正之德，能安于幽处，不求显达，守正以行，吉也。幽人者，处中不乱，安静自守之象。贞正不改，故吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>履道坦坦，谓中正平易之道也。九二居中得正，如幽居之人，守正不乱，故吉。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">眇能视，跛能履，履虎尾，咥人，凶。武人为于大君。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：眇能视，不足以有明也。跛能履，不足以与行也。咥人之凶，位不当也。武人为于大君，志刚也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>眇能视，跛能履</strong> ： 眇，一只眼睛失明、目盲。跛，一只腿脚残疾。</li>
-<li><strong>武人为于大君</strong> ： 武人，武夫或有勇无谋的人。武人妄图代君主行事、掌控高位。进一步说明了六三爻的主体虽然有行动的意愿，但因为能力不足，最终会带来不利的结果。</li>
-</ul>
-<p>六三阴爻居阳位，位不当，爻辞以 <strong>残缺行动（眇能视，跛能履） 喻 能力缺陷，以 履虎尾被咥 表 险局恶果</strong> 。隐喻 自身能力有明显缺陷，却盲目高估自己，强行行动。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>眇而欲视，跛而欲履，皆以小德而强为大事，不胜其任，故履虎尾而凶。六三阴柔不中正，而在下体之上，志刚妄动，犹武人之在大君之前。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六三阴柔不中，处履之险，才德不足而妄为，故凶。眇视、跛履，皆喻小人之不足任大事。以小人之志，强行于大君之前，必至于凶。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六三阴柔而不中正，不能自定，而妄履其道，犹眇视、跛履，不足以有为。故履虎尾，咥人而凶。其志刚而欲为，犹武人之为大君用。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，愬愬终吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：愬愬终吉，志行也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>愬愬终吉，志行也</strong> ： 愬愬，通 肃肃，小心戒惧、谨慎不安的样子。志行 指 内心敬畏、态度谨慎、言行收敛（志）落到实处，转化为具体行动，虽处险境，但能保持戒惧，最后结果吉祥。</li>
-</ul>
-<p>九四阳爻居阴位，位不正，终吉，关键在于要认识到所处环境的危险，因此知危能惧，保持戒慎。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四以阳居阴，失正而不中，履危之时，故“愬愬”。然而知危能惧，虽失正而能戒慎，故终得吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四居近君之位，志欲上行，处危履虎尾之地，能戒惧而不敢妄动，故虽危而终吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九四以阳居阴，位不中正，履危之时，唯有愬愬自守，则终得吉。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">夬履，贞厉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：夬履贞厉，位正当也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>夬（guài）履贞历</strong> ： 夬，决断、果决、果断、刚决。要警惕过刚。</li>
-</ul>
-<p>九五阳爻居上卦中位，符合 <strong>尊位刚中正</strong> ，是 贞 的基础。虽能守正，但需警惕过刚，否则会有危险（贞历）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五刚健中正而居尊位，夬然决断以履其道，虽危厉，然其位正当，故能以正济。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五居尊位，刚健中正，履道决断。然履虎尾之危，虽正亦有厉，但以正道处之，故虽危而可安。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五履中正之道，决断而行，虽贞正犹有危险之象。以其位正当，故能无咎。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">视履考祥，其旋元吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：元吉在上，大有庆也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>视履考祥</strong> ： 视，看、观察、考察 。考，考察、总结。祥，吉祥、如意、吉，此处代指吉凶。通过回顾考察整个过程中的行事、想法，反思自己的行为及其结果。</li>
-<li><strong>其旋元吉</strong> ： 旋，回旋、回归、循环、归返。履卦上九是从夬卦九三和上六换位而来，反旋上位，全卦只有上九和六三互为为正应，故其旋元吉。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处履之终，能审视所履，考其吉凶而旋归于正，故元吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>上九居履之极，若能省察所履之道，反身自考，不失其正，则元吉而有大庆。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>上九履之终，能视所履而考其吉凶，则旋归于正，故元吉。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之水雷屯</title>
     <url>/20250901163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水雷屯"><a href="#水雷屯" class="headerlink" title="水雷屯"></a>水雷屯</h1><p><img src="https://i.0920811.xyz/img_343.png"></p>
@@ -39928,5 +39472,461 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之天雷无妄</title>
+    <url>/20251016103340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
+<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
+<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
+<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
+<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
+</li>
+<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
+
+<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
+</li>
+<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
+</li>
+<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
+</ul>
+<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
+</li>
+<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
+</li>
+<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
+<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
+</ul>
+<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
+</li>
+<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
+</li>
+<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
+</li>
+<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
+</li>
+<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
+</li>
+<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
+</li>
+<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
+
+<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
+</li>
+<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
+</li>
+<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之天山遁</title>
+    <url>/20251122162040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
+<p>天山遁，下（内）艮（山、止）上乾（天、健），遁者，退也。是阳消阴息的十二消息卦之一，处于柔爻长而刚爻退的过程中。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁，亨，小利贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：遁亨，遁而亨也。刚当位而应，与时行也。小利贞，浸而长也。遁之时义大矣哉！</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下有山，遁。君子以远小人，不恶而严。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>遁亨，遁而亨也</strong> ： 遁卦从乾卦一阴生得天风姤，再生一阴至天山遁，为阴长阳消的过程。天地自然都是在阴阳消息中不停运动，不论阴长阳消还是阴消阳长都是自然之道，都是亨通。在阴长阳消的自然大势中，阴来阳往、刚屈柔伸，对刚爻（阳）来说，遁（退）就是亨。刚爻为大，柔爻为小，刚往柔来，小利贞。</li>
+<li><strong>刚当位而应，与时行也</strong> ： 指九五刚爻正应六二。六二为全卦主爻，代表柔爻的上涨势头。全卦阳爻多于阴爻，刚爻势大，九五刚爻尊位得正，是为当位，但阴长阳退为大势所趋，九五正应六二，能主动退让，是能顺应大势，即与时行也。</li>
+<li><strong>君子以远小人，不恶而严</strong> ： 恶，惹、招惹、惹怒。严，划清界限、界限分明。小人势长，远离小人，不招惹小人，但要和其划清界限，不同流合污。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁尾，厉。勿用有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：遁尾之厉，不往何灾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>遁尾，厉。勿用有攸往</strong> ： 遁尾，退避之际落在最后，喻“当遁而迟疑，落在人后”。</li>
+</ul>
+<p>初六处全卦最下，阴柔才弱，又居最外（艮下），本当最先见几而退；却迟钝观望，反成“尾”，故危。这一爻不宜行动，安分自首可保无灾。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处遁之始而不能遁，至于尾，故厉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>尾者，遁之晚也。晚而遁，危厉之道也。</code></p>
+</li>
+<li><p><code>遁之时宜速，今至尾而后遁，是以危厉。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">执之用黄牛之革，莫之胜说。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：执用黄牛，固志也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>执之用黄牛之革，莫之胜说</strong> ： 执，捆住、扎住、抓住。革，皮革、坚韧的牛皮绳、革带。说，通脱，挣脱、脱开、解开。黄牛，黄为中央之色，牛性顺而皮韧，象征中德柔顺而坚定，与六二之正位相合。</li>
+</ul>
+<p>六二阴爻居阴位，柔得中得正，在下卦艮（山、止）中位，坚守中道，不为小人所动摇、不为外物所诱惑</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>以阴居中，志能自固，故莫之得动。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>能固其志，守遁之正，不为外物所夺。</code></p>
+</li>
+<li><p><code>黄牛之革，坚韧而不裂。六二止退得宜，故莫之胜说。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系遁，有疾厉，畜臣妾吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系遁之厉，有疾惫也；畜臣妾吉，不可大事也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>系遁，有疾厉，畜臣妾吉</strong> ： 系，被牵绊、羁绊、有所牵挂。疾厉，有疾病缠身得风险。臣妾，泛指从属、附属的人或事，也象征小事、内务。</li>
+</ul>
+<p>九三处内卦之极，刚居阳位，上临九四之“敌刚”，下比六二之“系私”，进退两难；欲遁而被私情、家事或旧部所牵，故成“系遁”。就像疾病缠身，不仅痛苦，而且消耗精力（象曰：有疾惫也），最终招致危险（“厉”）。在大环境不利、需要退避（遁）时，九三虽无法彻底脱身，但如果能将精力放在管理内务、巩固自身根基、处理身边的小事上，则是吉祥的。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>系遁者，不能得遁也。处动之极，欲进不得，欲退不能，有疾惫之象。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九三刚而不中，欲遁不得，宜于小事，而不可以大事也。</code></p>
+</li>
+<li><p><code>刚中处遁，心急志动，而遁不得，故有疾厉。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">好遁。君子吉，小人否。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子好遁，小人否也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>好遁。君子吉，小人否</strong> ： 好，乐于、喜欢、善于。君子识时务乐于退避，小人则不然（不乐于退避）。</li>
+</ul>
+<p>君子知道何时进、何时退，在小人壮大、时势不利时，能洞察先机，主动退避以保全自身，符合遁卦的卦义，故为吉祥。小人贪恋权力、地位和物质，即使面对危险，也不愿意放弃自己的所得。因此，在需要退避时，他们不乐于、不肯退避（“否”），最终会因时机错过而遭受灾祸。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处遁之时，得以退避，故好遁也。君子以退为吉，小人不能遁也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>遁之道在九四而得其正。能遁者，君子也；不能遁者，小人也。</code></p>
+</li>
+<li><p><code>九四虽刚，而处柔位，能好遁者，故吉。小人不能遁，故否。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">嘉遁，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：嘉遁贞吉，以正志也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>嘉遁贞吉，以正志也</strong> ： 嘉，美、善、值得赞颂、值得称颂。美好的退避、高尚的抽身、君子之退。</li>
+</ul>
+<p>九五刚尊得中而应六二，以刚健中正之德，主动让贤、让功，既契合时势规律，又坚守自身正道，故美其退曰“嘉遁”。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处尊而能遁，嘉之至也。志正故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>能遁于君位之尊，非迫也，自得也。其遁之美，在于是也。</code></p>
+</li>
+<li><p><code>九五居尊，能自遁避，不与小人争。其志正也，故贞吉。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">肥遁，无不利</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：肥遁无不利，无所疑也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>肥遁，无不利</strong> ： 肥，这里不是指肥胖，而是指丰裕、富足、安逸、从容。从容而退，满载而退，毫无顾虑、迟疑。</li>
+</ul>
+<p>上九阳爻居阴位，处卦之极、刚柔相济</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>肥者，大也。退避无害，得其全也，无不利也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>退而无所累，德全而去，谓之肥遁。</code></p>
+</li>
+<li><p><code>上九处遁之终，遁既得其全，故无不利也。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之天泽履</title>
+    <url>/20250917160539/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天泽履"><a href="#天泽履" class="headerlink" title="天泽履"></a>天泽履</h1><p><img src="https://i.0920811.xyz/img_350.png"></p>
+<p>天泽履，乾（天）上兑（泽）下。兑卦代表喜悦、和悦，象征着一种柔和、顺应的态度。乾卦代表刚健、强盛，象征着一种刚强、积极的力量。</p>
+<p>履，礼也。履进、行动的礼节、规矩。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，不咥人，亨。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：履，柔履刚也。说而应乎乾，是以履虎尾，不咥人，亨。刚中正，履帝位而不疚，光明也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：上天下泽，履;君子以辨上下，定民志。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>履虎尾，不咥（dié）人</strong> ： 履，脚步、践行、踩踏、行走、履行。 咥，噬咬、老虎噬咬的动作。象征着处于危险之中但能够谨慎行事，避免灾祸。兑为虎为口为悦，上为首，下为尾。悦而应互乾，是以履虎尾，不咥人。y</li>
+<li><strong>上天下泽，履;君子以辨上下，定民志</strong> ： 天在上、泽在下，天为尊、泽为卑，上下有别、秩序（如君臣、长幼、权责）分明。民众明确自身定位，不越位、不妄求，从而心态安定。</li>
+</ul>
+<p>履卦的核心是 <strong>礼与慎</strong> 。君子之道，在于守礼分，知上下有序，以安定人心。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>履虎尾者，危也。处危能无咥人者，以其得中正而应之也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>履者，行也。人道之行，贵乎中正。九五刚中正，履帝位，居尊而能正，不疚而光明。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>履，行也。兑为说，乾为健。以柔履刚，悦而应乾，则虽履虎尾，而不为害，亨也。九五刚中正，履帝位而不疚，光明正大之象。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">素履，往无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：素履之往，独行愿也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>素履</strong> ： 素，纯白、朴素、朴实、本真、不修饰、朴实无华。以朴素本真的态度行事，不刻意追求浮华或迎合他人</li>
+<li><strong>素履之往，独行愿也</strong> ： 强调这种朴素、诚实的态度是出于内心的真诚和自愿，而不是为了迎合他人或追求外在的回报。这里的 独行 表示独立自主的行为，愿 表示内心的愿望或意愿。</li>
+</ul>
+<p>初九爻通过强调以朴素、诚实的态度去行事的重要性，提醒我们在面对各种行动和决策时，要保持内心的真诚和自愿，坚守本心，不随波逐流。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>素履，质也。言其履行质直，不饰伪，虽独行，犹得无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>素，质也。履初而以质朴为履，往无咎。君子之行，以诚质为本。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>素履，质直而无文之行。处初而能守此，往则无咎。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履道坦坦，幽人贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：幽人贞吉，中不自乱也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>履道坦坦，幽人贞吉</strong> ： 坦坦，平顺、平坦宽广、宽阔无障碍。幽人，恬淡寡欲、幽居、安静、内心沉静、不浮躁、能坚守自我之人，幽 强调 内心的沉静收敛，不随外界喧嚣动摇。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>二以阳居阴，得中正之位。能安静自守，履道平正，故曰“幽人贞吉”。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九二刚中而居柔位，有中正之德，能安于幽处，不求显达，守正以行，吉也。幽人者，处中不乱，安静自守之象。贞正不改，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>履道坦坦，谓中正平易之道也。九二居中得正，如幽居之人，守正不乱，故吉。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">眇能视，跛能履，履虎尾，咥人，凶。武人为于大君。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：眇能视，不足以有明也。跛能履，不足以与行也。咥人之凶，位不当也。武人为于大君，志刚也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>眇能视，跛能履</strong> ： 眇，一只眼睛失明、目盲。跛，一只腿脚残疾。</li>
+<li><strong>武人为于大君</strong> ： 武人，武夫或有勇无谋的人。武人妄图代君主行事、掌控高位。进一步说明了六三爻的主体虽然有行动的意愿，但因为能力不足，最终会带来不利的结果。</li>
+</ul>
+<p>六三阴爻居阳位，位不当，爻辞以 <strong>残缺行动（眇能视，跛能履） 喻 能力缺陷，以 履虎尾被咥 表 险局恶果</strong> 。隐喻 自身能力有明显缺陷，却盲目高估自己，强行行动。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>眇而欲视，跛而欲履，皆以小德而强为大事，不胜其任，故履虎尾而凶。六三阴柔不中正，而在下体之上，志刚妄动，犹武人之在大君之前。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六三阴柔不中，处履之险，才德不足而妄为，故凶。眇视、跛履，皆喻小人之不足任大事。以小人之志，强行于大君之前，必至于凶。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六三阴柔而不中正，不能自定，而妄履其道，犹眇视、跛履，不足以有为。故履虎尾，咥人而凶。其志刚而欲为，犹武人之为大君用。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履虎尾，愬愬终吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：愬愬终吉，志行也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>愬愬终吉，志行也</strong> ： 愬愬，通 肃肃，小心戒惧、谨慎不安的样子。志行 指 内心敬畏、态度谨慎、言行收敛（志）落到实处，转化为具体行动，虽处险境，但能保持戒惧，最后结果吉祥。</li>
+</ul>
+<p>九四阳爻居阴位，位不正，终吉，关键在于要认识到所处环境的危险，因此知危能惧，保持戒慎。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四以阳居阴，失正而不中，履危之时，故“愬愬”。然而知危能惧，虽失正而能戒慎，故终得吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四居近君之位，志欲上行，处危履虎尾之地，能戒惧而不敢妄动，故虽危而终吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九四以阳居阴，位不中正，履危之时，唯有愬愬自守，则终得吉。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">夬履，贞厉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：夬履贞厉，位正当也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>夬（guài）履贞历</strong> ： 夬，决断、果决、果断、刚决。要警惕过刚。</li>
+</ul>
+<p>九五阳爻居上卦中位，符合 <strong>尊位刚中正</strong> ，是 贞 的基础。虽能守正，但需警惕过刚，否则会有危险（贞历）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五刚健中正而居尊位，夬然决断以履其道，虽危厉，然其位正当，故能以正济。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五居尊位，刚健中正，履道决断。然履虎尾之危，虽正亦有厉，但以正道处之，故虽危而可安。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五履中正之道，决断而行，虽贞正犹有危险之象。以其位正当，故能无咎。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">视履考祥，其旋元吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：元吉在上，大有庆也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>视履考祥</strong> ： 视，看、观察、考察 。考，考察、总结。祥，吉祥、如意、吉，此处代指吉凶。通过回顾考察整个过程中的行事、想法，反思自己的行为及其结果。</li>
+<li><strong>其旋元吉</strong> ： 旋，回旋、回归、循环、归返。履卦上九是从夬卦九三和上六换位而来，反旋上位，全卦只有上九和六三互为为正应，故其旋元吉。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处履之终，能审视所履，考其吉凶而旋归于正，故元吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>上九居履之极，若能省察所履之道，反身自考，不失其正，则元吉而有大庆。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>上九履之终，能视所履而考其吉凶，则旋归于正，故元吉。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
   </entry>
 </search>
