@@ -15574,6 +15574,67 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 上部署 cert-manager 及使用</title>
+    <url>/202301050935/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.24</li>
+<li>cert-manager v1.7.1</li>
+</ul>
+<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
+<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.0920811.xyz/img_111.png"></p>
+<p>解释下几个关键的资源:</p>
+<ul>
+<li><code>Issuer/ClusterIssuer</code>: 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。<code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书，<code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
+<li><code>Certificate</code>: 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
+<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
+<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
+<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
+<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
+<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
+<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://0920811.xyz/202210071716/#安装-cert-manager">安装参考文档</a></p>
+<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
+<ol>
+<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.0920811.xyz/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.0920811.xyz/img_113.png"></p>
+</li>
+<li><p>将 Token 保存到 Secret 中:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Secret</span><br><span class="line">metadata:</span><br><span class="line">  name: cloudflare-api-token-secret</span><br><span class="line">  namespace: cert-manager</span><br><span class="line">type: Opaque</span><br><span class="line">stringData:</span><br><span class="line">  api-token: &lt;API Token&gt; # 粘贴 Token 到这里，不需要 base64 加密。</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[DNS-01 校验方式签发证书](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6)">[3]</span></a></sup></p>
+</blockquote>
+</li>
+<li><p>创建 ClusterIssuer:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: ClusterIssuer</span><br><span class="line">metadata:</span><br><span class="line">  name: letsencrypt-dns01</span><br><span class="line">spec:</span><br><span class="line">  acme:</span><br><span class="line">    privateKeySecretRef:</span><br><span class="line">      name: letsencrypt-dns01     # 用于储存 ACME Account 私钥的 Secret</span><br><span class="line">    email: my-cloudflare-acc@example.com</span><br><span class="line">    server: https://acme-v02.api.letsencrypt.org/directory</span><br><span class="line">    solvers:</span><br><span class="line">    - dns01:</span><br><span class="line">        cloudflare:</span><br><span class="line">          email: my-cloudflare-acc@example.com # 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span><br><span class="line">          apiTokenSecretRef:</span><br><span class="line">            key: api-token               # 引用 secret 中的配置数据，key 为 secret 中配置的名称</span><br><span class="line">            name: cloudflare-api-token-secret    # 引用保存 cloudflare 认证信息的 Secret</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建 Certificate:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: Certificate</span><br><span class="line">metadata:</span><br><span class="line">  name: test-mydomain-com</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  dnsNames:</span><br><span class="line">  - test.mydomain.com # 要签发证书的域名</span><br><span class="line">  - &quot;*.mydomain.com&quot; </span><br><span class="line">  issuerRef:</span><br><span class="line">    kind: ClusterIssuer</span><br><span class="line">    name: letsencrypt-dns01 # 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span><br><span class="line">  secretName: test-mydomain-com-tls # 最终签发出来的证书会保存在这个 Secret 里面</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>获取和使用证书</p>
+<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get certificate -n prod</span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
+<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl describe certificate test-mydomain-com -n prod</span><br></pre></td></tr></table></figure>
+<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code>)，可以通过 <code>kubectl</code> 查看:</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get secret test-mydomain-com-tls -n default</span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
+<p> 其中 <code>tls.crt</code> 就是证书，<code>tls.key</code> 是密钥。</p>
+<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code>，示例:</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">apiVersion: networking.k8s.io/v1beta1</span><br><span class="line">kind: Ingress</span><br><span class="line">metadata:</span><br><span class="line">  name: test-ingress</span><br><span class="line">  annotations:</span><br><span class="line">    kubernetes.io/Ingress.class: nginx</span><br><span class="line">spec:</span><br><span class="line">  rules:</span><br><span class="line">  - host: test.mydomain.com</span><br><span class="line">    http:</span><br><span class="line">      paths:</span><br><span class="line">      - path: /web</span><br><span class="line">        backend:</span><br><span class="line">          serviceName: web</span><br><span class="line">          servicePort: 80</span><br><span class="line">  tls:</span><br><span class="line">    hosts:</span><br><span class="line">    - test.mydomain.com</span><br><span class="line">    secretName: test-mydomain-com-tls</span><br></pre></td></tr></table></figure>
+<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
+<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
+</li>
+</ol>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>kubernetes 常用命令示例</title>
     <url>/202209131536/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -15761,67 +15822,6 @@ width: 20%;
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/#join-nodes">使用 kubeadm 创建集群</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 上部署 cert-manager 及使用</title>
-    <url>/202301050935/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kubernetes 1.24</li>
-<li>cert-manager v1.7.1</li>
-</ul>
-<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
-<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.0920811.xyz/img_111.png"></p>
-<p>解释下几个关键的资源:</p>
-<ul>
-<li><code>Issuer/ClusterIssuer</code>: 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。<code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书，<code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
-<li><code>Certificate</code>: 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
-</ul>
-<span id="more"></span>
-
-<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
-<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
-<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
-<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
-<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
-<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
-<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://0920811.xyz/202210071716/#安装-cert-manager">安装参考文档</a></p>
-<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
-<ol>
-<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.0920811.xyz/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.0920811.xyz/img_113.png"></p>
-</li>
-<li><p>将 Token 保存到 Secret 中:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Secret</span><br><span class="line">metadata:</span><br><span class="line">  name: cloudflare-api-token-secret</span><br><span class="line">  namespace: cert-manager</span><br><span class="line">type: Opaque</span><br><span class="line">stringData:</span><br><span class="line">  api-token: &lt;API Token&gt; # 粘贴 Token 到这里，不需要 base64 加密。</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[DNS-01 校验方式签发证书](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6)">[3]</span></a></sup></p>
-</blockquote>
-</li>
-<li><p>创建 ClusterIssuer:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: ClusterIssuer</span><br><span class="line">metadata:</span><br><span class="line">  name: letsencrypt-dns01</span><br><span class="line">spec:</span><br><span class="line">  acme:</span><br><span class="line">    privateKeySecretRef:</span><br><span class="line">      name: letsencrypt-dns01     # 用于储存 ACME Account 私钥的 Secret</span><br><span class="line">    email: my-cloudflare-acc@example.com</span><br><span class="line">    server: https://acme-v02.api.letsencrypt.org/directory</span><br><span class="line">    solvers:</span><br><span class="line">    - dns01:</span><br><span class="line">        cloudflare:</span><br><span class="line">          email: my-cloudflare-acc@example.com # 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span><br><span class="line">          apiTokenSecretRef:</span><br><span class="line">            key: api-token               # 引用 secret 中的配置数据，key 为 secret 中配置的名称</span><br><span class="line">            name: cloudflare-api-token-secret    # 引用保存 cloudflare 认证信息的 Secret</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建 Certificate:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: cert-manager.io/v1</span><br><span class="line">kind: Certificate</span><br><span class="line">metadata:</span><br><span class="line">  name: test-mydomain-com</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  dnsNames:</span><br><span class="line">  - test.mydomain.com # 要签发证书的域名</span><br><span class="line">  - &quot;*.mydomain.com&quot; </span><br><span class="line">  issuerRef:</span><br><span class="line">    kind: ClusterIssuer</span><br><span class="line">    name: letsencrypt-dns01 # 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span><br><span class="line">  secretName: test-mydomain-com-tls # 最终签发出来的证书会保存在这个 Secret 里面</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>获取和使用证书</p>
-<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get certificate -n prod</span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
-<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl describe certificate test-mydomain-com -n prod</span><br></pre></td></tr></table></figure>
-<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code>)，可以通过 <code>kubectl</code> 查看:</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ kubectl get secret test-mydomain-com-tls -n default</span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
-<p> 其中 <code>tls.crt</code> 就是证书，<code>tls.key</code> 是密钥。</p>
-<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code>，示例:</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">apiVersion: networking.k8s.io/v1beta1</span><br><span class="line">kind: Ingress</span><br><span class="line">metadata:</span><br><span class="line">  name: test-ingress</span><br><span class="line">  annotations:</span><br><span class="line">    kubernetes.io/Ingress.class: nginx</span><br><span class="line">spec:</span><br><span class="line">  rules:</span><br><span class="line">  - host: test.mydomain.com</span><br><span class="line">    http:</span><br><span class="line">      paths:</span><br><span class="line">      - path: /web</span><br><span class="line">        backend:</span><br><span class="line">          serviceName: web</span><br><span class="line">          servicePort: 80</span><br><span class="line">  tls:</span><br><span class="line">    hosts:</span><br><span class="line">    - test.mydomain.com</span><br><span class="line">    secretName: test-mydomain-com-tls</span><br></pre></td></tr></table></figure>
-<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
-<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
-</li>
-</ol>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
       </categories>
       <tags>
         <tag>Kubernetes</tag>
@@ -16372,6 +16372,43 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>kubernetes ConfigMap 使用说明</title>
+    <url>/202212071353/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.24</li>
+</ul>
+<p><code>ConfigMap</code> 是 Kubernetes 用来向应用 Pod 中注入配置数据的方法。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 Pod 使用 ConfigMap](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/)">[1]</span></a></sup></p>
+<h1 id="使用-ConfigMap-数据定义容器环境变量"><a href="#使用-ConfigMap-数据定义容器环境变量" class="headerlink" title="使用 ConfigMap 数据定义容器环境变量"></a>使用 ConfigMap 数据定义容器环境变量</h1><h2 id="使用单个-ConfigMap-中的数据定义容器环境变量"><a href="#使用单个-ConfigMap-中的数据定义容器环境变量" class="headerlink" title="使用单个 ConfigMap 中的数据定义容器环境变量"></a>使用单个 ConfigMap 中的数据定义容器环境变量</h2><ol>
+<li>在 <code>ConfigMap</code> 中将环境变量定义为键值对: <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create configmap special-config --from-literal=special.how=very</span><br></pre></td></tr></table></figure></li>
+<li>将 ConfigMap 中定义的 special.how 赋值给 Pod 规约中的 SPECIAL_LEVEL_KEY 环境变量。 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">   </span><br><span class="line">kind: Pod</span><br><span class="line">   </span><br><span class="line">metadata:</span><br><span class="line">   </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">   </span><br><span class="line">spec:</span><br><span class="line">   </span><br><span class="line">  containers:</span><br><span class="line">   </span><br><span class="line">    - name: test-container</span><br><span class="line">   </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">   </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">   </span><br><span class="line">      env:</span><br><span class="line">   </span><br><span class="line">        # 定义环境变量</span><br><span class="line">   </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">   </span><br><span class="line">          valueFrom:</span><br><span class="line">   </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">   </span><br><span class="line">              # ConfigMap 包含你要赋给 SPECIAL_LEVEL_KEY 的值</span><br><span class="line">   </span><br><span class="line">              name: special-config</span><br><span class="line">   </span><br><span class="line">              # 指定与取值相关的键名</span><br><span class="line">   </span><br><span class="line">              key: special.how</span><br><span class="line">   </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
+ 现在，Pod 的输出包含环境变量 <code>SPECIAL_LEVEL_KEY=very</code>。</li>
+</ol>
+<span id="more"></span>
+
+<h2 id="使用来自多个-ConfigMap-的数据定义容器环境变量"><a href="#使用来自多个-ConfigMap-的数据定义容器环境变量" class="headerlink" title="使用来自多个 ConfigMap 的数据定义容器环境变量"></a>使用来自多个 ConfigMap 的数据定义容器环境变量</h2><p>创建 <code>ConfigMap</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[使用来自多个 ConfigMap 的数据定义容器环境变量](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps)
+">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  special.how: very</span><br><span class="line">  </span><br><span class="line">---</span><br><span class="line">  </span><br><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: env-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  log_level: INFO</span><br></pre></td></tr></table></figure>
+<p>在 Pod 规约中定义环境变量。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      env:</span><br><span class="line">  </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: special-config</span><br><span class="line">  </span><br><span class="line">              key: special.how</span><br><span class="line">  </span><br><span class="line">        - name: LOG_LEVEL</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: env-config</span><br><span class="line">  </span><br><span class="line">              key: log_level</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
+<h2 id="将-ConfigMap-中的所有键值对配置为容器环境变量"><a href="#将-ConfigMap-中的所有键值对配置为容器环境变量" class="headerlink" title="将 ConfigMap 中的所有键值对配置为容器环境变量"></a>将 ConfigMap 中的所有键值对配置为容器环境变量</h2><p>创建一个包含多个键值对的 ConfigMap。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  SPECIAL_LEVEL: very</span><br><span class="line">  </span><br><span class="line">  SPECIAL_TYPE: charm</span><br></pre></td></tr></table></figure>
+<p>使用 <code>envFrom</code> 将所有 <code>ConfigMap</code> 的数据定义为容器环境变量，<code>ConfigMap</code> 中的键成为 Pod 中的环境变量名称。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      envFrom:</span><br><span class="line">  </span><br><span class="line">      - configMapRef:</span><br><span class="line">  </span><br><span class="line">          name: special-config</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
+
+<h2 id="将-ConfigMap-内容挂载到容器中的文件"><a href="#将-ConfigMap-内容挂载到容器中的文件" class="headerlink" title="将 ConfigMap 内容挂载到容器中的文件"></a>将 ConfigMap 内容挂载到容器中的文件</h2><p>下面是一个将 ConfigMap 以卷的形式进行挂载的 Pod 示例： <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[在 Pod 中将 ConfigMap 当做文件使用](https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8)">[3]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: mypod</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: mypod</span><br><span class="line">    image: redis</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - name: foo</span><br><span class="line">      mountPath: &quot;/etc/foo&quot;</span><br><span class="line">      readOnly: true</span><br><span class="line">  volumes:</span><br><span class="line">  - name: foo</span><br><span class="line">    configMap:</span><br><span class="line">      name: myconfigmap</span><br></pre></td></tr></table></figure>
+
+<p>挂载之后，<code>configMap</code> 中的每个键会变成 <code>spec.containers[].volumeMounts[].mountPath</code> 下面的一个文件名。</p>
+<p>将 <code>configMap</code> 暴露为卷可以达到配置热更新的效果，当 <code>configMap</code> 更新后，卷中引用它的所有文件也会相应更新，进程发现文件被改变后进行重载（需要进程有此功能），无需重新创建 Pod 或者重启容器。</p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/">配置 Pod 使用 ConfigMap</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps">使用来自多个 ConfigMap 的数据定义容器环境变量</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8">在 Pod 中将 ConfigMap 当做文件使用</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>kubernetes dns</title>
     <url>/202305031339/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -16421,43 +16458,6 @@ width: 20%;
 <p>解析到的域名（主机）是 <code>$&#123;service name&#125;.$&#123;service namespace&#125;.svc.cluster.local</code><br>如果是 <code>headless</code> 类型的 Service ，解析到的域名（主机）是 Pod 的 域名。</p>
 </blockquote>
 ]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>kubernetes ConfigMap 使用说明</title>
-    <url>/202212071353/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kubernetes 1.24</li>
-</ul>
-<p><code>ConfigMap</code> 是 Kubernetes 用来向应用 Pod 中注入配置数据的方法。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 Pod 使用 ConfigMap](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/)">[1]</span></a></sup></p>
-<h1 id="使用-ConfigMap-数据定义容器环境变量"><a href="#使用-ConfigMap-数据定义容器环境变量" class="headerlink" title="使用 ConfigMap 数据定义容器环境变量"></a>使用 ConfigMap 数据定义容器环境变量</h1><h2 id="使用单个-ConfigMap-中的数据定义容器环境变量"><a href="#使用单个-ConfigMap-中的数据定义容器环境变量" class="headerlink" title="使用单个 ConfigMap 中的数据定义容器环境变量"></a>使用单个 ConfigMap 中的数据定义容器环境变量</h2><ol>
-<li>在 <code>ConfigMap</code> 中将环境变量定义为键值对: <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create configmap special-config --from-literal=special.how=very</span><br></pre></td></tr></table></figure></li>
-<li>将 ConfigMap 中定义的 special.how 赋值给 Pod 规约中的 SPECIAL_LEVEL_KEY 环境变量。 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">   </span><br><span class="line">kind: Pod</span><br><span class="line">   </span><br><span class="line">metadata:</span><br><span class="line">   </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">   </span><br><span class="line">spec:</span><br><span class="line">   </span><br><span class="line">  containers:</span><br><span class="line">   </span><br><span class="line">    - name: test-container</span><br><span class="line">   </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">   </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">   </span><br><span class="line">      env:</span><br><span class="line">   </span><br><span class="line">        # 定义环境变量</span><br><span class="line">   </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">   </span><br><span class="line">          valueFrom:</span><br><span class="line">   </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">   </span><br><span class="line">              # ConfigMap 包含你要赋给 SPECIAL_LEVEL_KEY 的值</span><br><span class="line">   </span><br><span class="line">              name: special-config</span><br><span class="line">   </span><br><span class="line">              # 指定与取值相关的键名</span><br><span class="line">   </span><br><span class="line">              key: special.how</span><br><span class="line">   </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
- 现在，Pod 的输出包含环境变量 <code>SPECIAL_LEVEL_KEY=very</code>。</li>
-</ol>
-<span id="more"></span>
-
-<h2 id="使用来自多个-ConfigMap-的数据定义容器环境变量"><a href="#使用来自多个-ConfigMap-的数据定义容器环境变量" class="headerlink" title="使用来自多个 ConfigMap 的数据定义容器环境变量"></a>使用来自多个 ConfigMap 的数据定义容器环境变量</h2><p>创建 <code>ConfigMap</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[使用来自多个 ConfigMap 的数据定义容器环境变量](https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps)
-">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  special.how: very</span><br><span class="line">  </span><br><span class="line">---</span><br><span class="line">  </span><br><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: env-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  log_level: INFO</span><br></pre></td></tr></table></figure>
-<p>在 Pod 规约中定义环境变量。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      env:</span><br><span class="line">  </span><br><span class="line">        - name: SPECIAL_LEVEL_KEY</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: special-config</span><br><span class="line">  </span><br><span class="line">              key: special.how</span><br><span class="line">  </span><br><span class="line">        - name: LOG_LEVEL</span><br><span class="line">  </span><br><span class="line">          valueFrom:</span><br><span class="line">  </span><br><span class="line">            configMapKeyRef:</span><br><span class="line">  </span><br><span class="line">              name: env-config</span><br><span class="line">  </span><br><span class="line">              key: log_level</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
-<h2 id="将-ConfigMap-中的所有键值对配置为容器环境变量"><a href="#将-ConfigMap-中的所有键值对配置为容器环境变量" class="headerlink" title="将 ConfigMap 中的所有键值对配置为容器环境变量"></a>将 ConfigMap 中的所有键值对配置为容器环境变量</h2><p>创建一个包含多个键值对的 ConfigMap。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: ConfigMap</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: special-config</span><br><span class="line">  </span><br><span class="line">  namespace: default</span><br><span class="line">  </span><br><span class="line">data:</span><br><span class="line">  </span><br><span class="line">  SPECIAL_LEVEL: very</span><br><span class="line">  </span><br><span class="line">  SPECIAL_TYPE: charm</span><br></pre></td></tr></table></figure>
-<p>使用 <code>envFrom</code> 将所有 <code>ConfigMap</code> 的数据定义为容器环境变量，<code>ConfigMap</code> 中的键成为 Pod 中的环境变量名称。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">  </span><br><span class="line">kind: Pod</span><br><span class="line">  </span><br><span class="line">metadata:</span><br><span class="line">  </span><br><span class="line">  name: dapi-test-pod</span><br><span class="line">  </span><br><span class="line">spec:</span><br><span class="line">  </span><br><span class="line">  containers:</span><br><span class="line">  </span><br><span class="line">    - name: test-container</span><br><span class="line">  </span><br><span class="line">      image: registry.k8s.io/busybox</span><br><span class="line">  </span><br><span class="line">      command: [ &quot;/bin/sh&quot;, &quot;-c&quot;, &quot;env&quot; ]</span><br><span class="line">  </span><br><span class="line">      envFrom:</span><br><span class="line">  </span><br><span class="line">      - configMapRef:</span><br><span class="line">  </span><br><span class="line">          name: special-config</span><br><span class="line">  </span><br><span class="line">  restartPolicy: Never</span><br></pre></td></tr></table></figure>
-
-<h2 id="将-ConfigMap-内容挂载到容器中的文件"><a href="#将-ConfigMap-内容挂载到容器中的文件" class="headerlink" title="将 ConfigMap 内容挂载到容器中的文件"></a>将 ConfigMap 内容挂载到容器中的文件</h2><p>下面是一个将 ConfigMap 以卷的形式进行挂载的 Pod 示例： <sup id="fnref:3"><a href="#fn:3" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[在 Pod 中将 ConfigMap 当做文件使用](https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8)">[3]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: Pod</span><br><span class="line">metadata:</span><br><span class="line">  name: mypod</span><br><span class="line">spec:</span><br><span class="line">  containers:</span><br><span class="line">  - name: mypod</span><br><span class="line">    image: redis</span><br><span class="line">    volumeMounts:</span><br><span class="line">    - name: foo</span><br><span class="line">      mountPath: &quot;/etc/foo&quot;</span><br><span class="line">      readOnly: true</span><br><span class="line">  volumes:</span><br><span class="line">  - name: foo</span><br><span class="line">    configMap:</span><br><span class="line">      name: myconfigmap</span><br></pre></td></tr></table></figure>
-
-<p>挂载之后，<code>configMap</code> 中的每个键会变成 <code>spec.containers[].volumeMounts[].mountPath</code> 下面的一个文件名。</p>
-<p>将 <code>configMap</code> 暴露为卷可以达到配置热更新的效果，当 <code>configMap</code> 更新后，卷中引用它的所有文件也会相应更新，进程发现文件被改变后进行重载（需要进程有此功能），无需重新创建 Pod 或者重启容器。</p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/">配置 Pod 使用 ConfigMap</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/tasks/configure-pod-container/configure-pod-configmap/#define-container-environment-variables-with-data-from-multiple-configmaps">使用来自多个 ConfigMap 的数据定义容器环境变量</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://kubernetes.io/zh-cn/docs/concepts/configuration/configmap/#%E5%9C%A8-pod-%E4%B8%AD%E5%B0%86-configmap-%E5%BD%93%E5%81%9A%E6%96%87%E4%BB%B6%E4%BD%BF%E7%94%A8">在 Pod 中将 ConfigMap 当做文件使用</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
       </categories>
@@ -24752,6 +24752,60 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux sudo 使用介绍</title>
+    <url>/202308311739/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>环境信息</strong></p>
+<ul>
+<li>Centos 7</li>
+</ul>
+<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
+<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
+<p>主要配置文件内容如下</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
+
+<p>各列值含义说明：</p>
+<ul>
+<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
+<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
+<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
+</ul>
+<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
+<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
+<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
+<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
+<p>若要禁止此行为，删除此文件即可。</p>
+<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="限制特定用户只能执行指定目录下的脚本"><a href="#限制特定用户只能执行指定目录下的脚本" class="headerlink" title="限制特定用户只能执行指定目录下的脚本"></a>限制特定用户只能执行指定目录下的脚本</h2><p>在 <code>visudo</code> 中，你可以使用 <code>Cmnd_Alias</code> 限制用户只能执行特定目录下的脚本。假设你想让用户 <code>centos</code> 只能执行 <code>/usr/local/scripts/</code> 目录下的脚本，可以按照以下方式配置：</p>
+<figure class="highlight shell"><figcaption><span>visudo</span></figcaption><table><tr><td class="code"><pre><span class="line">Cmnd_Alias ALLOWED_SCRIPTS = /usr/local/scripts/*</span><br><span class="line"></span><br><span class="line">centos ALL=(ALL) NOPASSWD: ALLOWED_SCRIPTS</span><br></pre></td></tr></table></figure>
+<p><strong>含义</strong> ：</p>
+<ul>
+<li><p><strong>Cmnd_Alias ALLOWED_SCRIPTS &#x3D; &#x2F;usr&#x2F;local&#x2F;scripts&#x2F;</strong>*</p>
+<p>  定义 <code>ALLOWED_SCRIPTS</code> ，表示 <strong>允许执行 &#x2F;usr&#x2F;local&#x2F;scripts&#x2F; 目录下的所有脚本</strong> 。</p>
+</li>
+<li><p><strong>qqc ALL&#x3D;(ALL) NOPASSWD: ALLOWED_SCRIPTS</strong></p>
+<p>  允许 <code>centos</code> 用户以 <code>sudo</code> 执行 <code>ALLOWED_SCRIPTS</code> 目录下的所有脚本，且无需输入密码。</p>
+</li>
+</ul>
+<p>切换到 <code>centos</code> 用户，并尝试执行：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo /usr/local/scripts/test.sh</span><br></pre></td></tr></table></figure>
+<p><strong>成功执行</strong> ，说明规则生效。</p>
+<p>但是，如果 <code>centos</code> 用户 <strong>试图运行 <code>/bin/bash</code> 或 <code>/usr/bin/python</code> ，或者访问其他路径</strong> ：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">sudo /bin/bash</span></span><br><span class="line">Sorry, user centos is not allowed to execute &#x27;/bin/bash&#x27; as root on this host.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>如果希望 <code>centos</code> 用户可以查看自己可以运行的命令：</strong></p>
+<figure class="highlight shell"><figcaption><span>visudo</span></figcaption><table><tr><td class="code"><pre><span class="line">Cmnd_Alias ALLOWED_SCRIPTS = /usr/local/scripts/*</span><br><span class="line">qqc ALL=(ALL) NOPASSWD: ALLOWED_SCRIPTS, /usr/bin/sudo -l</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>这样，<code>centos</code> 用户可以运行:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo -l</span><br></pre></td></tr></table></figure>
+<p>来查看自己被允许的 <code>sudo</code> 命令。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux 常用内核参数说明</title>
     <url>/202302131009/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>sysctl</code> 命令被用于在内核运行时动态地修改内核的运行参数，可用的内核参数在目录 <code>/proc/sys</code> 中。</p>
@@ -24832,60 +24886,6 @@ width: 20%;
 </li>
 </ul>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="http://33f.net/linux/linux-Out-of-Memory-Killer.html">OOM</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux sudo 使用介绍</title>
-    <url>/202308311739/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>环境信息</strong></p>
-<ul>
-<li>Centos 7</li>
-</ul>
-<p><code>sudo</code> 可以配置适当的权限授予普通用户，使普通用户执行 <code>root</code> 用户才能执行的操作</p>
-<p>配置 <code>sudo</code> 权限的主要配置文件为 <code>/etc/sudoers</code>。<code>/etc/sudoers</code>是一个只读文件，不能直接使用 <code>vim</code> 等编辑器来编辑，要修改此文件，需要以 <code>root</code> 用户身份使用 <code>visudo</code> 命令来修改。</p>
-<p>主要配置文件内容如下</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># Allow root to run any commands anywhere</span></span></span><br><span class="line">root    ALL=(ALL)       ALL</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">wheel  ALL=(ALL)       NOPASSWD: ALL</span></span><br></pre></td></tr></table></figure>
-
-<p>各列值含义说明：</p>
-<ul>
-<li><code>root</code> 第一列为用户名，如 <code>root</code>、<code>users</code>；<code>%wheel</code> 以 <code>%</code> 开头表示这是一个组，而不是用户</li>
-<li><code>ALL=(ALL)</code> 第二列等号左边的 <code>ALL</code> 表示允许从任何主机登录当前的用户账户；等号右边的 <code>ALL</code> 表示第一列的用户可以切换成系统中任何一个其它用户（如：<code>su users</code>）；</li>
-<li><code>ALL</code> 第三列表示第一列的用户能下达的命令，<code>ALL</code> 表示可以下达任何命令。<code>NOPASSWD: ALL</code> 意味着成员可以执行指定的命令而无需输入密码。</li>
-</ul>
-<p>当我们以普通用户身份（以 <code>test</code> 为例）登录，在使用 <code>sudo</code> 命令时报出如下信息：</p>
-<p><code>test is not in the sudoers file.  This incident will be reported.</code></p>
-<p>则说明该用户没有在 <code>/etc/sudoers</code> 文件中进行配置，因此无法使用 <code>sudo</code> 命令</p>
-<p>AWS 的 Centos 镜像部署后的虚拟机默认使用 <code>centos</code> 用户登陆，登陆后即可执行 <code>sudo su -</code> 切换到 <code>root</code> 用户，此配置由 <code> /etc/sudoers.d/90-cloud-init-users</code> 配置，内容如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/sudoers.d/90-cloud-init-users</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /etc/sudoers.d/90-cloud-init-users</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Created by cloud-init v. 19.4 on Mon, 31 Oct 2022 07:58:58 +0000</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">User rules <span class="keyword">for</span> centos</span></span><br><span class="line">centos ALL=(ALL) NOPASSWD:ALL</span><br></pre></td></tr></table></figure>
-<p>若要禁止此行为，删除此文件即可。</p>
-<h1 id="使用示例"><a href="#使用示例" class="headerlink" title="使用示例"></a>使用示例</h1><h2 id="限制特定用户只能执行指定目录下的脚本"><a href="#限制特定用户只能执行指定目录下的脚本" class="headerlink" title="限制特定用户只能执行指定目录下的脚本"></a>限制特定用户只能执行指定目录下的脚本</h2><p>在 <code>visudo</code> 中，你可以使用 <code>Cmnd_Alias</code> 限制用户只能执行特定目录下的脚本。假设你想让用户 <code>centos</code> 只能执行 <code>/usr/local/scripts/</code> 目录下的脚本，可以按照以下方式配置：</p>
-<figure class="highlight shell"><figcaption><span>visudo</span></figcaption><table><tr><td class="code"><pre><span class="line">Cmnd_Alias ALLOWED_SCRIPTS = /usr/local/scripts/*</span><br><span class="line"></span><br><span class="line">centos ALL=(ALL) NOPASSWD: ALLOWED_SCRIPTS</span><br></pre></td></tr></table></figure>
-<p><strong>含义</strong> ：</p>
-<ul>
-<li><p><strong>Cmnd_Alias ALLOWED_SCRIPTS &#x3D; &#x2F;usr&#x2F;local&#x2F;scripts&#x2F;</strong>*</p>
-<p>  定义 <code>ALLOWED_SCRIPTS</code> ，表示 <strong>允许执行 &#x2F;usr&#x2F;local&#x2F;scripts&#x2F; 目录下的所有脚本</strong> 。</p>
-</li>
-<li><p><strong>qqc ALL&#x3D;(ALL) NOPASSWD: ALLOWED_SCRIPTS</strong></p>
-<p>  允许 <code>centos</code> 用户以 <code>sudo</code> 执行 <code>ALLOWED_SCRIPTS</code> 目录下的所有脚本，且无需输入密码。</p>
-</li>
-</ul>
-<p>切换到 <code>centos</code> 用户，并尝试执行：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo /usr/local/scripts/test.sh</span><br></pre></td></tr></table></figure>
-<p><strong>成功执行</strong> ，说明规则生效。</p>
-<p>但是，如果 <code>centos</code> 用户 <strong>试图运行 <code>/bin/bash</code> 或 <code>/usr/bin/python</code> ，或者访问其他路径</strong> ：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">sudo /bin/bash</span></span><br><span class="line">Sorry, user centos is not allowed to execute &#x27;/bin/bash&#x27; as root on this host.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>如果希望 <code>centos</code> 用户可以查看自己可以运行的命令：</strong></p>
-<figure class="highlight shell"><figcaption><span>visudo</span></figcaption><table><tr><td class="code"><pre><span class="line">Cmnd_Alias ALLOWED_SCRIPTS = /usr/local/scripts/*</span><br><span class="line">qqc ALL=(ALL) NOPASSWD: ALLOWED_SCRIPTS, /usr/bin/sudo -l</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>这样，<code>centos</code> 用户可以运行:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo -l</span><br></pre></td></tr></table></figure>
-<p>来查看自己被允许的 <code>sudo</code> 命令。</p>
-]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -28297,6 +28297,168 @@ width: 20%;
       </categories>
       <tags>
         <tag>php</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Pixie 安装配置</title>
+    <url>/2026050713030/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pixie 是一款专为 Kubernetes 设计的 <strong>开源全栈可观测性工具</strong> 。它最大的特色是利用 eBPF（extended Berkeley Packet Filter）技术，在不修改业务代码、不重启 Pod、不注入 Sidecar 的情况下，自动采集集群内的所有监控数据。Pixie 被称为 <strong>K8s 的分布式调试器</strong></p>
+<p><strong>Pixie 的核心优势</strong></p>
+<ul>
+<li><p><strong>无侵入性 (Auto-telemetry)</strong> ： 部署后，自动获取 HTTP&#x2F;gRPC 请求、SQL 查询、系统调用和火焰图。</p>
+</li>
+<li><p><strong>边缘计算架构</strong> ： 数据存储在集群节点的内存中，查询时才进行分布式计算。这意味着：</p>
+</li>
+<li><p><strong>极速</strong> ： 查询结果近乎实时。</p>
+</li>
+<li><p><strong>省钱</strong> ： 不会有海量日志传输到云端产生的高额带宽和存储费。</p>
+</li>
+<li><p><strong>动态可编程</strong> ： 使用 PxL（基于 Python 的查询语言）编写脚本，可以像写脚本一样实时分析系统性能。</p>
+</li>
+</ul>
+<p><strong>Pixie 核心组件</strong></p>
+<ul>
+<li><p><strong>Vizier</strong> ： 运行在 K8s 集群中的控制器，负责管理各个节点的边缘收集器。</p>
+</li>
+<li><p><strong>PEM (Pixie Edge Module)</strong> ： 以 DaemonSet 形式运行在每个节点，利用 eBPF 采集数据并存储在本地内存。</p>
+</li>
+<li><p><strong>Cloud Add-on</strong> ： 提供用户界面 (UI) 和 API 访问。</p>
+</li>
+</ul>
+<p><strong>快速安装</strong><br>Pixie 的安装非常简单，通常通过 CLI 完成。</p>
+<blockquote>
+<p>确保 Linux 内核版本在 4.16+（推荐 5.10+，2026 年的主流系统如 Ubuntu 22.04+、AlmaLinux 9 等都完美支持）。如果在过旧的内核上强行运行 eBPF 程序，极少数情况下可能导致内核态的不稳定。</p>
+</blockquote>
+<ol>
+<li><p>下载 Pixie CLI</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">bash -c &quot;$(curl -fsSL https://withpixie.ai/install.sh)&quot;</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>脚本会从 Pixie 的官方 GitHub Release 页面或 CDN 下载最新版本的 px 命令行工具，并将其安装到 <code>/usr/local/bin</code> 目录。<br><strong><code>px</code> 是你后续与 Kubernetes 集群交互的唯一入口，所有的部署（deploy）、查询（collect）和脚本运行都通过它完成。</strong>。<br>它会检查你本地的 <code>~/.kube/config</code> 文件，确保你当前有权限连接到一个 Kubernetes 集群。<br>当你执行完这个脚本后，Pixie 还没有安装到你的 Kubernetes 集群里。它只是在你的跳板机或开发机上装好了“遥控器”。要真正让 Pixie 开始监控集群，你通常需要继续执行 <code>px deploy</code> 命令。</p>
+</blockquote>
+</li>
+<li><p>部署到 K8s 集群。这将自动安装 Vizier 和 PEM 到集群中</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">px deploy</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>这个命令会将 Vizier 和 PEM 部署到你的 Kubernetes 集群中。</p>
+</blockquote>
+</li>
+</ol>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>PostgreSQL</title>
+    <url>/20260305145910/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="PostgreSQL-常用命令"><a href="#PostgreSQL-常用命令" class="headerlink" title="PostgreSQL 常用命令"></a>PostgreSQL 常用命令</h1><table>
+<thead>
+<tr>
+<th>命令</th>
+<th>功能描述</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>\l</code></td>
+<td>列出所有数据库</td>
+</tr>
+<tr>
+<td><code>\c</code></td>
+<td>数据库名,切换当前连接的数据库 (Connect)</td>
+</tr>
+<tr>
+<td><code>\dt</code></td>
+<td>列出当前数据库中所有的表 (Describe Tables)</td>
+</tr>
+<tr>
+<td><code>\d</code></td>
+<td>表名,查看指定表的结构（列名、类型、索引等）</td>
+</tr>
+<tr>
+<td><code>\du</code></td>
+<td>列出所有角色&#x2F;用户</td>
+</tr>
+<tr>
+<td><code>\dn</code></td>
+<td>列出所有模式 (Schema)</td>
+</tr>
+<tr>
+<td><code>\df</code></td>
+<td>列出所有函数</td>
+</tr>
+<tr>
+<td><code>\x</code></td>
+<td>开启&#x2F;关闭扩展显示模式（当列很多时，这会让查询结果按行显示，非常清晰）</td>
+</tr>
+<tr>
+<td><code>\?</code></td>
+<td>查看所有反斜杠命令的帮助</td>
+</tr>
+</tbody></table>
+<ul>
+<li><p><strong>创建数据库</strong> ： <code>CREATE DATABASE db_name;</code></p>
+</li>
+<li><p><strong>删除数据库</strong> ：<code>DROP DATABASE db_name;</code></p>
+</li>
+<li><p><strong>导出数据库 (终端执行)</strong> ：<code>pg_dump -U 用户名 数据库名 &gt; 备份文件.sql</code></p>
+</li>
+<li><p><strong>导入数据库 (终端执行)</strong> : <code>psql -U 用户名 数据库名 &lt; 备份文件.sql</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>predixy 安装配置</title>
+    <url>/202207271506/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
+<ul>
+<li>Centos 7</li>
+<li>predixy-1.0.5</li>
+</ul>
+<blockquote>
+<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3></blockquote>
+<p><a href="https://github.com/joyieldInc/predixy">下载地址</a>, clone或下载最新的版本或指定版本下载后解压</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install libstdc++-static -y</span><br><span class="line">cd predixy-1.0.5</span><br><span class="line">make</span><br><span class="line">cp src/predixy /usr/local/bin/</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>需要依赖 <code>libstdc++-static</code>, 否则make会报错：<br>&#x2F;bin&#x2F;ld: cannot find -lstdc++<br>collect2: error: ld returned 1 exit status<br>make[1]: *** [predixy] Error 1<br>make[1]: Leaving directory &#96;&#x2F;root&#x2F;predixy-1.0.5&#x2F;src’<br>make: *** [default] Error 2</p>
+</blockquote>
+<blockquote>
+<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3></blockquote>
+<ul>
+<li><p>predixy.conf，整体配置文件，会引用下面的配置文件</p>
+</li>
+<li><p>cluster.conf，用于Redis Cluster时，配置后端redis信息</p>
+</li>
+<li><p>sentinel.conf，用于Redis Sentinel时，配置后端redis信息</p>
+</li>
+<li><p>auth.conf，访问权限控制配置，可以定义多个验证密码，可每个密码指定读、写、管理权限，以及定义可访问的健空间</p>
+</li>
+<li><p>dc.conf，多数据中心支持，可以定义读写分离规则，读流量权重分配</p>
+</li>
+<li><p>latency.conf， 延迟监控规则定义，可以指定需要监控的命令以及延时时间间隔</p>
+</li>
+</ul>
+<blockquote>
+<h3 id="启动"><a href="#启动" class="headerlink" title="启动"></a>启动</h3></blockquote>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">predixy /predixy/conf/predixy.conf</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>使用默认的配置文件predixy.conf， predixy将监听地址0.0.0.0:7617，后端的redis是Redis Cluster 127.0.0.1:6379  </p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Redis</tag>
+        <tag>Predixy</tag>
       </tags>
   </entry>
   <entry>
@@ -39765,168 +39927,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>PostgreSQL</title>
-    <url>/20260305145910/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="PostgreSQL-常用命令"><a href="#PostgreSQL-常用命令" class="headerlink" title="PostgreSQL 常用命令"></a>PostgreSQL 常用命令</h1><table>
-<thead>
-<tr>
-<th>命令</th>
-<th>功能描述</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>\l</code></td>
-<td>列出所有数据库</td>
-</tr>
-<tr>
-<td><code>\c</code></td>
-<td>数据库名,切换当前连接的数据库 (Connect)</td>
-</tr>
-<tr>
-<td><code>\dt</code></td>
-<td>列出当前数据库中所有的表 (Describe Tables)</td>
-</tr>
-<tr>
-<td><code>\d</code></td>
-<td>表名,查看指定表的结构（列名、类型、索引等）</td>
-</tr>
-<tr>
-<td><code>\du</code></td>
-<td>列出所有角色&#x2F;用户</td>
-</tr>
-<tr>
-<td><code>\dn</code></td>
-<td>列出所有模式 (Schema)</td>
-</tr>
-<tr>
-<td><code>\df</code></td>
-<td>列出所有函数</td>
-</tr>
-<tr>
-<td><code>\x</code></td>
-<td>开启&#x2F;关闭扩展显示模式（当列很多时，这会让查询结果按行显示，非常清晰）</td>
-</tr>
-<tr>
-<td><code>\?</code></td>
-<td>查看所有反斜杠命令的帮助</td>
-</tr>
-</tbody></table>
-<ul>
-<li><p><strong>创建数据库</strong> ： <code>CREATE DATABASE db_name;</code></p>
-</li>
-<li><p><strong>删除数据库</strong> ：<code>DROP DATABASE db_name;</code></p>
-</li>
-<li><p><strong>导出数据库 (终端执行)</strong> ：<code>pg_dump -U 用户名 数据库名 &gt; 备份文件.sql</code></p>
-</li>
-<li><p><strong>导入数据库 (终端执行)</strong> : <code>psql -U 用户名 数据库名 &lt; 备份文件.sql</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>predixy 安装配置</title>
-    <url>/202207271506/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
-<ul>
-<li>Centos 7</li>
-<li>predixy-1.0.5</li>
-</ul>
-<blockquote>
-<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3></blockquote>
-<p><a href="https://github.com/joyieldInc/predixy">下载地址</a>, clone或下载最新的版本或指定版本下载后解压</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install libstdc++-static -y</span><br><span class="line">cd predixy-1.0.5</span><br><span class="line">make</span><br><span class="line">cp src/predixy /usr/local/bin/</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>需要依赖 <code>libstdc++-static</code>, 否则make会报错：<br>&#x2F;bin&#x2F;ld: cannot find -lstdc++<br>collect2: error: ld returned 1 exit status<br>make[1]: *** [predixy] Error 1<br>make[1]: Leaving directory &#96;&#x2F;root&#x2F;predixy-1.0.5&#x2F;src’<br>make: *** [default] Error 2</p>
-</blockquote>
-<blockquote>
-<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3></blockquote>
-<ul>
-<li><p>predixy.conf，整体配置文件，会引用下面的配置文件</p>
-</li>
-<li><p>cluster.conf，用于Redis Cluster时，配置后端redis信息</p>
-</li>
-<li><p>sentinel.conf，用于Redis Sentinel时，配置后端redis信息</p>
-</li>
-<li><p>auth.conf，访问权限控制配置，可以定义多个验证密码，可每个密码指定读、写、管理权限，以及定义可访问的健空间</p>
-</li>
-<li><p>dc.conf，多数据中心支持，可以定义读写分离规则，读流量权重分配</p>
-</li>
-<li><p>latency.conf， 延迟监控规则定义，可以指定需要监控的命令以及延时时间间隔</p>
-</li>
-</ul>
-<blockquote>
-<h3 id="启动"><a href="#启动" class="headerlink" title="启动"></a>启动</h3></blockquote>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">predixy /predixy/conf/predixy.conf</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>使用默认的配置文件predixy.conf， predixy将监听地址0.0.0.0:7617，后端的redis是Redis Cluster 127.0.0.1:6379  </p>
-</blockquote>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Redis</tag>
-        <tag>Predixy</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Pixie 安装配置</title>
-    <url>/2026050713030/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pixie 是一款专为 Kubernetes 设计的 <strong>开源全栈可观测性工具</strong> 。它最大的特色是利用 eBPF（extended Berkeley Packet Filter）技术，在不修改业务代码、不重启 Pod、不注入 Sidecar 的情况下，自动采集集群内的所有监控数据。Pixie 被称为 <strong>K8s 的分布式调试器</strong></p>
-<p><strong>Pixie 的核心优势</strong></p>
-<ul>
-<li><p><strong>无侵入性 (Auto-telemetry)</strong> ： 部署后，自动获取 HTTP&#x2F;gRPC 请求、SQL 查询、系统调用和火焰图。</p>
-</li>
-<li><p><strong>边缘计算架构</strong> ： 数据存储在集群节点的内存中，查询时才进行分布式计算。这意味着：</p>
-</li>
-<li><p><strong>极速</strong> ： 查询结果近乎实时。</p>
-</li>
-<li><p><strong>省钱</strong> ： 不会有海量日志传输到云端产生的高额带宽和存储费。</p>
-</li>
-<li><p><strong>动态可编程</strong> ： 使用 PxL（基于 Python 的查询语言）编写脚本，可以像写脚本一样实时分析系统性能。</p>
-</li>
-</ul>
-<p><strong>Pixie 核心组件</strong></p>
-<ul>
-<li><p><strong>Vizier</strong> ： 运行在 K8s 集群中的控制器，负责管理各个节点的边缘收集器。</p>
-</li>
-<li><p><strong>PEM (Pixie Edge Module)</strong> ： 以 DaemonSet 形式运行在每个节点，利用 eBPF 采集数据并存储在本地内存。</p>
-</li>
-<li><p><strong>Cloud Add-on</strong> ： 提供用户界面 (UI) 和 API 访问。</p>
-</li>
-</ul>
-<p><strong>快速安装</strong><br>Pixie 的安装非常简单，通常通过 CLI 完成。</p>
-<blockquote>
-<p>确保 Linux 内核版本在 4.16+（推荐 5.10+，2026 年的主流系统如 Ubuntu 22.04+、AlmaLinux 9 等都完美支持）。如果在过旧的内核上强行运行 eBPF 程序，极少数情况下可能导致内核态的不稳定。</p>
-</blockquote>
-<ol>
-<li><p>下载 Pixie CLI</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">bash -c &quot;$(curl -fsSL https://withpixie.ai/install.sh)&quot;</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>脚本会从 Pixie 的官方 GitHub Release 页面或 CDN 下载最新版本的 px 命令行工具，并将其安装到 <code>/usr/local/bin</code> 目录。<br><strong><code>px</code> 是你后续与 Kubernetes 集群交互的唯一入口，所有的部署（deploy）、查询（collect）和脚本运行都通过它完成。</strong>。<br>它会检查你本地的 <code>~/.kube/config</code> 文件，确保你当前有权限连接到一个 Kubernetes 集群。<br>当你执行完这个脚本后，Pixie 还没有安装到你的 Kubernetes 集群里。它只是在你的跳板机或开发机上装好了“遥控器”。要真正让 Pixie 开始监控集群，你通常需要继续执行 <code>px deploy</code> 命令。</p>
-</blockquote>
-</li>
-<li><p>部署到 K8s 集群。这将自动安装 Vizier 和 PEM 到集群中</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">px deploy</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>这个命令会将 Vizier 和 PEM 部署到你的 Kubernetes 集群中。</p>
-</blockquote>
-</li>
-</ol>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
       </tags>
   </entry>
 </search>
