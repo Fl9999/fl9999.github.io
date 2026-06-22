@@ -21460,6 +21460,228 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux KVM 配置说明</title>
+    <url>/20260507140030/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>KVM（Kernel-based Virtual Machine）</strong> 是 Linux 内核的一个模块，它将 Linux 内核转变为一个 Type-1（裸机级） <strong>虚拟机管理程序（Hypervisor&#x2F;VMM）</strong> 。</p>
+<p>KVM 本身并不模拟硬件，它只负责处理器虚拟化和内存虚拟化。它需要配合 QEMU 来模拟 I&#x2F;O 设备（如磁盘、网卡、显卡）。</p>
+<ul>
+<li><p><strong>内核态 (KVM Module)</strong> ： 负责将 CPU 切换到 <strong>客户模式（Guest Mode）</strong> ，处理高权限指令。</p>
+</li>
+<li><p><strong>用户态 (QEMU)</strong> ： 负责模拟硬件设备，并提供用户操作接口。</p>
+</li>
+<li><p><strong>管理层 (Libvirt)</strong> ： 一个标准的 API 库，我们常用的 <code>virsh</code> 命令、 <code>virt-manager</code> 界面都是通过 Libvirt 来调用 QEMU&#x2F;KVM 的。</p>
+</li>
+</ul>
+<p><strong>核心技术特性</strong></p>
+<ul>
+<li><p><strong>CPU 虚拟化 (Intel VT-x &#x2F; AMD-V)</strong> 。KVM 利用硬件辅助虚拟化技术。它将 CPU 分为四种模式，使得虚拟机（Guest）可以直接在物理 CPU 上执行绝大多数指令，只有在执行敏感指令时才由内核接管，性能损耗极低。</p>
+</li>
+<li><p><strong>内存管理 (EPT&#x2F;NPT)</strong> 。通过 <strong>扩展页表 (EPT)</strong> 技术，KVM 实现了物理内存与虚拟机内存的直接映射。</p>
+<ul>
+<li><strong>KSM (Kernel Same-page Merging)</strong> 扫描多个 VM 的内存，如果发现相同的内存页（例如多个 VM 都运行 Ubuntu），则将其合并为一页，极大节省物理内存。</li>
+</ul>
+</li>
+<li><p><strong>存储与网络 (VirtIO)</strong> 。传统的模拟设备（如模拟一张经典的百兆网卡）效率极低。KVM 引入了 VirtIO 准虚拟化驱动。VM 意识到自己处于虚拟化环境，通过“共享内存”的方式与宿主机通信。实现磁盘 IO 和网络吞吐量几乎接近物理机性能。</p>
+</li>
+</ul>
+<p><strong>KVM 家族工具链</strong></p>
+<ul>
+<li><p><strong>qemu-kvm</strong> ： 核心包，提供底层仿真。</p>
+</li>
+<li><p><strong>libvirt-daemon</strong> ： 守护进程，负责管理 VM 的生命周期。</p>
+</li>
+<li><p><strong>virsh</strong> ： 命令行工具（运维最常用）。</p>
+</li>
+<li><p><strong>virt-install</strong> ： 用于创建虚拟机的命令行脚本工具。</p>
+</li>
+</ul>
+<h1 id="KVM-安装"><a href="#KVM-安装" class="headerlink" title="KVM 安装"></a>KVM 安装</h1><p><strong>环境信息</strong></p>
+<ul>
+<li>Ubuntu 22.04.5 LTS 5.15.0-119-generic</li>
+</ul>
+<blockquote>
+<ul>
+<li>最好不要和 Docker、K8s 等虚拟化工具同时安装。可能会因为内核参数（如 <code>net.bridge.bridge-nf-call-iptables</code>）冲突导致 VM 无法获得 DHCP 地址。</li>
+</ul>
+</blockquote>
+<blockquote>
+<p>首先需要确认你的物理机 CPU 是否支持虚拟化技术（VT-x 或 AMD-V）</p>
+</blockquote>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">egrep -c <span class="string">&#x27;(vmx|svm)&#x27;</span> /proc/cpuinfo</span></span><br><span class="line">64</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>如果输出大于 0，说明支持虚拟化</p>
+<p><strong>安装 KVM 及相关工具</strong> 。参考以下命令安装 Linux 原生的虚拟化栈</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update</span><br><span class="line">sudo apt install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst virt-manager</span><br><span class="line">sudo systemctl enable --now libvirtd</span><br></pre></td></tr></table></figure>
+
+<h2 id="KVM-中安装-Talos-Linux-系统"><a href="#KVM-中安装-Talos-Linux-系统" class="headerlink" title="KVM 中安装 Talos Linux 系统"></a>KVM 中安装 Talos Linux 系统</h2><p>Talos Linux OS <a href="https://github.com/siderolabs/talos/releases/">Github 下载地址</a> ，从中下载 Talos Linux AMD64 版本的 RAW 镜像并提取 raw 文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/siderolabs/talos/releases/download/v1.14.0-alpha.0/metal-amd64.raw.zst</span><br><span class="line"></span><br><span class="line">zstd -d metal-amd64.raw.zst</span><br></pre></td></tr></table></figure>
+<p>使用解压后的 <code>metal-amd64.raw</code> 文件创建虚拟机</p>
+<p><strong>创建 Talos 虚拟机</strong> 。可以使用 virt-install 命令行快速创建多个 VM。 创建控制平面 (Control Plane) 虚拟机</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp metal-amd64.raw /var/lib/libvirt/images/talos-control-plane-01.raw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">建议稍微扩容一下，20G 比较稳妥</span></span><br><span class="line">qemu-img resize /var/lib/libvirt/images/talos-control-plane-01.raw 20G</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">导入并运行虚拟机</span></span><br><span class="line">virt-install \</span><br><span class="line">  --name talos-control-plane-01 \</span><br><span class="line">  --ram 4096 \</span><br><span class="line">  --vcpus 4 \</span><br><span class="line">  --disk path=/var/lib/libvirt/images/talos-control-plane-01.raw,bus=virtio \</span><br><span class="line">  --os-variant ubuntu22.04 \</span><br><span class="line">  --network network=default,model=virtio \</span><br><span class="line">  --graphics none \</span><br><span class="line">  --import \</span><br><span class="line">  --boot hd \</span><br><span class="line">  --console pty,target_type=serial</span><br></pre></td></tr></table></figure>
+<ul>
+<li><code>--name talos-control-plane-01</code> ： 虚拟机唯一名称为 <code>talos-control-plane-01</code></li>
+<li><code>--ram 4096</code> ： 内存大小为 4096MB</li>
+<li><code>--vcpus 4</code> ： 虚拟 CPU 数量为 4 个</li>
+<li><code>--disk path=/var/lib/libvirt/images/talos-control-plane-01.qcow2,size=20</code> ： <code>path</code> 虚拟磁盘文件存放路径, <code>size</code> 虚拟磁盘文件大小为 20GB</li>
+<li><code>--os-variant ubuntu22.04</code> ： <code>--os-variant</code> 用于指定操作系统类型，这里指定为 Ubuntu 22.04。虽然安装的是 Talos，但指定 ubuntu22.04 会让 KVM 自动应用适合该内核版本的硬件加速参数（如 VirtIO 队列优化）</li>
+<li><code>--network network=default,model=virtio</code> ： 将 VM 挂载到宿主机的 default 网桥上。这是 Libvirt 默认网桥，是 KVM 安装后自动生成的 NAT 网桥。虚拟机可以访问外网，宿主机可以访问虚拟机，但外部机房的其他服务器无法直接访问该虚拟机。</li>
+<li><code>--graphics none</code> ： 不显示图形界面，禁用图形输出</li>
+<li><code>--console pty,target_type=serial</code> ： 串口控制台，将虚拟机的控制台重定向到当前的 shell 终端。运行命令后，你可以直接在当前的终端窗口看到 Talos 的启动日志。</li>
+<li><code>--cdrom /opt/Talos/metal-amd64.iso</code> ： 安装镜像，Talos 首次启动需要通过 ISO 引导来进入安装模式。</li>
+<li><code>--boot hd</code> ： 设置启动优先级。先尝试从硬盘 (hd) 启动，如果硬盘没系统（如首次启动），则从 光盘 (cdrom) 启动。</li>
+</ul>
+<p>执行 VM 安装命令后，你的终端会变为 VM 的输出界面。你会看到 Talos 启动并显示以下信息：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Starting install...</span><br><span class="line">Allocating &#x27;talos-control-plane-01.qcow2&#x27;                                                                                                            | 3.1 MB  00:00:00 ... </span><br><span class="line">Creating domain...                                                                                                                                   |    0 B  00:00:00     </span><br><span class="line">Running text console command: virsh --connect qemu:///system console talos-control-plane-01</span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>到这一步说明虚拟机已经成功创建并运行了。由于你看到了 <code>Escape character is ^] (Ctrl + ])</code> 且屏幕停止滚动，这意味着你已经成功进入了虚拟机的串口终端 (Serial Console)。</p>
+<p>Talos 启动非常快，大约 10-20 秒。如果 1 分钟后还没输出，说明内核可能还在尝试初始化硬件。</p>
+<p>如果你想回到宿主机命令行，执行后续的 <code>talosctl</code> 命令，你需要先 <code>Ctrl + ]</code> (先按住 Ctrl 不放，再按右中括号)退出虚拟机的串口终端。</p>
+<p>如果 VM 安装异常，可以查询 <code>libvirtd</code> 服务日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -u libvirtd -n 50 --no-pager</span></span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Starting Virtualization daemon...</span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Started Virtualization daemon.</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: started, version 2.90 cachesize 150</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: compile time options: IPv6 GNU-getopt DBus no-UBus i18n IDN2 DHCP DHCPv6 no-Lua TFTP conntrack ipset no-nftset auth cryptohash DNSSEC loop-detect inotify dumpfile</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, IP range 192.168.122.2 -- 192.168.122.254, lease time 1h</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, sockets bound exclusively to interface virbr0</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: reading /etc/resolv.conf</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 8.8.8.8#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 114.114.114.114#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /etc/hosts - 3 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /var/lib/libvirt/dnsmasq/default.addnhosts - 0 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: read /var/lib/libvirt/dnsmasq/default.hostsfile</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: libvirt version: 8.0.0, package: 1ubuntu7.16 (Hector Cao &lt;hector.cao@canonical.com&gt; Wed, 04 Feb 2026 11:49:12 +0100)</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: hostname: vp-jmpsvr</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: Unable to read from monitor: Connection reset by peer</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: qemu unexpectedly closed the monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: process exited while connecting to monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="virsh-命令行工具"><a href="#virsh-命令行工具" class="headerlink" title="virsh 命令行工具"></a>virsh 命令行工具</h1><h2 id="虚拟机管理命令"><a href="#虚拟机管理命令" class="headerlink" title="虚拟机管理命令"></a>虚拟机管理命令</h2><h3 id="列出所有虚拟机"><a href="#列出所有虚拟机" class="headerlink" title="列出所有虚拟机"></a>列出所有虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh list --all</span></span><br><span class="line"> Id   Name                     State</span><br><span class="line">----------------------------------------</span><br><span class="line"> 1    talos-control-plane-01   running</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="查看虚拟机分配的-IP-地址"><a href="#查看虚拟机分配的-IP-地址" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>
+
+<h3 id="彻底删除虚拟机"><a href="#彻底删除虚拟机" class="headerlink" title="彻底删除虚拟机"></a>彻底删除虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh destroy talos-control-plane-01</span><br><span class="line">virsh undefine talos-control-plane-01</span><br></pre></td></tr></table></figure>
+
+<h3 id="连接虚拟机串口终端"><a href="#连接虚拟机串口终端" class="headerlink" title="连接虚拟机串口终端"></a>连接虚拟机串口终端</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh console 1</span></span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="Network-管理"><a href="#Network-管理" class="headerlink" title="Network 管理"></a>Network 管理</h2><h3 id="查看所有网络"><a href="#查看所有网络" class="headerlink" title="查看所有网络"></a>查看所有网络</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh net-list</span></span><br><span class="line"> Name      State    Autostart   Persistent</span><br><span class="line">--------------------------------------------</span><br><span class="line"> default   active   yes         yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="查看虚拟机分配的-IP-地址-1"><a href="#查看虚拟机分配的-IP-地址-1" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux logrotate 服务</title>
+    <url>/202208191317/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<p><code>logrotate</code> 程序是一个日志文件管理工具。用于分割日志文件，压缩转存、删除旧的日志文件，并创建新的日志文件  </p>
+<p><code>logrotate</code> 是基于 <code>crond</code> 来运行的，其脚本是 <code>/etc/cron.daily/logrotate</code>，日志轮转是系统自动完成的。<br>实际运行时，<code>logrotate</code> 会调用配置文件 <code>/etc/logrotate.conf</code>。<br><code>/etc/cron.daily/logrotate</code> 文件内容如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/cron.daily/logrotate</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">/usr/sbin/logrotate -s /var/lib/logrotate/logrotate.status /etc/logrotate.conf</span><br><span class="line">EXITVALUE=$?</span><br><span class="line">if [ $EXITVALUE != 0 ]; then</span><br><span class="line">    /usr/bin/logger -t logrotate &quot;ALERT exited abnormally with [$EXITVALUE]&quot;</span><br><span class="line">fi</span><br><span class="line">exit 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>可以执行以下命令手动执行日志切割：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -f /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
+<p>以下命令可以检测配置文件是否正确：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -d /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h1 id="配置说明"><a href="#配置说明" class="headerlink" title="配置说明"></a>配置说明</h1><p><code>logrotate</code> 的主配置文件默认为 <code>/etc/logrotate.conf</code>，默认配置如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">默认每一周执行一次 rotate 轮转工作</span></span><br><span class="line">weekly</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保留多少个日志文件(轮转几次).默认保留四个.0 指没有备份</span></span><br><span class="line">rotate 4</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">自动创建新的日志文件，新的日志文件具有和原来的文件相同的权限；</span></span><br><span class="line">create</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个参数很重要！就是切割后的日志文件以当前日期为格式结尾，如xxx.log-20131216这样,</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果注释掉,切割出来是按数字递增,即 xxx.log-1这种格式</span></span><br><span class="line">dateext</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含 /etc/logrotate.d 下的其他配置文件 ，用于隔离出各个服务的配置</span></span><br><span class="line">include /etc/logrotate.d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是否通过gzip压缩转储以后的日志文件，如xxx.log-20131216.gz ；如果不需要压缩，注释掉就行</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">compress</span> </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nocompress</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对指定的文件做轮转切割</span></span><br><span class="line">/var/log/wtmp &#123;</span><br><span class="line">    # 每月轮转一次，取代全局默认值</span><br><span class="line">    monthly</span><br><span class="line">    </span><br><span class="line">    # 创建新文件，并指定权限，用户和组</span><br><span class="line">    create 0664 root utmp</span><br><span class="line">    </span><br><span class="line">    # 文件大小超过 1m 后才进行切割，到了 1 个月，文件大小小于 1m，不会进行切割</span><br><span class="line">	minsize 1M</span><br><span class="line">	</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br><span class="line">/var/log/btmp &#123;</span><br><span class="line">    # 如果日志丢失，不报错继续滚动下一个日志</span><br><span class="line">    missingok</span><br><span class="line">    </span><br><span class="line">    monthly</span><br><span class="line">    create 0600 root utmp</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>其他常用选项说明如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定转储周期为每天</span></span><br><span class="line">daily </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">即使日志文件为空文件也做轮转，这个是 logrotate 的缺省选项。</span></span><br><span class="line">ifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件为空时，不进行轮转</span></span><br><span class="line">notifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件大于指定大小后就轮转，支持的单位： k，K，m，M</span></span><br><span class="line">size 5M</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用于还在打开中的日志文件，把当前日志备份并截断；</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是先拷贝再清空的方式，拷贝和清空之间有一个时间差，可能会丢失部分日志数据。</span></span><br><span class="line">copytruncate</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">运行 postrotate 脚本，作用是在所有日志都轮转后统一执行一次脚本。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果没有配置这个，那么每个日志轮转后都会执行一次脚本</span></span><br><span class="line">sharedscripts                      </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之后需要执行的指令，例如重新启动 (<span class="built_in">kill</span> -HUP) 某个服务！必须独立成行</span></span><br><span class="line">postrotate                         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之前需要执行的指令，例如修改文件的属性等动作；必须独立成行</span></span><br><span class="line">prerotate      </span><br><span class="line">                    </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将轮转的日志保存到指定路径下，默认保存在日志文件同一目录下</span></span><br><span class="line">olddir /data/logs/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果产生日志的进程的运行用户不是 root,需要指定相关的用户和组，否则会报错：because parent directory has insecure permissions (It<span class="string">&#x27;s world writable or writable by group which is not &quot;root&quot;) Set &quot;su&quot; directive in config file to tell logrotate which user/group should be used for rotation. ，如果只配置了用户，未配置组，会报错：error: error switching euid to 1003 and egid to -1: Invalid argument</span></span></span><br><span class="line">su appuser appgroup</span><br></pre></td></tr></table></figure>
+
+<h2 id="配置示例"><a href="#配置示例" class="headerlink" title="配置示例"></a>配置示例</h2><p><code>nginx</code> 日志切割配置文件示例，创建 <code>/etc/logrotate.d/nginx</code>:</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    sharedscripts</span><br><span class="line">    postrotate</span><br><span class="line">        if [ -f /run/nginx.pid ]; then</span><br><span class="line">                    kill -USR1 `cat /run/nginx.pid`</span><br><span class="line">        fi</span><br><span class="line">    endscript</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>copytruncate</code> 方式切割 <code>nginx</code> 日志，此种方式不需要重启 <code>nginx</code> 服务<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[logrotate 原理介绍和配置详解](https://wsgzao.github.io/post/logrotate/)
+">[1]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    copytruncate</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    </span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>logrotate</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux man 使用</title>
+    <url>/202306091031/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 Linux 中，命令提供的 <code>man</code> 手册是一份非常详细的命令使用说明手册，要了解命令的使用方法及其工作原理，熟练参考 <code>man</code> 手册是及其必要的。</p>
+<p><code>man</code> 手册中不仅包含了命令的使用方法，还包括了命令相关的 <strong>（配置）文件说明</strong> 、 <strong>System Calls</strong> 等相关信息，下表中列出了 <code>man</code> 手册不同编号对应的功能</p>
+<table>
+<thead>
+<tr>
+<th>Section Number</th>
+<th>Section Name</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>1</code></td>
+<td><code>User Commands</code></td>
+<td>用户可以在 shell 中运行的指令说明<br/><code>man</code> 命令不指定 <code>Section Number</code> 时默认为 <code>1</code></td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td><code>System Calls</code></td>
+<td>应用程序中的功能函数调用的内核函数</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td><code>C Library Functions</code></td>
+<td>应用程序针对特定的函数库提供的接口</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td><code>Devices and Special Files</code></td>
+<td>程序使用的硬件或软件</td>
+</tr>
+<tr>
+<td><code>5</code></td>
+<td><code>File Formats and Conventions</code></td>
+<td>涉及的文件类型（如配置文件）及约定</td>
+</tr>
+<tr>
+<td><code>6</code></td>
+<td><code>Games</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>7</code></td>
+<td><code>Miscellaneous</code></td>
+<td>其他杂项，如 <strong>协议</strong> 、 <strong>文件系统</strong> 、 <strong>字符集</strong> 等</td>
+</tr>
+<tr>
+<td><code>8</code></td>
+<td><code>System Administration Tools and Daemons</code></td>
+<td>需要 <code>root</code> 权限或其他管理员权限运行的命令</td>
+</tr>
+</tbody></table>
+<p>要查看命令 <code>man</code> 的某个部分，可以使用以下命令查看 <code>passwd</code> 命令的 <code>File Formats and Conventions</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">man 5 passwd</span><br></pre></td></tr></table></figure>
+
+<p><strong>环境信息</strong> ：</p>
+<ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="为源码编译安装的软件安装-man-手册"><a href="#为源码编译安装的软件安装-man-手册" class="headerlink" title="为源码编译安装的软件安装 man 手册"></a>为源码编译安装的软件安装 man 手册</h1><p>使用源码编译安装的软件默认是没有 man 手册的，使用 man 命令会报以下错误</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">man fswatch</span></span><br><span class="line">No manual entry for fswatch</span><br></pre></td></tr></table></figure>
+
+<p>要为源码编译安装的软件安装 man 手册，可以参考以下步骤，此处示例软件为 <code>fswatch</code>，软件编译安装到了 <code>/usr/local/fswatch-1.17.1/</code></p>
+<ol>
+<li><p>一般情况下，源码中会附带软件的使用文档，编译安装后，可能位于以下路径，<code>fswatch</code> 编译安装后的 man 手册位于 <code>/usr/local/fswatch-1.17.1/share/man/man7/fswatch.7</code></p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ls /usr/local/fswatch-1.17.1/doc</span><br><span class="line">ls /usr/local/fswatch-1.17.1/share/doc</span><br><span class="line">ls /usr/local/fswatch-1.17.1/share/man/</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p><code>man</code> 命令使用的文档默认来源于 <code>/usr/share/man/</code></p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /usr/share/man/</span></span><br><span class="line">cs  de  fr  hu  it  ko     man1   man1x  man2x  man3p  man4   man5   man6   man7   man8   man9   mann  pl  pt_BR  ro  sk  tr  zh_CN</span><br><span class="line">da  es  hr  id  ja  man0p  man1p  man2   man3   man3x  man4x  man5x  man6x  man7x  man8x  man9x  nl    pt  pt_PT  ru  sv  zh  zh_TW</span><br></pre></td></tr></table></figure>
+<p>要为编译安装软件的安装 <code>man</code> 帮助文档，首先将 <code>fswatch</code> 的帮助文档复制到 <code>man</code> 页面的目录</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">cp /usr/local/fswatch-1.17.1/share/man/man7/fswatch.7 /usr/share/man/man7/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>更新 <code>man</code> 索引</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ mandb</span><br><span class="line">1 man subdirectory contained newer manual pages.</span><br><span class="line">47 manual pages were added.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>安装成功后，可以正常使用 <code>man fswatch</code> 查看帮助文档。</p>
+</li>
+</ol>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux 内存管理</title>
     <url>/202306021537/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Memory-相关的术语说明"><a href="#Memory-相关的术语说明" class="headerlink" title="Memory 相关的术语说明"></a>Memory 相关的术语说明</h1><ul>
@@ -30488,129 +30710,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Rancher 安装及使用</title>
-    <url>/202210071716/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>centos7 3.10.0</li>
-<li>kubernetes Server Version: v1.21.2</li>
-<li>Helm 3.10.0</li>
-<li>Rancher 2.6</li>
-</ul>
-<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><p><a href="https://docs.ranchermanager.rancher.io/zh/pages-for-subheaders/install-upgrade-on-a-kubernetes-cluster">官方安装文档</a></p>
-<h2 id="安装-Helm"><a href="#安装-Helm" class="headerlink" title="安装 Helm"></a>安装 Helm</h2><p><a href="https://helm.sh/docs/intro/install/">安装文档官网参考</a></p>
-<a href="/202210071543/" title="helm 安装及使用">helm 安装及使用</a>
-
-<h2 id="安装-Ingress-nginx-controller"><a href="#安装-Ingress-nginx-controller" class="headerlink" title="安装 Ingress-nginx-controller"></a>安装 Ingress-nginx-controller</h2><p><a href="https://kubernetes.github.io/ingress-nginx/deploy/#quick-start">安装文档官网参考</a></p>
-<a href="/202209301604/" title="ingress-nginx 安装配置">ingress-nginx 安装配置</a>
-
-
-
-<h2 id="添加-Helm-Chart-仓库"><a href="#添加-Helm-Chart-仓库" class="headerlink" title="添加 Helm Chart 仓库"></a>添加 Helm Chart 仓库</h2><p>添加最新版本，生产环境建议使用稳定版本</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add rancher-latest https://releases.rancher.com/server-charts/latest</span><br></pre></td></tr></table></figure>
-
-<h2 id="为-Rancher-创建命名空间"><a href="#为-Rancher-创建命名空间" class="headerlink" title="为 Rancher 创建命名空间"></a>为 Rancher 创建命名空间</h2><p>你需要定义一个 Kubernetes 命名空间，用于安装由 Chart 创建的资源。这个命名空间的名称为 <code>cattle-system</code>：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create namespace cattle-system</span><br></pre></td></tr></table></figure>
-
-<h2 id="安装-cert-manager"><a href="#安装-cert-manager" class="headerlink" title="安装 cert-manager"></a>安装 cert-manager</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.7.1/cert-manager.crds.yaml</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">添加 Jetstack Helm 仓库</span></span><br><span class="line">helm repo add jetstack https://charts.jetstack.io</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">更新本地 Helm Chart 仓库缓存</span></span><br><span class="line">helm repo update</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 cert-manager Helm Chart</span></span><br><span class="line">helm install cert-manager jetstack/cert-manager \</span><br><span class="line">  --namespace cert-manager \</span><br><span class="line">  --create-namespace \</span><br><span class="line">  --version v1.7.1</span><br></pre></td></tr></table></figure>
-<p>安装完 <code>cert-manager</code> 后，你可以通过检查 <code>cert-manager</code> 命名空间中正在运行的 <code>Pod</code> 来验证它是否已正确部署：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -n cert-manager</span></span><br><span class="line">NAME                                      READY   STATUS    RESTARTS   AGE</span><br><span class="line">cert-manager-5b97785fbd-vvscn             1/1     Running   0          77s</span><br><span class="line">cert-manager-cainjector-c8657d84f-6b8qr   1/1     Running   0          77s</span><br><span class="line">cert-manager-webhook-8564679744-hjgkx     1/1     Running   0          77s</span><br></pre></td></tr></table></figure>
-<h2 id="通过-Helm-安装-Rancher"><a href="#通过-Helm-安装-Rancher" class="headerlink" title="通过 Helm 安装 Rancher"></a>通过 Helm 安装 Rancher</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install rancher rancher-stable/rancher --namespace cattle-system \</span><br><span class="line">     --set hostname=rancher.my.com --set bootstrapPassword=admin \</span><br><span class="line">     --set ingress.ingressClassName=nginx</span><br></pre></td></tr></table></figure>
-<p>安装成功后，输出结果如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">NAME: rancher</span><br><span class="line">LAST DEPLOYED: Wed Oct 12 10:22:25 2022</span><br><span class="line">NAMESPACE: cattle-system</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">TEST SUITE: None</span><br><span class="line">NOTES:</span><br><span class="line">Rancher Server has been installed.</span><br><span class="line"></span><br><span class="line">NOTE: Rancher may take several minutes to fully initialize. Please standby while Certificates are being issued, Containers are started and the Ingress rule comes up.</span><br><span class="line"></span><br><span class="line">Check out our docs at https://rancher.com/docs/</span><br><span class="line"></span><br><span class="line">If you provided your own bootstrap password during installation, browse to https://rancher.my.com to get started.</span><br><span class="line"></span><br><span class="line">If this is the first time you installed Rancher, get started by running this command and clicking the URL it generates:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">echo https://rancher.my.com/dashboard/?setup=$(kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#x27;)</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line">To get just the bootstrap password on its own, run:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#123;&#123; &quot;\n&quot; &#125;&#125;&#x27;</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Happy Containering!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>根据提示，浏览器中访问 <code>https://rancher.my.com/dashboard/?setup=admin</code>，正常情况下，显示如下页面<br><img src="https://i.0920811.xyz/img_62.png"></p>
-<p>根据页面提示，保持密码，登陆。</p>
-<span id="more"></span>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="helm-版本不支持最新的-kubernetes-版本"><a href="#helm-版本不支持最新的-kubernetes-版本" class="headerlink" title="helm 版本不支持最新的 kubernetes 版本"></a>helm 版本不支持最新的 kubernetes 版本</h2><p>使用 <code>helm</code> 命令报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-stable/rancher --namespace cattle-system --<span class="built_in">set</span> hostname=rancher.my.org --<span class="built_in">set</span> bootstrapPassword=admin</span></span><br><span class="line">Error: INSTALLATION FAILED: chart requires kubeVersion: &lt; 1.25.0-0 which is incompatible with Kubernetes v1.25.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>最新版本 <code>helm</code> 不支持最新版本的 <code>Kubernetes</code>，需按照 <code>helm</code> 提示使用 <a href="https://helm.sh/zh/docs/topics/version_skew/">相应版本</a></p>
-<h2 id="Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding"><a href="#Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding" class="headerlink" title="Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding."></a>Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding.</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>centos7 5.4.242-1</li>
-<li>kubernetes v1.25.4</li>
-<li>helm v3.11.3</li>
-<li>rancher v2.7</li>
-</ul>
-<p>执行以下命令安装 rancher，结果报错</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx</span></span><br><span class="line">Error: INSTALLATION FAILED: execution error at (rancher/templates/validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding        </span><br></pre></td></tr></table></figure>
-<p>对于 Kubernetes 版本等于或高于 1.25 的安装，需要添加选项 <code>--set global.cattle.psp.enabled=false</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[The target cluster does not have the PodSecurityPolicy API resource](https://github.com/rancher/rancher/issues/41295)">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> global.cattle.psp.enabled=<span class="literal">false</span></span></span><br></pre></td></tr></table></figure>
-
-<h2 id="Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器"><a href="#Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器" class="headerlink" title="Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器"></a>Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器</h2><p>Kubernetes 集群开启防火墙后，在 Rancher 中想通过 <code>Execute Shell</code> 进入 Pod 中的容器，但是一直无法连接到容器。关闭集群 iptables 防火墙后可以正常连接，可以确定问题出在 iptables 防火墙规则，为了定位到需要放通哪个源及端口，可以通过 <a href="https://0920811.xyz/202210241051/#配置-iptables-记录日志">iptables 的 <strong>日志功能</strong> 进行定位</a>。</p>
-<ol>
-<li>本示例中，iptables 防火墙的 <code>filter</code> 表的 <code>INPUT</code> 链的默认规则为 <code>DROP</code>，为了捕获最终被 <code>DROP</code> 的数据包，在 iptables 的 <code>filter</code> 表的 <code>INPUT</code> 链的最后添加记录日志的规则 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -j LOG --log-prefix &quot;iptables-input-DROP&quot;</span><br></pre></td></tr></table></figure></li>
-<li>规则生效后，检查系统日志 <code>/var/log/messages</code>，看到了以下被 <code>DROP</code> 的数据包信息 <figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0 </span><br><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
-从以上数据包中可以看到，数据包流经的网卡为 <code>cni0</code>，源 IP 为 <code>10.244.0.5</code>，目的 IP 为 <code>172.31.29.60</code>，目的端口为 <code>6443/tcp</code>。继续查看源 IP ，发现其为 <code>cattle-cluster-agent</code>，这是 Rancher 在集群中的 Agent  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep 10.244.0.5</span></span><br><span class="line">cattle-system         cattle-cluster-agent-7c7dd4b97f-9wcbh   1/1     Running   0          57d   10.244.0.5     master   &lt;none&gt;           &lt;none&gt;</span><br></pre></td></tr></table></figure>
-由此可以看出，在开启了 iptables 防火墙后，是因为 <code>cattle-cluster-agent</code> 无法访问集群的 API Server 端口 <code>6443/tcp</code>，从而导致 Rancher 无法通过其 Agent 连接到 Pod 中的容器。在 iptables 中添加防火墙规则允许此类数据包通过，开启 iptables 后 Rancher 可正常连接到 Pod 中的容器 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -s 10.244.0.0/16 -p tcp -m multiport --dports 6443 -j ACCEPT -m comment --comment &quot;for kubernetes API Server from Rancher Agent&quot;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="Cluster-agent-is-not-connected"><a href="#Cluster-agent-is-not-connected" class="headerlink" title="Cluster agent is not connected"></a>Cluster agent is not connected</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code><br><img src="https://i.0920811.xyz/img_186.png"></p>
-<p>Rancher Server 通过和 Kubernetes 集群中部署的 Rancher Agent (<code>cattle-cluster-agent</code>) 互相通信来获取集群状态及对集群进行操作，Rancher Agent (<code>cattle-cluster-agent</code>) 需要向 Rancher Server 上报心跳信息以使 Rancher Server 知道集群的状态。这个错误出现意味这 Rancher Server 和 Rancher Agent 之间的通信存在问题。<strong>Rancher Server 和 Rancher Agent 不直接通过固定端口通信，Rancher Server 和 Kubernetes 只需要和 Kubernetes API Server 通信，Rancher Agent 需要访问 Rancher Server 以上报心跳及集群状态信息</strong></p>
-<p>要定位此问题原因，首先检查 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep -i agent</span></span><br><span class="line">cattle-fleet-system   fleet-agent-5b5ddb87d-znc8t               1/1     Running            0          80d     10.244.9.222    work1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn      0/1     CrashLoopBackOff   4          107s    10.244.8.12     work2   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-td8tq      0/1     CrashLoopBackOff   3          107s    10.244.16.12    work4   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn</span></span><br><span class="line">INFO: Environment: CATTLE_ADDRESS=10.244.8.12 CATTLE_CA_CHECKSUM= CATTLE_CLUSTER=true CATTLE_CLUSTER_AGENT_PORT=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_443_TCP=tcp://10.1.134.43:443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PORT=443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_PORT_80_TCP=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PORT=80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_SERVICE_HOST=10.1.134.43 CATTLE_CLUSTER_AGENT_SERVICE_PORT=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTP=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTPS_INTERNAL=443 CATTLE_CLUSTER_REGISTRY= CATTLE_FEATURES=embedded-cluster-api=false,fleet=false,monitoringv1=false,multi-cluster-management=false,multi-cluster-management-agent=true,provisioningv2=false,rke2=false CATTLE_INGRESS_IP_DOMAIN=sslip.io CATTLE_INSTALL_UUID=c9a0cc09-dc90-45eb-8bd9-d6344ffddc88 CATTLE_INTERNAL_ADDRESS= CATTLE_IS_RKE=false CATTLE_K8S_MANAGED=true CATTLE_NODE_NAME=cattle-cluster-agent-79dff8f5d-qnvqn CATTLE_SERVER=https://rancher.test.com CATTLE_SERVER_VERSION=v2.7.1</span><br><span class="line">INFO: Using resolv.conf: nameserver 10.1.0.10 search cattle-system.svc.cluster.local svc.cluster.local cluster.local us-west-1.compute.internal options ndots:5</span><br><span class="line">ERROR: https://rancher.test.com/ping is not accessible (The requested URL returned error: 403)</span><br></pre></td></tr></table></figure>
-<p>从 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志中可以看出，Rancher Agent (<code>cattle-cluster-agent</code>) 无法访问 Rancher Server (<code>https://rancher.test.com/ping</code>) 以上报心跳，请求结果为 <code>403</code>。</p>
-<p>本案例中是因为 Rancher Server 的访问域名有白名单限制，将 Kubernetes 集群中的节点添加到 Rancher Server 的域名加白后恢复正常。</p>
-<h2 id="certificate-is-valid-for"><a href="#certificate-is-valid-for" class="headerlink" title="certificate is valid for"></a>certificate is valid for</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code></p>
-<p>检查集群上的 <code>cattle-cluster-agent</code> 日志。报错如下</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">level=fatal msg=&quot;looking up cattle-system/cattle ca/token: failed to find service account cattle-system/cattle: Get \&quot;https://10.1.0.1:443/api/v1/namespaces/cattle-system/serviceaccounts/cattle\&quot;: x509: certificate is valid for 10.96.0.1, 172.31.16.114, 54.67.95.96, not 10.1.0.1&quot;</span><br></pre></td></tr></table></figure>
-
-<p>这个错误信息表明，<code>kube-apiserver</code> 的证书中，没有签发给 IP <code>10.1.0.1</code>，此 IP 一般为 <code>kubernetes</code> 的 <code>service</code> 的 IP</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.1.0.1     &lt;none&gt;        443/TCP   370d</span><br></pre></td></tr></table></figure>
-
-<p>因此要解决此问题，只需要更新 <code>kube-apiserver</code> 的证书，<a href="https://0920811.xyz/202209121102/#集群之外的服务器使用-kubectl-报错">参考文档进行更新</a></p>
-<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="权限管理配置"><a href="#权限管理配置" class="headerlink" title="权限管理配置"></a>权限管理配置</h2><h3 id="配置只读-Role"><a href="#配置只读-Role" class="headerlink" title="配置只读 Role"></a>配置只读 Role</h3><p>本示例在 Rancher 上配置有对 Pod 只读权限的 Role，确保绑定了 Role 的用户可以通过 Rancher 读取到 Pod 信息，可以 <code>exec</code> 到 Pod，查看 Pod 日志，无其他 <strong>修改</strong> 权限。</p>
-<ol>
-<li><p>在 Rancher 上创建具有对 Pod 只读权限的 Role，本示例中为其命名 <code>PodReadOnlyRole</code></p>
-<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Roles</code><br> <img src="https://i.0920811.xyz/img_87.png"><br> 选择 <code>Project/Namespaces</code><br> <img src="https://i.0920811.xyz/img_88.png"><br> 点击 <code>Create Project/Namespaces Role</code>，创建 Role，按照下图，填入对应信息<br> <img src="https://i.0920811.xyz/img_89.png"><br> 需要添加的 <code>Resource</code> 如下：</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">pods </span><br><span class="line">pods/attach </span><br><span class="line">pods/exec </span><br><span class="line">pods/portforward </span><br><span class="line">pods/proxy </span><br><span class="line">pods/log </span><br><span class="line">pods/status</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>权限选择：<code>get</code>，<code>list</code>，<code>watch</code>。填写完成后点击 <code>Create</code> 创建，无误后会创建 Role : <code>PodReadOnlyRole</code></p>
-</li>
-<li><p>创建用户</p>
-<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Users</code>，创建新用户。<br> <img src="https://i.0920811.xyz/img_90.png"><br> 在 <code>Global Permissions</code> 中，选择系统预设的 Global Role ： <code>User-Base</code>，此角色仅拥有登陆系统的权限。</p>
-</li>
-<li><p>绑定 User 和 Project&#x2F;Namespaces Role</p>
-<p> Rancher 仅支持对 Rancher 中的 <code>Project</code> 分配 <code>Project/Namespaces Role</code>，所以为了分配权限，需要对不同的项目创建对应的 <code>Project</code>。</p>
-<p> 进入对应的 Cluster，选择要分配权限的 <code>Project</code>，点击 <code>Edit Config</code><br> <img src="https://i.0920811.xyz/img_91.png"><br> 在 <code>Members</code> 中选择 <code>Add</code> 为 <code>Project</code> 绑定 <code>User</code> 和 <code>Project Permissions</code>，本示例中，权限选择 <code>PodReadOnlyRole</code><br> <img src="https://i.0920811.xyz/img_92.png"></p>
-</li>
-</ol>
-<p>通过以上步骤创建及分配权限后，通过新创建的用户登陆 Rancher，检查新用户对 Pod 的权限。</p>
-<h3 id="为-Rancher-管理的-Kubernetes-集群分配管理员"><a href="#为-Rancher-管理的-Kubernetes-集群分配管理员" class="headerlink" title="为 Rancher 管理的 Kubernetes 集群分配管理员"></a>为 Rancher 管理的 Kubernetes 集群分配管理员</h3><p>Rancher 提供了一个集中的身份验证和授权机制来管理 Kubernetes 集群的访问。要为 Rancher 管理的 Kubernetes 集群分配管理员，可以按照以下步骤操作</p>
-<ol>
-<li><p>登录 Rancher UI:</p>
-<p>打开你的 Rancher UI 并进行登录。</p>
-</li>
-<li><p>选择你的集群:</p>
-<p>在 Home 页面上，选择你想要授权的 Kubernetes 集群。</p>
-</li>
-<li><p>管理成员:</p>
-<p> 在集群的仪表盘上，找到并点击 “Cluster Members” 选项。这会显示集群的所有成员和他们的角色。</p>
-</li>
-<li><p>添加成员:</p>
-<p> 点击 <code>Add Member</code>。<br> 在提供的搜索框中输入用户的名称或标识符来查找他们。这个用户可以是单独的用户、团队或组，取决于您的身份验证配置。<br> 选择要分配给该成员的角色。对于管理员权限，您应该选择 <code>Cluster Owner</code> 或与之类似的角色。</p>
-</li>
-<li><p>确认权限:</p>
-<p> 确保新添加的成员现在在成员列表中，并且他们已经被分配了正确的角色。</p>
-<p> 通知新管理员他们已经获得权限，并让他们登录 Rancher UI 以确认他们现在可以管理该集群。</p>
-</li>
-</ol>
-<h2 id="Rancher-新增访问域名"><a href="#Rancher-新增访问域名" class="headerlink" title="Rancher 新增访问域名"></a>Rancher 新增访问域名</h2><p>为 Rancher web UI 新增其他可访问域名，参考以下步骤</p>
-<ol>
-<li><p>使用 <code>cert-manager</code> 为新增域名申请证书</p>
-<a href="/202301050935/" title="使用 cert-manager 申请证书的步骤">使用 cert-manager 申请证书的步骤</a></li>
-<li><p>修改 Rancher 的 Ingress 配置，添加新域名及证书到 Ingress</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"> spec:</span><br><span class="line">ingressClassName: nginx</span><br><span class="line">rules:</span><br><span class="line">- host: rancher.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">- host: rancher1.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">tls:</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher.test.com</span><br><span class="line">  secretName: tls-rancher-ingress</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher1.test.com</span><br><span class="line">  secretName: rancher1-test-com</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="nginx-反代-Rancher"><a href="#nginx-反代-Rancher" class="headerlink" title="nginx 反代 Rancher"></a>nginx 反代 Rancher</h2><p>在集群外部通过 Nginx 反代访问 Rancher，可以使用以下 Nginx 配置 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 NGINX 负载均衡](https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/)">[1]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">map $http_upgrade $connection_upgrade &#123;</span><br><span class="line">        default upgrade;</span><br><span class="line">        &#x27;&#x27;      close;</span><br><span class="line">    &#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用来对 用户 ip 进行映射，以便后面做访问控制</span>    </span><br><span class="line">map $http_x_forwarded_for $k8s_admin_access &#123;</span><br><span class="line">         default false;</span><br><span class="line">         include k8s_admin_access.list;</span><br><span class="line">        &#125;</span><br><span class="line">        </span><br><span class="line">upstream rancher &#123;</span><br><span class="line">    server 172.31.27.193:443;</span><br><span class="line">    server 172.31.23.72:443;</span><br><span class="line">&#125;</span><br><span class="line">server &#123;</span><br><span class="line">	listen 443 ssl;</span><br><span class="line">	server_name rancher.test.com;</span><br><span class="line">	access_log /home/logs/nginx/access/rancher.access.log main;</span><br><span class="line">	error_log /home/logs/nginx/error/rancher.error.log;	</span><br><span class="line"></span><br><span class="line">	ssl_certificate test.com.pem;</span><br><span class="line">    ssl_certificate_key test.com.pem;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">	location / &#123;</span><br><span class="line">                if ($k8s_admin_access = false) &#123;</span><br><span class="line">                    return 403;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">		proxy_pass https://rancher;      # 本示例中，rancher 使用 https 访问，必须配置为 https</span><br><span class="line">        proxy_set_header Host $host;</span><br><span class="line">        proxy_set_header X-Real-IP $remote_addr;</span><br><span class="line">        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span><br><span class="line">        proxy_set_header REMOTE-HOST $remote_addr;</span><br><span class="line">        proxy_http_version 1.1;</span><br><span class="line">        proxy_set_header Upgrade $http_upgrade;</span><br><span class="line">        proxy_set_header Connection $connection_upgrade;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/">配置 NGINX 负载均衡</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/rancher/rancher/issues/41295">The target cluster does not have the PodSecurityPolicy API resource</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-        <tag>Rancher</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>redis 配置</title>
     <url>/202307121459/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -34705,228 +34804,6 @@ width: 20%;
       <categories>
         <category>易学</category>
       </categories>
-  </entry>
-  <entry>
-    <title>Linux man 使用</title>
-    <url>/202306091031/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 Linux 中，命令提供的 <code>man</code> 手册是一份非常详细的命令使用说明手册，要了解命令的使用方法及其工作原理，熟练参考 <code>man</code> 手册是及其必要的。</p>
-<p><code>man</code> 手册中不仅包含了命令的使用方法，还包括了命令相关的 <strong>（配置）文件说明</strong> 、 <strong>System Calls</strong> 等相关信息，下表中列出了 <code>man</code> 手册不同编号对应的功能</p>
-<table>
-<thead>
-<tr>
-<th>Section Number</th>
-<th>Section Name</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>1</code></td>
-<td><code>User Commands</code></td>
-<td>用户可以在 shell 中运行的指令说明<br/><code>man</code> 命令不指定 <code>Section Number</code> 时默认为 <code>1</code></td>
-</tr>
-<tr>
-<td><code>2</code></td>
-<td><code>System Calls</code></td>
-<td>应用程序中的功能函数调用的内核函数</td>
-</tr>
-<tr>
-<td><code>3</code></td>
-<td><code>C Library Functions</code></td>
-<td>应用程序针对特定的函数库提供的接口</td>
-</tr>
-<tr>
-<td><code>4</code></td>
-<td><code>Devices and Special Files</code></td>
-<td>程序使用的硬件或软件</td>
-</tr>
-<tr>
-<td><code>5</code></td>
-<td><code>File Formats and Conventions</code></td>
-<td>涉及的文件类型（如配置文件）及约定</td>
-</tr>
-<tr>
-<td><code>6</code></td>
-<td><code>Games</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>7</code></td>
-<td><code>Miscellaneous</code></td>
-<td>其他杂项，如 <strong>协议</strong> 、 <strong>文件系统</strong> 、 <strong>字符集</strong> 等</td>
-</tr>
-<tr>
-<td><code>8</code></td>
-<td><code>System Administration Tools and Daemons</code></td>
-<td>需要 <code>root</code> 权限或其他管理员权限运行的命令</td>
-</tr>
-</tbody></table>
-<p>要查看命令 <code>man</code> 的某个部分，可以使用以下命令查看 <code>passwd</code> 命令的 <code>File Formats and Conventions</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">man 5 passwd</span><br></pre></td></tr></table></figure>
-
-<p><strong>环境信息</strong> ：</p>
-<ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="为源码编译安装的软件安装-man-手册"><a href="#为源码编译安装的软件安装-man-手册" class="headerlink" title="为源码编译安装的软件安装 man 手册"></a>为源码编译安装的软件安装 man 手册</h1><p>使用源码编译安装的软件默认是没有 man 手册的，使用 man 命令会报以下错误</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">man fswatch</span></span><br><span class="line">No manual entry for fswatch</span><br></pre></td></tr></table></figure>
-
-<p>要为源码编译安装的软件安装 man 手册，可以参考以下步骤，此处示例软件为 <code>fswatch</code>，软件编译安装到了 <code>/usr/local/fswatch-1.17.1/</code></p>
-<ol>
-<li><p>一般情况下，源码中会附带软件的使用文档，编译安装后，可能位于以下路径，<code>fswatch</code> 编译安装后的 man 手册位于 <code>/usr/local/fswatch-1.17.1/share/man/man7/fswatch.7</code></p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ls /usr/local/fswatch-1.17.1/doc</span><br><span class="line">ls /usr/local/fswatch-1.17.1/share/doc</span><br><span class="line">ls /usr/local/fswatch-1.17.1/share/man/</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p><code>man</code> 命令使用的文档默认来源于 <code>/usr/share/man/</code></p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /usr/share/man/</span></span><br><span class="line">cs  de  fr  hu  it  ko     man1   man1x  man2x  man3p  man4   man5   man6   man7   man8   man9   mann  pl  pt_BR  ro  sk  tr  zh_CN</span><br><span class="line">da  es  hr  id  ja  man0p  man1p  man2   man3   man3x  man4x  man5x  man6x  man7x  man8x  man9x  nl    pt  pt_PT  ru  sv  zh  zh_TW</span><br></pre></td></tr></table></figure>
-<p>要为编译安装软件的安装 <code>man</code> 帮助文档，首先将 <code>fswatch</code> 的帮助文档复制到 <code>man</code> 页面的目录</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">cp /usr/local/fswatch-1.17.1/share/man/man7/fswatch.7 /usr/share/man/man7/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>更新 <code>man</code> 索引</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">$ mandb</span><br><span class="line">1 man subdirectory contained newer manual pages.</span><br><span class="line">47 manual pages were added.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>安装成功后，可以正常使用 <code>man fswatch</code> 查看帮助文档。</p>
-</li>
-</ol>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux logrotate 服务</title>
-    <url>/202208191317/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<p><code>logrotate</code> 程序是一个日志文件管理工具。用于分割日志文件，压缩转存、删除旧的日志文件，并创建新的日志文件  </p>
-<p><code>logrotate</code> 是基于 <code>crond</code> 来运行的，其脚本是 <code>/etc/cron.daily/logrotate</code>，日志轮转是系统自动完成的。<br>实际运行时，<code>logrotate</code> 会调用配置文件 <code>/etc/logrotate.conf</code>。<br><code>/etc/cron.daily/logrotate</code> 文件内容如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/cron.daily/logrotate</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">/usr/sbin/logrotate -s /var/lib/logrotate/logrotate.status /etc/logrotate.conf</span><br><span class="line">EXITVALUE=$?</span><br><span class="line">if [ $EXITVALUE != 0 ]; then</span><br><span class="line">    /usr/bin/logger -t logrotate &quot;ALERT exited abnormally with [$EXITVALUE]&quot;</span><br><span class="line">fi</span><br><span class="line">exit 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>可以执行以下命令手动执行日志切割：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -f /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
-<p>以下命令可以检测配置文件是否正确：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -d /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h1 id="配置说明"><a href="#配置说明" class="headerlink" title="配置说明"></a>配置说明</h1><p><code>logrotate</code> 的主配置文件默认为 <code>/etc/logrotate.conf</code>，默认配置如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">默认每一周执行一次 rotate 轮转工作</span></span><br><span class="line">weekly</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保留多少个日志文件(轮转几次).默认保留四个.0 指没有备份</span></span><br><span class="line">rotate 4</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">自动创建新的日志文件，新的日志文件具有和原来的文件相同的权限；</span></span><br><span class="line">create</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个参数很重要！就是切割后的日志文件以当前日期为格式结尾，如xxx.log-20131216这样,</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果注释掉,切割出来是按数字递增,即 xxx.log-1这种格式</span></span><br><span class="line">dateext</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含 /etc/logrotate.d 下的其他配置文件 ，用于隔离出各个服务的配置</span></span><br><span class="line">include /etc/logrotate.d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是否通过gzip压缩转储以后的日志文件，如xxx.log-20131216.gz ；如果不需要压缩，注释掉就行</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">compress</span> </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nocompress</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对指定的文件做轮转切割</span></span><br><span class="line">/var/log/wtmp &#123;</span><br><span class="line">    # 每月轮转一次，取代全局默认值</span><br><span class="line">    monthly</span><br><span class="line">    </span><br><span class="line">    # 创建新文件，并指定权限，用户和组</span><br><span class="line">    create 0664 root utmp</span><br><span class="line">    </span><br><span class="line">    # 文件大小超过 1m 后才进行切割，到了 1 个月，文件大小小于 1m，不会进行切割</span><br><span class="line">	minsize 1M</span><br><span class="line">	</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br><span class="line">/var/log/btmp &#123;</span><br><span class="line">    # 如果日志丢失，不报错继续滚动下一个日志</span><br><span class="line">    missingok</span><br><span class="line">    </span><br><span class="line">    monthly</span><br><span class="line">    create 0600 root utmp</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>其他常用选项说明如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定转储周期为每天</span></span><br><span class="line">daily </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">即使日志文件为空文件也做轮转，这个是 logrotate 的缺省选项。</span></span><br><span class="line">ifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件为空时，不进行轮转</span></span><br><span class="line">notifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件大于指定大小后就轮转，支持的单位： k，K，m，M</span></span><br><span class="line">size 5M</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用于还在打开中的日志文件，把当前日志备份并截断；</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是先拷贝再清空的方式，拷贝和清空之间有一个时间差，可能会丢失部分日志数据。</span></span><br><span class="line">copytruncate</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">运行 postrotate 脚本，作用是在所有日志都轮转后统一执行一次脚本。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果没有配置这个，那么每个日志轮转后都会执行一次脚本</span></span><br><span class="line">sharedscripts                      </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之后需要执行的指令，例如重新启动 (<span class="built_in">kill</span> -HUP) 某个服务！必须独立成行</span></span><br><span class="line">postrotate                         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之前需要执行的指令，例如修改文件的属性等动作；必须独立成行</span></span><br><span class="line">prerotate      </span><br><span class="line">                    </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将轮转的日志保存到指定路径下，默认保存在日志文件同一目录下</span></span><br><span class="line">olddir /data/logs/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果产生日志的进程的运行用户不是 root,需要指定相关的用户和组，否则会报错：because parent directory has insecure permissions (It<span class="string">&#x27;s world writable or writable by group which is not &quot;root&quot;) Set &quot;su&quot; directive in config file to tell logrotate which user/group should be used for rotation. ，如果只配置了用户，未配置组，会报错：error: error switching euid to 1003 and egid to -1: Invalid argument</span></span></span><br><span class="line">su appuser appgroup</span><br></pre></td></tr></table></figure>
-
-<h2 id="配置示例"><a href="#配置示例" class="headerlink" title="配置示例"></a>配置示例</h2><p><code>nginx</code> 日志切割配置文件示例，创建 <code>/etc/logrotate.d/nginx</code>:</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    sharedscripts</span><br><span class="line">    postrotate</span><br><span class="line">        if [ -f /run/nginx.pid ]; then</span><br><span class="line">                    kill -USR1 `cat /run/nginx.pid`</span><br><span class="line">        fi</span><br><span class="line">    endscript</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>copytruncate</code> 方式切割 <code>nginx</code> 日志，此种方式不需要重启 <code>nginx</code> 服务<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[logrotate 原理介绍和配置详解](https://wsgzao.github.io/post/logrotate/)
-">[1]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    copytruncate</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    </span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>logrotate</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux KVM 配置说明</title>
-    <url>/20260507140030/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>KVM（Kernel-based Virtual Machine）</strong> 是 Linux 内核的一个模块，它将 Linux 内核转变为一个 Type-1（裸机级） <strong>虚拟机管理程序（Hypervisor&#x2F;VMM）</strong> 。</p>
-<p>KVM 本身并不模拟硬件，它只负责处理器虚拟化和内存虚拟化。它需要配合 QEMU 来模拟 I&#x2F;O 设备（如磁盘、网卡、显卡）。</p>
-<ul>
-<li><p><strong>内核态 (KVM Module)</strong> ： 负责将 CPU 切换到 <strong>客户模式（Guest Mode）</strong> ，处理高权限指令。</p>
-</li>
-<li><p><strong>用户态 (QEMU)</strong> ： 负责模拟硬件设备，并提供用户操作接口。</p>
-</li>
-<li><p><strong>管理层 (Libvirt)</strong> ： 一个标准的 API 库，我们常用的 <code>virsh</code> 命令、 <code>virt-manager</code> 界面都是通过 Libvirt 来调用 QEMU&#x2F;KVM 的。</p>
-</li>
-</ul>
-<p><strong>核心技术特性</strong></p>
-<ul>
-<li><p><strong>CPU 虚拟化 (Intel VT-x &#x2F; AMD-V)</strong> 。KVM 利用硬件辅助虚拟化技术。它将 CPU 分为四种模式，使得虚拟机（Guest）可以直接在物理 CPU 上执行绝大多数指令，只有在执行敏感指令时才由内核接管，性能损耗极低。</p>
-</li>
-<li><p><strong>内存管理 (EPT&#x2F;NPT)</strong> 。通过 <strong>扩展页表 (EPT)</strong> 技术，KVM 实现了物理内存与虚拟机内存的直接映射。</p>
-<ul>
-<li><strong>KSM (Kernel Same-page Merging)</strong> 扫描多个 VM 的内存，如果发现相同的内存页（例如多个 VM 都运行 Ubuntu），则将其合并为一页，极大节省物理内存。</li>
-</ul>
-</li>
-<li><p><strong>存储与网络 (VirtIO)</strong> 。传统的模拟设备（如模拟一张经典的百兆网卡）效率极低。KVM 引入了 VirtIO 准虚拟化驱动。VM 意识到自己处于虚拟化环境，通过“共享内存”的方式与宿主机通信。实现磁盘 IO 和网络吞吐量几乎接近物理机性能。</p>
-</li>
-</ul>
-<p><strong>KVM 家族工具链</strong></p>
-<ul>
-<li><p><strong>qemu-kvm</strong> ： 核心包，提供底层仿真。</p>
-</li>
-<li><p><strong>libvirt-daemon</strong> ： 守护进程，负责管理 VM 的生命周期。</p>
-</li>
-<li><p><strong>virsh</strong> ： 命令行工具（运维最常用）。</p>
-</li>
-<li><p><strong>virt-install</strong> ： 用于创建虚拟机的命令行脚本工具。</p>
-</li>
-</ul>
-<h1 id="KVM-安装"><a href="#KVM-安装" class="headerlink" title="KVM 安装"></a>KVM 安装</h1><p><strong>环境信息</strong></p>
-<ul>
-<li>Ubuntu 22.04.5 LTS 5.15.0-119-generic</li>
-</ul>
-<blockquote>
-<ul>
-<li>最好不要和 Docker、K8s 等虚拟化工具同时安装。可能会因为内核参数（如 <code>net.bridge.bridge-nf-call-iptables</code>）冲突导致 VM 无法获得 DHCP 地址。</li>
-</ul>
-</blockquote>
-<blockquote>
-<p>首先需要确认你的物理机 CPU 是否支持虚拟化技术（VT-x 或 AMD-V）</p>
-</blockquote>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">egrep -c <span class="string">&#x27;(vmx|svm)&#x27;</span> /proc/cpuinfo</span></span><br><span class="line">64</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>如果输出大于 0，说明支持虚拟化</p>
-<p><strong>安装 KVM 及相关工具</strong> 。参考以下命令安装 Linux 原生的虚拟化栈</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update</span><br><span class="line">sudo apt install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst virt-manager</span><br><span class="line">sudo systemctl enable --now libvirtd</span><br></pre></td></tr></table></figure>
-
-<h2 id="KVM-中安装-Talos-Linux-系统"><a href="#KVM-中安装-Talos-Linux-系统" class="headerlink" title="KVM 中安装 Talos Linux 系统"></a>KVM 中安装 Talos Linux 系统</h2><p>Talos Linux OS <a href="https://github.com/siderolabs/talos/releases/">Github 下载地址</a> ，从中下载 Talos Linux AMD64 版本的 RAW 镜像并提取 raw 文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/siderolabs/talos/releases/download/v1.14.0-alpha.0/metal-amd64.raw.zst</span><br><span class="line"></span><br><span class="line">zstd -d metal-amd64.raw.zst</span><br></pre></td></tr></table></figure>
-<p>使用解压后的 <code>metal-amd64.raw</code> 文件创建虚拟机</p>
-<p><strong>创建 Talos 虚拟机</strong> 。可以使用 virt-install 命令行快速创建多个 VM。 创建控制平面 (Control Plane) 虚拟机</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp metal-amd64.raw /var/lib/libvirt/images/talos-control-plane-01.raw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">建议稍微扩容一下，20G 比较稳妥</span></span><br><span class="line">qemu-img resize /var/lib/libvirt/images/talos-control-plane-01.raw 20G</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">导入并运行虚拟机</span></span><br><span class="line">virt-install \</span><br><span class="line">  --name talos-control-plane-01 \</span><br><span class="line">  --ram 4096 \</span><br><span class="line">  --vcpus 4 \</span><br><span class="line">  --disk path=/var/lib/libvirt/images/talos-control-plane-01.raw,bus=virtio \</span><br><span class="line">  --os-variant ubuntu22.04 \</span><br><span class="line">  --network network=default,model=virtio \</span><br><span class="line">  --graphics none \</span><br><span class="line">  --import \</span><br><span class="line">  --boot hd \</span><br><span class="line">  --console pty,target_type=serial</span><br></pre></td></tr></table></figure>
-<ul>
-<li><code>--name talos-control-plane-01</code> ： 虚拟机唯一名称为 <code>talos-control-plane-01</code></li>
-<li><code>--ram 4096</code> ： 内存大小为 4096MB</li>
-<li><code>--vcpus 4</code> ： 虚拟 CPU 数量为 4 个</li>
-<li><code>--disk path=/var/lib/libvirt/images/talos-control-plane-01.qcow2,size=20</code> ： <code>path</code> 虚拟磁盘文件存放路径, <code>size</code> 虚拟磁盘文件大小为 20GB</li>
-<li><code>--os-variant ubuntu22.04</code> ： <code>--os-variant</code> 用于指定操作系统类型，这里指定为 Ubuntu 22.04。虽然安装的是 Talos，但指定 ubuntu22.04 会让 KVM 自动应用适合该内核版本的硬件加速参数（如 VirtIO 队列优化）</li>
-<li><code>--network network=default,model=virtio</code> ： 将 VM 挂载到宿主机的 default 网桥上。这是 Libvirt 默认网桥，是 KVM 安装后自动生成的 NAT 网桥。虚拟机可以访问外网，宿主机可以访问虚拟机，但外部机房的其他服务器无法直接访问该虚拟机。</li>
-<li><code>--graphics none</code> ： 不显示图形界面，禁用图形输出</li>
-<li><code>--console pty,target_type=serial</code> ： 串口控制台，将虚拟机的控制台重定向到当前的 shell 终端。运行命令后，你可以直接在当前的终端窗口看到 Talos 的启动日志。</li>
-<li><code>--cdrom /opt/Talos/metal-amd64.iso</code> ： 安装镜像，Talos 首次启动需要通过 ISO 引导来进入安装模式。</li>
-<li><code>--boot hd</code> ： 设置启动优先级。先尝试从硬盘 (hd) 启动，如果硬盘没系统（如首次启动），则从 光盘 (cdrom) 启动。</li>
-</ul>
-<p>执行 VM 安装命令后，你的终端会变为 VM 的输出界面。你会看到 Talos 启动并显示以下信息：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Starting install...</span><br><span class="line">Allocating &#x27;talos-control-plane-01.qcow2&#x27;                                                                                                            | 3.1 MB  00:00:00 ... </span><br><span class="line">Creating domain...                                                                                                                                   |    0 B  00:00:00     </span><br><span class="line">Running text console command: virsh --connect qemu:///system console talos-control-plane-01</span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>到这一步说明虚拟机已经成功创建并运行了。由于你看到了 <code>Escape character is ^] (Ctrl + ])</code> 且屏幕停止滚动，这意味着你已经成功进入了虚拟机的串口终端 (Serial Console)。</p>
-<p>Talos 启动非常快，大约 10-20 秒。如果 1 分钟后还没输出，说明内核可能还在尝试初始化硬件。</p>
-<p>如果你想回到宿主机命令行，执行后续的 <code>talosctl</code> 命令，你需要先 <code>Ctrl + ]</code> (先按住 Ctrl 不放，再按右中括号)退出虚拟机的串口终端。</p>
-<p>如果 VM 安装异常，可以查询 <code>libvirtd</code> 服务日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -u libvirtd -n 50 --no-pager</span></span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Starting Virtualization daemon...</span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Started Virtualization daemon.</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: started, version 2.90 cachesize 150</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: compile time options: IPv6 GNU-getopt DBus no-UBus i18n IDN2 DHCP DHCPv6 no-Lua TFTP conntrack ipset no-nftset auth cryptohash DNSSEC loop-detect inotify dumpfile</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, IP range 192.168.122.2 -- 192.168.122.254, lease time 1h</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, sockets bound exclusively to interface virbr0</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: reading /etc/resolv.conf</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 8.8.8.8#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 114.114.114.114#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /etc/hosts - 3 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /var/lib/libvirt/dnsmasq/default.addnhosts - 0 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: read /var/lib/libvirt/dnsmasq/default.hostsfile</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: libvirt version: 8.0.0, package: 1ubuntu7.16 (Hector Cao &lt;hector.cao@canonical.com&gt; Wed, 04 Feb 2026 11:49:12 +0100)</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: hostname: vp-jmpsvr</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: Unable to read from monitor: Connection reset by peer</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: qemu unexpectedly closed the monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: process exited while connecting to monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="virsh-命令行工具"><a href="#virsh-命令行工具" class="headerlink" title="virsh 命令行工具"></a>virsh 命令行工具</h1><h2 id="虚拟机管理命令"><a href="#虚拟机管理命令" class="headerlink" title="虚拟机管理命令"></a>虚拟机管理命令</h2><h3 id="列出所有虚拟机"><a href="#列出所有虚拟机" class="headerlink" title="列出所有虚拟机"></a>列出所有虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh list --all</span></span><br><span class="line"> Id   Name                     State</span><br><span class="line">----------------------------------------</span><br><span class="line"> 1    talos-control-plane-01   running</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="查看虚拟机分配的-IP-地址"><a href="#查看虚拟机分配的-IP-地址" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>
-
-<h3 id="彻底删除虚拟机"><a href="#彻底删除虚拟机" class="headerlink" title="彻底删除虚拟机"></a>彻底删除虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh destroy talos-control-plane-01</span><br><span class="line">virsh undefine talos-control-plane-01</span><br></pre></td></tr></table></figure>
-
-<h3 id="连接虚拟机串口终端"><a href="#连接虚拟机串口终端" class="headerlink" title="连接虚拟机串口终端"></a>连接虚拟机串口终端</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh console 1</span></span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="Network-管理"><a href="#Network-管理" class="headerlink" title="Network 管理"></a>Network 管理</h2><h3 id="查看所有网络"><a href="#查看所有网络" class="headerlink" title="查看所有网络"></a>查看所有网络</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh net-list</span></span><br><span class="line"> Name      State    Autostart   Persistent</span><br><span class="line">--------------------------------------------</span><br><span class="line"> default   active   yes         yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="查看虚拟机分配的-IP-地址-1"><a href="#查看虚拟机分配的-IP-地址-1" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
   </entry>
   <entry>
     <title>六十四卦之风天小畜</title>
@@ -39927,6 +39804,129 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Rancher 安装及使用</title>
+    <url>/202210071716/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>centos7 3.10.0</li>
+<li>kubernetes Server Version: v1.21.2</li>
+<li>Helm 3.10.0</li>
+<li>Rancher 2.6</li>
+</ul>
+<h1 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h1><p><a href="https://docs.ranchermanager.rancher.io/zh/pages-for-subheaders/install-upgrade-on-a-kubernetes-cluster">官方安装文档</a></p>
+<h2 id="安装-Helm"><a href="#安装-Helm" class="headerlink" title="安装 Helm"></a>安装 Helm</h2><p><a href="https://helm.sh/docs/intro/install/">安装文档官网参考</a></p>
+<a href="/202210071543/" title="helm 安装及使用">helm 安装及使用</a>
+
+<h2 id="安装-Ingress-nginx-controller"><a href="#安装-Ingress-nginx-controller" class="headerlink" title="安装 Ingress-nginx-controller"></a>安装 Ingress-nginx-controller</h2><p><a href="https://kubernetes.github.io/ingress-nginx/deploy/#quick-start">安装文档官网参考</a></p>
+<a href="/202209301604/" title="ingress-nginx 安装配置">ingress-nginx 安装配置</a>
+
+
+
+<h2 id="添加-Helm-Chart-仓库"><a href="#添加-Helm-Chart-仓库" class="headerlink" title="添加 Helm Chart 仓库"></a>添加 Helm Chart 仓库</h2><p>添加最新版本，生产环境建议使用稳定版本</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add rancher-latest https://releases.rancher.com/server-charts/latest</span><br></pre></td></tr></table></figure>
+
+<h2 id="为-Rancher-创建命名空间"><a href="#为-Rancher-创建命名空间" class="headerlink" title="为 Rancher 创建命名空间"></a>为 Rancher 创建命名空间</h2><p>你需要定义一个 Kubernetes 命名空间，用于安装由 Chart 创建的资源。这个命名空间的名称为 <code>cattle-system</code>：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl create namespace cattle-system</span><br></pre></td></tr></table></figure>
+
+<h2 id="安装-cert-manager"><a href="#安装-cert-manager" class="headerlink" title="安装 cert-manager"></a>安装 cert-manager</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.7.1/cert-manager.crds.yaml</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">添加 Jetstack Helm 仓库</span></span><br><span class="line">helm repo add jetstack https://charts.jetstack.io</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">更新本地 Helm Chart 仓库缓存</span></span><br><span class="line">helm repo update</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 cert-manager Helm Chart</span></span><br><span class="line">helm install cert-manager jetstack/cert-manager \</span><br><span class="line">  --namespace cert-manager \</span><br><span class="line">  --create-namespace \</span><br><span class="line">  --version v1.7.1</span><br></pre></td></tr></table></figure>
+<p>安装完 <code>cert-manager</code> 后，你可以通过检查 <code>cert-manager</code> 命名空间中正在运行的 <code>Pod</code> 来验证它是否已正确部署：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -n cert-manager</span></span><br><span class="line">NAME                                      READY   STATUS    RESTARTS   AGE</span><br><span class="line">cert-manager-5b97785fbd-vvscn             1/1     Running   0          77s</span><br><span class="line">cert-manager-cainjector-c8657d84f-6b8qr   1/1     Running   0          77s</span><br><span class="line">cert-manager-webhook-8564679744-hjgkx     1/1     Running   0          77s</span><br></pre></td></tr></table></figure>
+<h2 id="通过-Helm-安装-Rancher"><a href="#通过-Helm-安装-Rancher" class="headerlink" title="通过 Helm 安装 Rancher"></a>通过 Helm 安装 Rancher</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install rancher rancher-stable/rancher --namespace cattle-system \</span><br><span class="line">     --set hostname=rancher.my.com --set bootstrapPassword=admin \</span><br><span class="line">     --set ingress.ingressClassName=nginx</span><br></pre></td></tr></table></figure>
+<p>安装成功后，输出结果如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">NAME: rancher</span><br><span class="line">LAST DEPLOYED: Wed Oct 12 10:22:25 2022</span><br><span class="line">NAMESPACE: cattle-system</span><br><span class="line">STATUS: deployed</span><br><span class="line">REVISION: 1</span><br><span class="line">TEST SUITE: None</span><br><span class="line">NOTES:</span><br><span class="line">Rancher Server has been installed.</span><br><span class="line"></span><br><span class="line">NOTE: Rancher may take several minutes to fully initialize. Please standby while Certificates are being issued, Containers are started and the Ingress rule comes up.</span><br><span class="line"></span><br><span class="line">Check out our docs at https://rancher.com/docs/</span><br><span class="line"></span><br><span class="line">If you provided your own bootstrap password during installation, browse to https://rancher.my.com to get started.</span><br><span class="line"></span><br><span class="line">If this is the first time you installed Rancher, get started by running this command and clicking the URL it generates:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">echo https://rancher.my.com/dashboard/?setup=$(kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#x27;)</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line">To get just the bootstrap password on its own, run:</span><br><span class="line"></span><br><span class="line">```</span><br><span class="line">kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#123;&#123; &quot;\n&quot; &#125;&#125;&#x27;</span><br><span class="line">```</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">Happy Containering!</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>根据提示，浏览器中访问 <code>https://rancher.my.com/dashboard/?setup=admin</code>，正常情况下，显示如下页面<br><img src="https://i.0920811.xyz/img_62.png"></p>
+<p>根据页面提示，保持密码，登陆。</p>
+<span id="more"></span>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="helm-版本不支持最新的-kubernetes-版本"><a href="#helm-版本不支持最新的-kubernetes-版本" class="headerlink" title="helm 版本不支持最新的 kubernetes 版本"></a>helm 版本不支持最新的 kubernetes 版本</h2><p>使用 <code>helm</code> 命令报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-stable/rancher --namespace cattle-system --<span class="built_in">set</span> hostname=rancher.my.org --<span class="built_in">set</span> bootstrapPassword=admin</span></span><br><span class="line">Error: INSTALLATION FAILED: chart requires kubeVersion: &lt; 1.25.0-0 which is incompatible with Kubernetes v1.25.0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>最新版本 <code>helm</code> 不支持最新版本的 <code>Kubernetes</code>，需按照 <code>helm</code> 提示使用 <a href="https://helm.sh/zh/docs/topics/version_skew/">相应版本</a></p>
+<h2 id="Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding"><a href="#Error-INSTALLATION-FAILED-execution-error-at-rancher-x2F-templates-x2F-validate-psp-install-yaml-4-5-The-target-cluster-does-not-have-the-PodSecurityPolicy-API-resource-Please-disable-PSPs-in-this-chart-before-proceeding" class="headerlink" title="Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding."></a>Error: INSTALLATION FAILED: execution error at (rancher&#x2F;templates&#x2F;validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding.</h2><h3 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>centos7 5.4.242-1</li>
+<li>kubernetes v1.25.4</li>
+<li>helm v3.11.3</li>
+<li>rancher v2.7</li>
+</ul>
+<p>执行以下命令安装 rancher，结果报错</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx</span></span><br><span class="line">Error: INSTALLATION FAILED: execution error at (rancher/templates/validate-psp-install.yaml:4:5): The target cluster does not have the PodSecurityPolicy API resource. Please disable PSPs in this chart before proceeding        </span><br></pre></td></tr></table></figure>
+<p>对于 Kubernetes 版本等于或高于 1.25 的安装，需要添加选项 <code>--set global.cattle.psp.enabled=false</code> <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[The target cluster does not have the PodSecurityPolicy API resource](https://github.com/rancher/rancher/issues/41295)">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">helm install rancher rancher-latest/rancher \</span></span><br><span class="line"><span class="language-bash">                --namespace cattle-system \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> hostname=rancher.my.com \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> bootstrapPassword=admin \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> ingress.ingressClassName=nginx \</span></span><br><span class="line"><span class="language-bash">                --<span class="built_in">set</span> global.cattle.psp.enabled=<span class="literal">false</span></span></span><br></pre></td></tr></table></figure>
+
+<h2 id="Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器"><a href="#Rancher-中对-Pod-执行-Execute-Shell-时无法连接到容器" class="headerlink" title="Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器"></a>Rancher 中对 Pod 执行 Execute Shell 时无法连接到容器</h2><p>Kubernetes 集群开启防火墙后，在 Rancher 中想通过 <code>Execute Shell</code> 进入 Pod 中的容器，但是一直无法连接到容器。关闭集群 iptables 防火墙后可以正常连接，可以确定问题出在 iptables 防火墙规则，为了定位到需要放通哪个源及端口，可以通过 <a href="https://0920811.xyz/202210241051/#配置-iptables-记录日志">iptables 的 <strong>日志功能</strong> 进行定位</a>。</p>
+<ol>
+<li>本示例中，iptables 防火墙的 <code>filter</code> 表的 <code>INPUT</code> 链的默认规则为 <code>DROP</code>，为了捕获最终被 <code>DROP</code> 的数据包，在 iptables 的 <code>filter</code> 表的 <code>INPUT</code> 链的最后添加记录日志的规则 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -j LOG --log-prefix &quot;iptables-input-DROP&quot;</span><br></pre></td></tr></table></figure></li>
+<li>规则生效后，检查系统日志 <code>/var/log/messages</code>，看到了以下被 <code>DROP</code> 的数据包信息 <figure class="highlight shell"><figcaption><span>/var/log/messages</span></figcaption><table><tr><td class="code"><pre><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0 </span><br><span class="line">iptables-input-DROPIN=cni0 SRC=10.244.0.5 DST=172.31.29.60 PROTO=TCP SPT=59196 DPT=6443 WINDOW=26733 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
+从以上数据包中可以看到，数据包流经的网卡为 <code>cni0</code>，源 IP 为 <code>10.244.0.5</code>，目的 IP 为 <code>172.31.29.60</code>，目的端口为 <code>6443/tcp</code>。继续查看源 IP ，发现其为 <code>cattle-cluster-agent</code>，这是 Rancher 在集群中的 Agent  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep 10.244.0.5</span></span><br><span class="line">cattle-system         cattle-cluster-agent-7c7dd4b97f-9wcbh   1/1     Running   0          57d   10.244.0.5     master   &lt;none&gt;           &lt;none&gt;</span><br></pre></td></tr></table></figure>
+由此可以看出，在开启了 iptables 防火墙后，是因为 <code>cattle-cluster-agent</code> 无法访问集群的 API Server 端口 <code>6443/tcp</code>，从而导致 Rancher 无法通过其 Agent 连接到 Pod 中的容器。在 iptables 中添加防火墙规则允许此类数据包通过，开启 iptables 后 Rancher 可正常连接到 Pod 中的容器 <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -s 10.244.0.0/16 -p tcp -m multiport --dports 6443 -j ACCEPT -m comment --comment &quot;for kubernetes API Server from Rancher Agent&quot;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="Cluster-agent-is-not-connected"><a href="#Cluster-agent-is-not-connected" class="headerlink" title="Cluster agent is not connected"></a>Cluster agent is not connected</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code><br><img src="https://i.0920811.xyz/img_186.png"></p>
+<p>Rancher Server 通过和 Kubernetes 集群中部署的 Rancher Agent (<code>cattle-cluster-agent</code>) 互相通信来获取集群状态及对集群进行操作，Rancher Agent (<code>cattle-cluster-agent</code>) 需要向 Rancher Server 上报心跳信息以使 Rancher Server 知道集群的状态。这个错误出现意味这 Rancher Server 和 Rancher Agent 之间的通信存在问题。<strong>Rancher Server 和 Rancher Agent 不直接通过固定端口通信，Rancher Server 和 Kubernetes 只需要和 Kubernetes API Server 通信，Rancher Agent 需要访问 Rancher Server 以上报心跳及集群状态信息</strong></p>
+<p>要定位此问题原因，首先检查 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get pods -A -o wide | grep -i agent</span></span><br><span class="line">cattle-fleet-system   fleet-agent-5b5ddb87d-znc8t               1/1     Running            0          80d     10.244.9.222    work1   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn      0/1     CrashLoopBackOff   4          107s    10.244.8.12     work2   &lt;none&gt;           &lt;none&gt;</span><br><span class="line">cattle-system         cattle-cluster-agent-79dff8f5d-td8tq      0/1     CrashLoopBackOff   3          107s    10.244.16.12    work4   &lt;none&gt;           &lt;none&gt;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl logs -n cattle-system         cattle-cluster-agent-79dff8f5d-qnvqn</span></span><br><span class="line">INFO: Environment: CATTLE_ADDRESS=10.244.8.12 CATTLE_CA_CHECKSUM= CATTLE_CLUSTER=true CATTLE_CLUSTER_AGENT_PORT=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_443_TCP=tcp://10.1.134.43:443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PORT=443 CATTLE_CLUSTER_AGENT_PORT_443_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_PORT_80_TCP=tcp://10.1.134.43:80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_ADDR=10.1.134.43 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PORT=80 CATTLE_CLUSTER_AGENT_PORT_80_TCP_PROTO=tcp CATTLE_CLUSTER_AGENT_SERVICE_HOST=10.1.134.43 CATTLE_CLUSTER_AGENT_SERVICE_PORT=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTP=80 CATTLE_CLUSTER_AGENT_SERVICE_PORT_HTTPS_INTERNAL=443 CATTLE_CLUSTER_REGISTRY= CATTLE_FEATURES=embedded-cluster-api=false,fleet=false,monitoringv1=false,multi-cluster-management=false,multi-cluster-management-agent=true,provisioningv2=false,rke2=false CATTLE_INGRESS_IP_DOMAIN=sslip.io CATTLE_INSTALL_UUID=c9a0cc09-dc90-45eb-8bd9-d6344ffddc88 CATTLE_INTERNAL_ADDRESS= CATTLE_IS_RKE=false CATTLE_K8S_MANAGED=true CATTLE_NODE_NAME=cattle-cluster-agent-79dff8f5d-qnvqn CATTLE_SERVER=https://rancher.test.com CATTLE_SERVER_VERSION=v2.7.1</span><br><span class="line">INFO: Using resolv.conf: nameserver 10.1.0.10 search cattle-system.svc.cluster.local svc.cluster.local cluster.local us-west-1.compute.internal options ndots:5</span><br><span class="line">ERROR: https://rancher.test.com/ping is not accessible (The requested URL returned error: 403)</span><br></pre></td></tr></table></figure>
+<p>从 Rancher Agent (<code>cattle-cluster-agent</code>) 的日志中可以看出，Rancher Agent (<code>cattle-cluster-agent</code>) 无法访问 Rancher Server (<code>https://rancher.test.com/ping</code>) 以上报心跳，请求结果为 <code>403</code>。</p>
+<p>本案例中是因为 Rancher Server 的访问域名有白名单限制，将 Kubernetes 集群中的节点添加到 Rancher Server 的域名加白后恢复正常。</p>
+<h2 id="certificate-is-valid-for"><a href="#certificate-is-valid-for" class="headerlink" title="certificate is valid for"></a>certificate is valid for</h2><p>Rancher 管理的集群状态 <code>Unavailable</code>，Rancher 显示的原因为 <code>Cluster agent is not connected</code></p>
+<p>检查集群上的 <code>cattle-cluster-agent</code> 日志。报错如下</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">level=fatal msg=&quot;looking up cattle-system/cattle ca/token: failed to find service account cattle-system/cattle: Get \&quot;https://10.1.0.1:443/api/v1/namespaces/cattle-system/serviceaccounts/cattle\&quot;: x509: certificate is valid for 10.96.0.1, 172.31.16.114, 54.67.95.96, not 10.1.0.1&quot;</span><br></pre></td></tr></table></figure>
+
+<p>这个错误信息表明，<code>kube-apiserver</code> 的证书中，没有签发给 IP <code>10.1.0.1</code>，此 IP 一般为 <code>kubernetes</code> 的 <code>service</code> 的 IP</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl get services</span></span><br><span class="line">NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE</span><br><span class="line">kubernetes   ClusterIP   10.1.0.1     &lt;none&gt;        443/TCP   370d</span><br></pre></td></tr></table></figure>
+
+<p>因此要解决此问题，只需要更新 <code>kube-apiserver</code> 的证书，<a href="https://0920811.xyz/202209121102/#集群之外的服务器使用-kubectl-报错">参考文档进行更新</a></p>
+<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><h2 id="权限管理配置"><a href="#权限管理配置" class="headerlink" title="权限管理配置"></a>权限管理配置</h2><h3 id="配置只读-Role"><a href="#配置只读-Role" class="headerlink" title="配置只读 Role"></a>配置只读 Role</h3><p>本示例在 Rancher 上配置有对 Pod 只读权限的 Role，确保绑定了 Role 的用户可以通过 Rancher 读取到 Pod 信息，可以 <code>exec</code> 到 Pod，查看 Pod 日志，无其他 <strong>修改</strong> 权限。</p>
+<ol>
+<li><p>在 Rancher 上创建具有对 Pod 只读权限的 Role，本示例中为其命名 <code>PodReadOnlyRole</code></p>
+<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Roles</code><br> <img src="https://i.0920811.xyz/img_87.png"><br> 选择 <code>Project/Namespaces</code><br> <img src="https://i.0920811.xyz/img_88.png"><br> 点击 <code>Create Project/Namespaces Role</code>，创建 Role，按照下图，填入对应信息<br> <img src="https://i.0920811.xyz/img_89.png"><br> 需要添加的 <code>Resource</code> 如下：</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">pods </span><br><span class="line">pods/attach </span><br><span class="line">pods/exec </span><br><span class="line">pods/portforward </span><br><span class="line">pods/proxy </span><br><span class="line">pods/log </span><br><span class="line">pods/status</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>权限选择：<code>get</code>，<code>list</code>，<code>watch</code>。填写完成后点击 <code>Create</code> 创建，无误后会创建 Role : <code>PodReadOnlyRole</code></p>
+</li>
+<li><p>创建用户</p>
+<p> 在全局面板中进入 <code>Users &amp; Authentication</code>，选择 <code>Users</code>，创建新用户。<br> <img src="https://i.0920811.xyz/img_90.png"><br> 在 <code>Global Permissions</code> 中，选择系统预设的 Global Role ： <code>User-Base</code>，此角色仅拥有登陆系统的权限。</p>
+</li>
+<li><p>绑定 User 和 Project&#x2F;Namespaces Role</p>
+<p> Rancher 仅支持对 Rancher 中的 <code>Project</code> 分配 <code>Project/Namespaces Role</code>，所以为了分配权限，需要对不同的项目创建对应的 <code>Project</code>。</p>
+<p> 进入对应的 Cluster，选择要分配权限的 <code>Project</code>，点击 <code>Edit Config</code><br> <img src="https://i.0920811.xyz/img_91.png"><br> 在 <code>Members</code> 中选择 <code>Add</code> 为 <code>Project</code> 绑定 <code>User</code> 和 <code>Project Permissions</code>，本示例中，权限选择 <code>PodReadOnlyRole</code><br> <img src="https://i.0920811.xyz/img_92.png"></p>
+</li>
+</ol>
+<p>通过以上步骤创建及分配权限后，通过新创建的用户登陆 Rancher，检查新用户对 Pod 的权限。</p>
+<h3 id="为-Rancher-管理的-Kubernetes-集群分配管理员"><a href="#为-Rancher-管理的-Kubernetes-集群分配管理员" class="headerlink" title="为 Rancher 管理的 Kubernetes 集群分配管理员"></a>为 Rancher 管理的 Kubernetes 集群分配管理员</h3><p>Rancher 提供了一个集中的身份验证和授权机制来管理 Kubernetes 集群的访问。要为 Rancher 管理的 Kubernetes 集群分配管理员，可以按照以下步骤操作</p>
+<ol>
+<li><p>登录 Rancher UI:</p>
+<p>打开你的 Rancher UI 并进行登录。</p>
+</li>
+<li><p>选择你的集群:</p>
+<p>在 Home 页面上，选择你想要授权的 Kubernetes 集群。</p>
+</li>
+<li><p>管理成员:</p>
+<p> 在集群的仪表盘上，找到并点击 “Cluster Members” 选项。这会显示集群的所有成员和他们的角色。</p>
+</li>
+<li><p>添加成员:</p>
+<p> 点击 <code>Add Member</code>。<br> 在提供的搜索框中输入用户的名称或标识符来查找他们。这个用户可以是单独的用户、团队或组，取决于您的身份验证配置。<br> 选择要分配给该成员的角色。对于管理员权限，您应该选择 <code>Cluster Owner</code> 或与之类似的角色。</p>
+</li>
+<li><p>确认权限:</p>
+<p> 确保新添加的成员现在在成员列表中，并且他们已经被分配了正确的角色。</p>
+<p> 通知新管理员他们已经获得权限，并让他们登录 Rancher UI 以确认他们现在可以管理该集群。</p>
+</li>
+</ol>
+<h2 id="Rancher-新增访问域名"><a href="#Rancher-新增访问域名" class="headerlink" title="Rancher 新增访问域名"></a>Rancher 新增访问域名</h2><p>为 Rancher web UI 新增其他可访问域名，参考以下步骤</p>
+<ol>
+<li><p>使用 <code>cert-manager</code> 为新增域名申请证书</p>
+<a href="/202301050935/" title="使用 cert-manager 申请证书的步骤">使用 cert-manager 申请证书的步骤</a></li>
+<li><p>修改 Rancher 的 Ingress 配置，添加新域名及证书到 Ingress</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"> spec:</span><br><span class="line">ingressClassName: nginx</span><br><span class="line">rules:</span><br><span class="line">- host: rancher.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">- host: rancher1.test.com</span><br><span class="line">  http:</span><br><span class="line">    paths:</span><br><span class="line">    - backend:</span><br><span class="line">        service:</span><br><span class="line">          name: rancher</span><br><span class="line">          port:</span><br><span class="line">            number: 80</span><br><span class="line">      pathType: ImplementationSpecific</span><br><span class="line">tls:</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher.test.com</span><br><span class="line">  secretName: tls-rancher-ingress</span><br><span class="line">- hosts:</span><br><span class="line">  - rancher1.test.com</span><br><span class="line">  secretName: rancher1-test-com</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="nginx-反代-Rancher"><a href="#nginx-反代-Rancher" class="headerlink" title="nginx 反代 Rancher"></a>nginx 反代 Rancher</h2><p>在集群外部通过 Nginx 反代访问 Rancher，可以使用以下 Nginx 配置 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[配置 NGINX 负载均衡](https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/)">[1]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">map $http_upgrade $connection_upgrade &#123;</span><br><span class="line">        default upgrade;</span><br><span class="line">        &#x27;&#x27;      close;</span><br><span class="line">    &#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用来对 用户 ip 进行映射，以便后面做访问控制</span>    </span><br><span class="line">map $http_x_forwarded_for $k8s_admin_access &#123;</span><br><span class="line">         default false;</span><br><span class="line">         include k8s_admin_access.list;</span><br><span class="line">        &#125;</span><br><span class="line">        </span><br><span class="line">upstream rancher &#123;</span><br><span class="line">    server 172.31.27.193:443;</span><br><span class="line">    server 172.31.23.72:443;</span><br><span class="line">&#125;</span><br><span class="line">server &#123;</span><br><span class="line">	listen 443 ssl;</span><br><span class="line">	server_name rancher.test.com;</span><br><span class="line">	access_log /home/logs/nginx/access/rancher.access.log main;</span><br><span class="line">	error_log /home/logs/nginx/error/rancher.error.log;	</span><br><span class="line"></span><br><span class="line">	ssl_certificate test.com.pem;</span><br><span class="line">    ssl_certificate_key test.com.pem;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">	location / &#123;</span><br><span class="line">                if ($k8s_admin_access = false) &#123;</span><br><span class="line">                    return 403;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">		proxy_pass https://rancher;      # 本示例中，rancher 使用 https 访问，必须配置为 https</span><br><span class="line">        proxy_set_header Host $host;</span><br><span class="line">        proxy_set_header X-Real-IP $remote_addr;</span><br><span class="line">        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span><br><span class="line">        proxy_set_header REMOTE-HOST $remote_addr;</span><br><span class="line">        proxy_http_version 1.1;</span><br><span class="line">        proxy_set_header Upgrade $http_upgrade;</span><br><span class="line">        proxy_set_header Connection $connection_upgrade;</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.rancher.cn/docs/rancher2.5/installation/resources/k8s-tutorials/infrastructure-tutorials/nginx/_index/">配置 NGINX 负载均衡</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/rancher/rancher/issues/41295">The target cluster does not have the PodSecurityPolicy API resource</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+        <tag>Rancher</tag>
       </tags>
   </entry>
 </search>
