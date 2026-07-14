@@ -23842,6 +23842,286 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux 进程管理</title>
+    <url>/202406260952/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong><code>Program</code></strong> 是一个静态实体，只是存储在操作系统中的文件（集合）</p>
+<p><strong><code>Process</code></strong> 是操作系统上的活动（Active）实体，是 <strong><code>Program</code></strong> 由操作系统加载到内存并运行之后的实体。</p>
+<p><strong><code>Process</code></strong> 运行过程中需要操作系统为其分配各种资源，如 CPU、Memory、Files、IO 等来完成其运行。</p>
+<p>如果一个 <strong><code>Program</code></strong> 被操作系统运行（启动）了多次，那么其产生的多个 <strong><code>Process</code></strong>  属于分割（单独）的实体。</p>
+<p>Linux 系统中调度的进程&#x2F;线程，通常被称为任务（Task）</p>
+<p>Linux 中常见的进程状态如下表：</p>
+<table>
+<thead>
+<tr>
+<th>状态标识</th>
+<th>状态名称</th>
+<th>状态说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>R</code></td>
+<td><code>task_running</code></td>
+<td>进程处于运行或就绪状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>S</code></td>
+<td><code>task_interruptible</code><br/> <code>sleeping</code></td>
+<td>可中断的睡眠状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>D</code></td>
+<td><code>task_uninterruptible</code></td>
+<td>不可中断的睡眠状态<br/>1. 它是一种睡眠状态，意味着处于此状态的进程不会消耗 CPU<br/>2. 睡眠的原因是等待某些资源（比如锁或者磁盘 IO），这也是非常多 D 状态的进程都处在处理 IO 操作的原因<br/>3. 是它不能被中断，这个要区别于 <code>硬件中断</code> 的中断，是指不希望在其获取到资源或者超时前被终止。因此他不会被信号唤醒，也就不会响应 <code>kill -9</code> 这类信号。这也是它跟 <code>S（可中断睡眠）</code>状态的区别</td>
+<td></td>
+</tr>
+<tr>
+<td><code>T</code></td>
+<td><code>task_stopped</code> <br/> <code>task_traced</code><br/><code>Traced</code></td>
+<td>暂停状态或跟踪状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Z</code></td>
+<td><code>task_dead</code> <br/> <code>exit_zombie</code><br/><code>zombie</code></td>
+<td>退出状态，进程成为僵尸进程</td>
+<td></td>
+</tr>
+<tr>
+<td><code>X</code></td>
+<td><code>task_dead</code> <br/> <code>exit_dead</code></td>
+<td>退出状态，进程即将被销毁</td>
+<td></td>
+</tr>
+<tr>
+<td><code>I</code></td>
+<td><code>idle</code></td>
+<td>空闲状态</td>
+<td></td>
+</tr>
+<tr>
+<td><code>+</code></td>
+<td></td>
+<td>表示关联了前台操作（Foreground Operation），比如前台运行的进程</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="进程调度"><a href="#进程调度" class="headerlink" title="进程调度"></a>进程调度</h1><p>Linux 中任务（Task）调度算法默认使用 CFS（Completely Fair Scheduler，内核版本 &gt;&#x3D; 2.6.23）.</p>
+<p>CFS 调度算法没有使用固定的进程（此处的进程可能是进程或者线程，Linux 中统称为 Task）优先级（Priority），而是根据进程的 <code>nice value</code> 为进程分配一定比例的（Proportional） CPU 计算时间。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Operating System Concepts v10 Online](https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf)  5.7.1 Example: Linux Scheduling">[1]</span></a></sup></p>
+<p><strong><code>nice</code> 的取值从 <code>-20</code> - <code>+19</code>，值越小，优先级越高，默认值为 <code>0</code></strong> 。优先级高的进程会被分配到更高比例的 CPU 处理时间。</p>
+<p>在 Linux 内核中，优先级分为两种：静态优先级和动态优先级。CFS 使用的是动态优先级，它是根据 <code>nice</code> 值计算出来的。</p>
+<p>CFS Scheduler 不会直接设定 Priorities，而是为每个 Task 维护变量 <code>vruntime（virtual runtime）</code>（可以检查系统 <code>/proc/&lt;PID&gt;/sched</code>），这个值记录了每个 task 使用了多少 CPU 时间。</p>
+<p>CFS 通过将进程的虚拟运行时间（<code>vruntime</code>）与其他进程的虚拟运行时间进行比较来决定调度优先级。权重越大，<code>vruntime</code> 增长越慢，意味着进程的优先级越高，能够更频繁地被调度。</p>
+<p>假入一个任务有默认的 Priority（<code>nice=0</code>），那么他的 <code>vruntime</code> 和实际使用的 CPU 时间相同。例如一个 <code>nice=0</code> 的进程使用了 CPU 200ms，那么他的 <code>vruntime=200ms</code>。<strong>低优先级（low priority，<code>nice&gt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&gt;200ms</code>，相反的，一个 <strong>高优先级（high priority,<code>nice&lt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&lt;200ms</code>。<strong>基于此，CFS Scheduler 在选择下一个要执行的任务时，会选择 <code>vruntime</code> 最小的任务来运行</strong>。如果有高优先级的任务就绪（可执行），它会抢占（preemptive）正在执行的低优先级的任务。</p>
+<p>假如 Linux 中有 2 个优先级一样的任务（<code>nice=0</code>），一个进程为 I&#x2F;O-bound，另一个为 CPU-bound。通常情况下，在一个 CPU 周期内，I&#x2F;O-bound 的任务会使用很少的 CPU 时间就会因等待 IO 而中断在 CPU 上的执行并进入 CPU 的等待调度队列（schedule queue），而 CPU-bound 的任务会用尽分配给它的整个 CPU 周期。执行一段时间之后， I&#x2F;O-bound 的任务的 <code>vruntime</code> 的值会显著的小于 CPU-bound 的任务的 <code>vruntime</code>，导致 I&#x2F;O-bound 的任务拥有比 CPU-bound 的任务更高的优先级，当 I&#x2F;O-bound 的任务就绪（IO 返回数据）时，它会立即抢占 CPU 开始执行。</p>
+<blockquote>
+<p><code>nice</code> 只能针对单一的进程调整优先级，无法同时将优先级配置关联到相关进程，如 子进程或者同一个服务中的其他进程</p>
+</blockquote>
+<h2 id="修改-nice-的值"><a href="#修改-nice-的值" class="headerlink" title="修改 nice 的值"></a>修改 nice 的值</h2><p>在 Linux 中，<code>nice</code> 值用于调整进程的优先级，数值范围从 <code>-20</code>（ <strong>最高优先级</strong> ）到 <code>19</code>（ <strong>最低优先级</strong> ）。较低的 <code>nice</code> 值表示进程有更高的优先级，会更频繁地获得 CPU 时间，而较高的 <code>nice</code> 值表示进程有较低的优先级。</p>
+<p>你可以使用 <code>nice</code> 和 <code>renice</code> 命令来修改进程的 <code>nice</code> 值</p>
+<blockquote>
+<p>普通用户（<code>root</code> 之外的用户）启动应用程序时默认只能配置初始 <code>nice</code> 值 <code>0-19</code></p>
+<p>普通用户（<code>root</code> 之外的用户）修改正在运行的应用程序的 <code>nice</code> 值，只能改大，不能改小。比如进程启动时，其 <code>nice</code> 为 <code>10</code>，拥有权限的普通用户只能将其 <code>nice</code> 值改为大于 <code>10</code> 的值。 </p>
+</blockquote>
+<h3 id="nice-命令"><a href="#nice-命令" class="headerlink" title="nice 命令"></a>nice 命令</h3><p><strong><code>nice</code> 命令用于在启动进程时指定 <code>nice</code> 值</strong> 。如果不指定，默认 <code>nice</code> 值为 <code>0</code>。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">nice -n 10 command</span><br></pre></td></tr></table></figure>
+
+<h3 id="renice-命令"><a href="#renice-命令" class="headerlink" title="renice 命令"></a>renice 命令</h3><p><code>renice</code> 命令可以修改已经在运行的进程的 <code>nice</code> 值。需要提供进程 ID（ <strong>PID</strong> ）来指定要修改的进程。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">renice &lt;nice_value&gt; -p &lt;PID&gt;</span><br></pre></td></tr></table></figure>
+<p>如果想要一次修改多个进程的 <code>nice</code> 值，可以传递多个 PID：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo renice 10 -p 1234 2345 3456</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="Linux-进程资源控制-cgroups"><a href="#Linux-进程资源控制-cgroups" class="headerlink" title="Linux 进程资源控制 cgroups"></a>Linux 进程资源控制 cgroups</h1><p><code>cgroups</code> 可以将一个任务（<code>task</code>）标识（绑定）到一个特殊的 <strong>控制组（<code>Control Group</code>）</strong> ，此任务启动的子进程可以继承父进程的 <strong>控制组（<code>Control Group</code>）</strong> </p>
+<p><strong>控制组（<code>Control Group</code>）</strong> 可以限制的资源类型如下：</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>blkio</code></td>
+<td><strong>Storage</strong> <br/>限制到存储设备（如 Hard Disk、USB Drivers等）的请求</td>
+</tr>
+<tr>
+<td><code>cpu</code></td>
+<td><strong>CPU</strong> <br/>限制 CPU 调度</td>
+</tr>
+<tr>
+<td><code>cpuacct</code></td>
+<td><strong>Process Accounting</strong> <br/>上报 CPU 使用状态，可以用于统计客户端使用的处理量并进行收费</td>
+</tr>
+<tr>
+<td><code>cpuset</code></td>
+<td><strong>CPU Assignment</strong> <br/>在多处理器的系统上，将 Task 分配到特定的处理器以及关联的内存</td>
+</tr>
+<tr>
+<td><code>devices</code></td>
+<td><strong>Device Access</strong> <br/>限制 <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 对目标设备类型的使用</td>
+</tr>
+<tr>
+<td><code>freezer</code></td>
+<td><strong>Suspend&#x2F;Resume</strong> <br/>暂停&#x2F;恢复  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task</td>
+</tr>
+<tr>
+<td><code>memory</code></td>
+<td><strong>Memory Usage</strong>  <br/>限制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的内存</td>
+</tr>
+<tr>
+<td><code>net_cls</code></td>
+<td><strong>Network Bandwidth</strong> <br/> 制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的网络流量，主要通过对网络流量打上 <code>cgroups</code> 相关标签实现</td>
+</tr>
+<tr>
+<td><code>net_prio</code></td>
+<td><strong>Network Traffic</strong> <br/> 控制  <strong>控制组（<code>Control Group</code>）</strong> 中的网络流量的优先级</td>
+</tr>
+<tr>
+<td><code>ns</code></td>
+<td><strong>Namespaces</strong> <br/> 将 <code>cgroups</code> 分配到不同的 Namespaces，如此同一个 <code>cgroups</code> 中的进程只能看到本 Namespace 中的进程</td>
+</tr>
+</tbody></table>
+<h1 id="Linux-进程管理"><a href="#Linux-进程管理" class="headerlink" title="Linux 进程管理"></a>Linux 进程管理</h1><h2 id="进程命令名和进程可执行文件名"><a href="#进程命令名和进程可执行文件名" class="headerlink" title="进程命令名和进程可执行文件名"></a>进程命令名和进程可执行文件名</h2><p>在系统中遇到以下进程：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ps -elf | grep 18686</span></span><br><span class="line">5 S root     18686  1239  0  80   0 - 46620 pipe_w 15:50 ?        00:00:00 /usr/sbin/CROND -n</span><br><span class="line">0 R root     18694 18686  7  80   0 - 610547 -     15:50 ?        00:00:02 /usr/local/php73/bin/php /home/www/admin/artisan PullData</span><br><span class="line">0 S root     18754 18686  0  80   0 - 22453 pipe_w 15:50 ?        00:00:00 /usr/sbin/sendmail -FCronDaemon -i -odi -oem -oi -t -f root</span><br></pre></td></tr></table></figure>
+<p>其中 PID 为 <code>18686</code> 的进程名为 <code>/usr/sbin/CROND</code>，其启动了另外两个子进程。但是在系统中检查，并不存在路径 <code>/usr/sbin/CROND</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">ls</span> -l /usr/sbin/CROND</span></span><br><span class="line">ls: cannot access /usr/sbin/CROND: No such file or directory</span><br></pre></td></tr></table></figure>
+
+<p>出现此种现象，主要是因为 <em><strong>在启动时，进程的命令名是根据路径传递给 <code>execve()</code> 函数的参数决定的，而不是直接与系统中的文件进行匹配</strong></em>。</p>
+<p>在 Linux 系统中，<code>ps</code> 命令显示的进程信息是从 <code>/proc</code> 文件系统中获取的，而 <code>/proc</code> 文件系统包含有关正在运行的进程的信息，包括每个进程的命令名。因此，即使实际上系统中不存在 <code>/usr/sbin/CROND</code> 文件，但如果进程的命令名是 <code>/usr/sbin/CROND</code>，那么 <code>ps</code> 命令仍然会显示进程的命令名为 <code>/usr/sbin/CROND</code>。</p>
+<p><em><strong>进程的命令名可以查看 <code>/proc/&lt;PID&gt;/cmdline</code> 文件</strong></em>，本示例中显示如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/18686/cmdline</span> </span><br><span class="line">/usr/sbin/CROND-n</span><br></pre></td></tr></table></figure>
+
+<p>对应的系统上的可执行文件的名称可以查看 <code>/proc/&lt;PID&gt;/stat</code>、<code>/proc/&lt;PID&gt;/comm</code>、<code>/proc/&lt;PID&gt;/status</code> 等文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/comm</span> </span><br><span class="line">crond</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/status</span> </span><br><span class="line">Name:	crond</span><br><span class="line">Umask:	0022</span><br><span class="line">State:	S (sleeping)</span><br><span class="line">Tgid:	900</span><br><span class="line">Ngid:	0</span><br><span class="line">Pid:	900</span><br><span class="line">PPid:	1239</span><br><span class="line">TracerPid:	0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/stat</span></span><br><span class="line">900 (crond) S 1239 1239 1239 0 -1 4202816 1627 0 0 0 0 0 0 0 20 0 1 0 139129633 190955520 1478 18446744073709551615 94685936058368 94685936118156 140733000396032 140733000262488 140427856103840 0 0 4096 16387 18446744071797306256 0 0 17 3 0 0 0 0 0 94685938219080 94685938221648 94685948321792 140733000400770 140733000400789 140733000400789 140733000400872 0</span><br></pre></td></tr></table></figure>
+
+<p>在本示例中，实际执行的命令为 <code>crond</code></p>
+<h2 id="进程状态检查"><a href="#进程状态检查" class="headerlink" title="进程状态检查"></a>进程状态检查</h2><h3 id="top-命令"><a href="#top-命令" class="headerlink" title="top 命令"></a>top 命令</h3><p>使用 <code>top</code> 命令可以查看系统负载、CPU 和 内存使用情况。也可以查看单个进程的具体信息。</p>
+<p><code>htop</code> 是 <code>top</code> 命令的一个变种，它提供了更多的交互性、定制性以及其他一些功能，但是它同时使用了相比 <code>top</code> 更多的资源（4 倍多的 <code>syscalls</code>）</p>
+<p><strong><code>top</code> 命令常用选项</strong></p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-H</code></td>
+<td><code>Threads Mode</code>，线程模式。默认情况 <code>top</code> 展示进程的简要信息，使用此选项显示进程中的线程状态。<br/>对应交互式命令 <code>H</code></td>
+<td></td>
+</tr>
+</tbody></table>
+<p><strong><code>top</code> 常用交互命令</strong></p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>P</code></td>
+<td>CPU Utilization 排序，默认排序方式</td>
+</tr>
+<tr>
+<td><code>M</code></td>
+<td>Memory Utilization 排序</td>
+</tr>
+<tr>
+<td><code>I</code></td>
+<td>Irix&#x2F;Solaris-Mode 切换。<br/>默认为 Itrix Mode,在这种模式下，如果某个进程使用了系统中的 2 个 CPU 的所有计算资源，则其 CPU 使用率展示为 200%，依此类推。<br/>在 Solaris Mode 下，进程的 CPU 使用率是整体 CPU 使用的资源除于 CPU 数。如在 4 CPU 的系统中，Itrix 模式下，进程 CPU 使用率为 200%，在 Solaris 模式下，则为 50%</td>
+</tr>
+</tbody></table>
+<ul>
+<li>显示单个进程的（线程）详细信息  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">top -H -p 1423</span></span><br><span class="line">top - 09:44:42 up 54 days, 23:53,  2 users,  load average: 8.82, 6.84, 7.21</span><br><span class="line">Threads:  15 total,   0 running,  15 sleeping,   0 stopped,   0 zombie</span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">Cpu(s): 40.9 us, 10.8 sy,  0.0 ni, 48.1 <span class="built_in">id</span>,  0.0 wa,  0.0 hi,  0.2 si,  0.0 st</span></span><br><span class="line">KiB Mem : 15790488 total,   466056 free,  7761544 used,  7562888 buff/cache</span><br><span class="line">KiB Swap:        0 total,        0 free,        0 used.  3895716 avail Mem </span><br><span class="line"></span><br><span class="line">  PID USER      PR  NI    VIRT    RES    SHR S %CPU %MEM     TIME+ COMMAND                                                                                  </span><br><span class="line"> 1423 root      20   0 1477368 778788   4260 S 39.5  4.9  11999:41 [watchdog:1:6]                                                                           </span><br><span class="line"> 2572 root      20   0 1477368 778788   4260 S 37.9  4.9  11363:48 [watchdog:1:6]                                                                           </span><br><span class="line"> 1436 root      20   0 1477368 778788   4260 S 34.2  4.9  11286:08 [watchdog:1:6]                                                                           </span><br><span class="line"> 1435 root      20   0 1477368 778788   4260 S 33.9  4.9  12059:53 [watchdog:1:6]                                                                           </span><br><span class="line"> 1434 root      20   0 1477368 778788   4260 S 33.2  4.9  10249:00 [watchdog:1:6]                                                                           </span><br><span class="line"> 1437 root      20   0 1477368 778788   4260 S 30.6  4.9  11717:47 [watchdog:1:6]                                                                           </span><br><span class="line"> 1431 root      20   0 1477368 778788   4260 S 28.9  4.9  11222:06 [watchdog:1:6]                                                                           </span><br><span class="line">21378 root      20   0 1477368 778788   4260 S 27.6  4.9  12143:35 [watchdog:1:6]                                                                           </span><br><span class="line"> 1433 root      20   0 1477368 778788   4260 S 17.6  4.9   8738:21 [watchdog:1:6]                                                                           </span><br><span class="line"> 1428 root      20   0 1477368 778788   4260 S  8.0  4.9   7650:56 [watchdog:1:6]                                                                           </span><br><span class="line"> 1429 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.04 [watchdog:1:6]                                                                           </span><br><span class="line"> 1430 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.05 [watchdog:1:6]                                                                           </span><br><span class="line"> 1432 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.03 [watchdog:1:6]                                                                           </span><br><span class="line"> 1438 root      20   0 1477368 778788   4260 S  0.0  4.9  12260:30 [watchdog:1:6]                                                                           </span><br><span class="line"> 1529 root      20   0 1477368 778788   4260 S  0.0  4.9  11068:39 [watchdog:1:6]</span><br></pre></td></tr></table></figure></li>
+</ul>
+<h3 id="pidstat"><a href="#pidstat" class="headerlink" title="pidstat"></a>pidstat</h3><p><code>pidstat</code> 命令用于检查 Linux 内核管理的进程的状态。帮助文档请查看 <code>man pidstat</code>。要查看特定的进程的信息，使用 <code>-p [PID|ALL]</code> 选项，查看子进程相关信息，参考 <code>-T [TASK | CHILD | ALL]</code> 选项</p>
+<p>命令常用选项</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-d</code></td>
+<td>报告 I&#x2F;O statistics</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-C comm</code></td>
+<td>查看 <code>command name</code> 的详细信息， <code>comm</code> 可以是正则表达式</td>
+<td><code>pidstat -C chrome -T CHILD 1 10</code></td>
+</tr>
+<tr>
+<td><code>-p &#123; pid[,...]   / SELF / ALL &#125;</code></td>
+<td>查看指定的 PID 或者所有（ALL） 进程的统计信息，不指定默认使用 <code>-p ALL</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-e program args</code></td>
+<td>使用指定的 <code>args</code> 运行 <code>program</code> 并使用 <code>pidstat</code> 监控其统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-l</code></td>
+<td>在统计输出中，包含详细的命令及其参数</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-r</code></td>
+<td>统计进程的 <code>faults</code> 和 Memory 使用情况</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-T &#123; TASK  / CHILD / ALL &#125;</code> <br/><code>-t</code></td>
+<td>查看子进程相关统计信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-u</code></td>
+<td>CPU 使用率</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-w</code></td>
+<td>统计进程上下文切换（Context Switch）信息</td>
+<td></td>
+</tr>
+</tbody></table>
+<p><strong>查看指定的 PID 以及关联的子进程的统计信息</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -t -p 22737 1 1</span></span><br><span class="line">Linux 3.10.0-1160.49.1.el7.x86_64 (ecs-34a8) 	11/26/2024 	_x86_64_	(2 CPU)</span><br><span class="line"></span><br><span class="line">04:04:52 PM   UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">04:04:53 PM     0     22737         -    0.00    0.00    0.00    0.00     0  python3</span><br><span class="line">04:04:53 PM     0         -     22737    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22805    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22806    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22807    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22808    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22809    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22810    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line"></span><br><span class="line">Average:      UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">Average:        0     22737         -    0.00    0.00    0.00    0.00     -  python3</span><br><span class="line">Average:        0         -     22737    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22759    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22806    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22807    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22808    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22809    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22810    0.00    0.00    0.00    0.00     -  |__python3</span><br></pre></td></tr></table></figure>
+
+<p><strong>查看进程使用的内存以及 <code>faults</code> 统计信息</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -r | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">03:17:25 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command</span><br><span class="line">03:17:25 PM     0         1      0.97      0.00  168668   13552   0.08  systemd</span><br><span class="line">03:17:25 PM     0       147      1.85      0.00  228472  158232   0.98  systemd-journal</span><br><span class="line">03:17:25 PM     0       189      0.00      0.00  289100   27392   0.17  multipathd</span><br><span class="line">03:17:25 PM     0       199      0.00      0.00   12160    6376   0.04  systemd-udevd</span><br><span class="line">03:17:25 PM   118       512      0.00      0.00   14624    6400   0.04  systemd-oomd</span><br><span class="line">03:17:25 PM   100       551      0.00      0.00   16044    7296   0.05  systemd-network</span><br><span class="line">03:17:25 PM   101       553      0.00      0.00   26512   10240   0.06  systemd-resolve</span><br><span class="line">03:17:25 PM     0       643      0.00      0.00    2816    1920   0.01  acpid</span><br><span class="line">03:17:25 PM   123       644      0.00      0.00   19088    3840   0.02  avahi-daemon</span><br><span class="line">03:17:25 PM   102       645      0.00      0.00   31628    7436   0.05  dbus-daemon</span><br><span class="line">03:17:25 PM     0       646      0.00      0.00  278416   14852   0.09  NetworkManager</span><br><span class="line">03:17:25 PM     0       649      0.01      0.00  757540   17788   0.11  euc-analytics-a</span><br><span class="line">03:17:25 PM     0       653      0.00      0.00   82768    3840   0.02  irqbalance</span><br><span class="line">03:17:25 PM     0       656      0.00      0.00   48880   10368   0.06  networkd-dispat</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>查看进程使用的 CPU 统计信息</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -u -l | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">04:08:08 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command</span><br><span class="line">04:08:08 PM     0         1    0.04    0.02    0.00    0.02    0.06     1  /sbin/init</span><br><span class="line">04:08:08 PM     0         2    0.00    0.00    0.00    0.00    0.00     0  kthreadd</span><br><span class="line">04:08:08 PM     0        15    0.00    0.00    0.00    0.01    0.00     0  ksoftirqd/0</span><br><span class="line">04:08:08 PM     0        49    0.00    0.00    0.00    0.00    0.00     2  khugepaged</span><br><span class="line">04:08:08 PM     0        63    0.00    0.00    0.00    0.00    0.00     3  kworker/3:1H-kblockd</span><br><span class="line">04:08:08 PM     0        64    0.00    0.00    0.00    0.00    0.00     3  kswapd0</span><br><span class="line">04:08:08 PM     0        75    0.00    0.00    0.00    0.00    0.00     2  kworker/2:1H-kblockd</span><br><span class="line">04:08:08 PM     0       100    0.00    0.00    0.00    0.00    0.00     0  jbd2/nvme0n1p1-8</span><br><span class="line">04:08:08 PM     0       102    0.00    0.00    0.00    0.00    0.00     1  kworker/1:1H-kblockd</span><br><span class="line">04:08:08 PM     0       129    0.00    0.00    0.00    0.00    0.00     0  kworker/0:1H-kblockd</span><br><span class="line">04:08:08 PM     0       147    0.00    0.00    0.00    0.00    0.01     3  /lib/systemd/systemd-journald</span><br><span class="line">04:08:08 PM     0       189    0.00    0.00    0.00    0.00    0.01     3  /sbin/multipathd -d -s</span><br><span class="line">04:08:08 PM     0       199    0.00    0.00    0.00    0.00    0.00     3  /lib/systemd/systemd-udevd</span><br><span class="line">04:08:08 PM     0       382    0.00    0.00    0.00    0.00    0.00     2  jbd2/nvme1n1p1-8</span><br><span class="line">04:08:08 PM   118       512    0.05    0.05    0.00    0.00    0.10     3  /lib/systemd/systemd-oom</span><br><span class="line">d</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>在使用 <code>pidstat</code> 时如果未指定统计数据的采样间隔及采样次数，则 <strong>默认统计的是从系统启动以来的平均资源使用率，如果目标进程的运行时间相对于系统启动时间很短（例如仅几分钟），那么它的平均 CPU 使用率会趋近于 0</strong> 。比如以下示例：  </p>
+<p><em>未指定采样间隔及采样次数</em> ，统计结果显示进程的 CPU 使用率为 <code>0</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat  | grep gzip</span></span><br><span class="line">01:37:06 PM     0       784    0.00    0.00    0.00    0.00     4  gzip</span><br></pre></td></tr></table></figure>
+
+<p><em>以下命令指定采样间隔和采样次数</em> ，统计结果显示 CPU 使用率较高</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat 1 1 | grep gzip</span></span><br><span class="line">01:37:14 PM     0      1974   15.69    1.96    0.00   87.65     7  gzip</span><br><span class="line">Average:        0      1974   15.69    1.96    0.00   87.65     -  gzip</span><br></pre></td></tr></table></figure>
+
+</blockquote>
+<h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a><br><a href="http://lionheartwang.github.io/blog/2018/06/05/linuxjin-cheng-zhuang-tai-shuo-ming/">Linux进程状态说明</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a>  5.7.1 Example: Linux Scheduling<a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>linux rsyslog 服务</title>
     <url>/202208191014/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
@@ -34053,6 +34333,168 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>六十四卦之地天泰</title>
+    <url>/20250918102639/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地天泰"><a href="#地天泰" class="headerlink" title="地天泰"></a>地天泰</h1><p><img src="https://i.0920811.xyz/img_351.png"></p>
+<p>地天泰，下乾（天、阳）在内，上坤（地、阴）在外，阴阳交感、天地交泰，万物生机。泰卦象征通泰、太平、和合、通达、顺遂，正道兴盛，社会秩序顺畅。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">泰，小往大来，吉亨。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：泰，小往大来，吉亨。则是天地交，而万物通也;上下交，而其志同也。内阳而外阴，内健而外顺，内君子而外小人，君子道长，小人道消也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天地交，泰，后以财(裁)成天地之道，辅相天地之宜，以左右民。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>小往大来，吉亨</strong> ： <strong>（地天）泰卦从（天地）否卦运动而来</strong> ，<strong>小谓阴</strong> ，阴爻（象征柔小、小人、次要因素）向外退去， <strong>大谓阳</strong> ，阳爻（象征刚大、君子、主要因素）向内到来。 <strong>爻从上向下运动为来，从下向上运动为往</strong> 。小者退去（往），大者前来，阴退阳进，上下相交，天地通泰。小人之道衰退，君子之道兴盛。隐喻 自然与社会的良性状态，此时亨通吉祥。</li>
+<li><strong>后以财(裁)成天地之道，辅相天地之宜，以左右民</strong> ： 后，指君主或领导者。财，通裁，裁断、顺应（参赞天地、成就万物）。辅相，辅助、配合。左右民，引导、帮助百姓。君子（君王）观泰卦之象，当顺应天地运行之道，参赞化育，以安定百姓，治理天下。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>天地交而万物通，后法之，以裁成天地之道，辅相天地之宜，使万物各得其所，以安定百姓。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>天地交泰，阴阳和合而万物生长。君子观此象，当参赞天地之化育，裁成辅助，使民各安其性命之宜。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>天地交感，万物以生。君子（在位者）法天地以理财用，成就化育，左右百姓。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拔茅茹，以其汇，征吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拔茅征吉，志在外也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>拔茅茹，以其汇</strong> ： 茅，茅草。茹，茅草的根部。汇，同类、群体、相关得事物，表示成群结伴。茅茹，茅草根系相连，象征 同类、同道之人，拔茅茹指的是拔起茅草，连根带叶一起拔起，喻指 君子行动时，如同拔茅连带其根系，自然团结身边志同道合者。</li>
+<li><strong>志在外也</strong> ： 外指上卦坤。</li>
+</ul>
+<p>初九象征君子在泰时之初，欲有所进取。君子与志同道合者相互提携，不独行，群体前进，故吉。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>茅草根连，拔一则三。喻君子同志相引，进而不孤。初九阳刚在下，拔而相与，以群行正，故征吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>初九以阳居下，志欲进而应上。茅茹以其根相连，拔之必并，喻君子同志相引而进。志在外而不独行，征则吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>拔茅茹，以其汇，言君子同志相引而进。初九在下，方欲进也。征而得吉，以其不孤也。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包荒，用冯河，不遐遗，朋亡，得尚于中行。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：包荒，得尚于中行，以光大也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>包荒</strong> ： 包，包容、容纳、宽容。荒，荒芜、荒远、广阔。意为 君子有宽广胸襟，能包容差异、接纳不同声音</li>
+<li><strong>用冯（píng）河</strong> ： 冯河，徒步涉水过河。比喻（面对困难）勇敢无畏的行为。九二到五位，前临互兑，兑为泽，可以为河，互震为足，刚健而足可涉河，故 “用冯河”</li>
+<li><strong>不遐遗</strong> ： 遐，遥远、远。遗，遗漏、遗弃。不遗漏远方的事物或人，即关注全面。</li>
+<li><strong>朋亡</strong> ： 朋，私人朋党、小团体。君子不结党营私，摒弃小团体利益，以全局为重。</li>
+<li><strong>得尚于中行</strong> ： 中行 指 中道、不偏不倚的准则，是九二 居中位 的核心体现，意为 君子通过包荒、冯河、不遐遗、朋亡的行动，最终实现对中道的尊崇与践行，让所有行为都不偏极端，契合泰的通达本质。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九二居中得正，有大臣之象。能包容荒失，不责小过；能冒险以济事；不远弃人；不偏党；归于中正之道。此所以能光大也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>二以阳居阴，得中正之德。处泰之时，当任大臣之位，能包容、敢担当、广纳人材、不为朋党，而守中正。此其美也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>包荒者，能包容荒僻之人；冯河者，有勇敢之志；不遐遗者，任用不遗远人；朋亡者，不偏党；得尚于中行者，以此诸德而归于中道。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无平不陂，无往不复，艰贞无咎。勿恤其孚，于食有福。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无往不复，天地际也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无平不陂（pō），无往不复</strong> ： 陂，倾斜、斜坡、崎岖不平。没有永远平坦而不倾斜的道路，没有只前进而不回归的事物，物极必反核心思想的经典表达，隐喻泰卦的 通达 不会永恒，太平中已暗藏向 否卦（闭塞）转化的可能，需警惕 泰极否来</li>
+<li><strong>艰贞无咎</strong> ： 艰，艰难、忧患。艰难而守正，方能无咎。</li>
+<li><strong>勿恤其孚，于食有福</strong> ： 恤，忧虑、怀疑。孚，诚信、信任、诚心。不必忧虑是否有人信任。于食有福比喻在生活上有保障，能够享受安乐</li>
+<li><strong>无往不复，天地际也</strong> ： 际，相交、交接、交界。天地相交，往则复返。泰到尽处则转为否，阳长到极致则阴生，这是天地运转、阴阳消长的自然规律。</li>
+</ul>
+<p>九三作为泰卦 下卦终、上卦近 的交界爻，是 泰极否来 的预警点，其核心价值是为 身处顺境者 提供风险警告。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>泰至三而极，将变否。故曰“无平不陂，无往不复”。居此时者，唯艰难而守正，乃得无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>三处下卦之上，泰极将变，危机已兆。然能艰难守正，虽处泰末，犹可无咎。不必忧信，有自然之孚，于饮食之间自得其福。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>泰至三极而将否，故曰“无平不陂，无往不复”。能艰贞则无咎，不必忧人之信，自然有孚，于食有福。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">翩翩不富，以其邻，不戒以孚。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：翩翩不富，皆失实也。不戒以孚，中心愿也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>翩翩不富</strong> ： 翩翩，轻盈、自在得样子、鸟飞轻疾之貌。不富，没有财物或者资源、德资不充实、根基未实。刚爻为实，柔爻为虚，坤为虚、为吝啬，故为 ”不富“</li>
+<li><strong>以其邻，不戒以孚</strong> ： 六四上承六五（邻君位），无需戒备（警惧），但以诚待之。</li>
+<li><strong>翩翩不富，皆失实也</strong> ： 阴居阴位（得位），在上卦坤之初，近君而不在中（失中），又与初九相应（四应初），上卦三阴失实，六四身在其间，</li>
+<li><strong>不戒以孚，中心愿也</strong> ： 六四位势特征是 初入外朝、肩上未重、距九五最近，取道于九五之中正，是内心真诚的愿望，但以诚待上，无需戒惧。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>翩翩，轻动之貌。四阴处近君之地而失中，不足自保，故曰不富；‘以其邻’者，取信于五也；‘不戒以孚’，诚出于中也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>四以阴处外卦之始，未安其位，故翩翩。不富者，德力未厚也。近五而从，乃‘以其邻’；中心愿从，故‘不戒以孚’。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>翩翩，飞动之貌；言其来上未定也。德不厚，故不富。以九五为邻而从之，则虽不戒而自孚，盖诚出于中心也。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">帝乙归妹，以祉元吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：以祉元吉，中以行愿也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>帝乙归妹</strong> ： 归，女儿出嫁。帝乙是商代帝王，商王帝乙为缓和与周族的关系，将女儿嫁给周文王（或其部族），属于通过联姻实现政治和谐的事件。爻辞以这一史实为喻，强调 正应 的重要性。泰卦互震为兄，互兑为妹。</li>
+<li><strong>以祉元吉</strong> ： 祉，福祉、吉祥、福分。有此大福，大吉大利。六五河九二阴阳正应，且都在中位，乾为福、祉。上下应和，能行中道，心愿能得实现。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六五以柔中居尊位，有如天子归妹，得其正也，故元吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六五之阴，居尊位得中，以柔顺中正而应九二之刚，譬如天子嫁女，有福祉而大吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>帝乙归妹，言嫁妹以礼也。以其得中正而合礼，故元吉。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">城复于隍，勿用师。自邑告命，贞吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：城复于隍，其命乱也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>城复于隍</strong> ： 城、城墙，代表防御、根基。隍，城外得壕沟，无水为隍，有水为池。指城墙坍塌倒入壕沟，比喻政事由盛转衰，防御失守，秩序大坏、局势崩坏。</li>
+<li><strong>自邑告命，贞吝</strong> ： 邑，小国、小城、城邑。只能在自己得城郭内部发布命令（无法向外推行），说明权威丧失、影响力萎缩，即便坚守正道（贞），也因外部局势崩坏、内部能力不足，难以扭转困境，最终只会有 “吝”（憾惜、不便），强调此时 “守正亦难安”，需正视局势的局限性。</li>
+</ul>
+<p>上六居《泰卦》之终，三阴在上，三阳在下，阴盛阳退，泰已极而转为否。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>泰极而否，阴道成而阳道消，上六处极，故城复于隍。阴长阳消，虽欲用师，不可得也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>上六阴极，象泰将否。‘城复于隍’者，政乱而邦危也。虽有守正之志，势不可为，徒有吝耳。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>上六居泰之极，阴气盛满，故有城坏之象。戒曰不可用兵，惟各自保邑，犹可以免，但必有吝。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
     <title>六十四卦之地泽临</title>
     <url>/20251006102040/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地泽临"><a href="#地泽临" class="headerlink" title="地泽临"></a>地泽临</h1><p><img src="https://i.0920811.xyz/img_359.png"></p>
@@ -35319,284 +35761,344 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>Linux 进程管理</title>
-    <url>/202406260952/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong><code>Program</code></strong> 是一个静态实体，只是存储在操作系统中的文件（集合）</p>
-<p><strong><code>Process</code></strong> 是操作系统上的活动（Active）实体，是 <strong><code>Program</code></strong> 由操作系统加载到内存并运行之后的实体。</p>
-<p><strong><code>Process</code></strong> 运行过程中需要操作系统为其分配各种资源，如 CPU、Memory、Files、IO 等来完成其运行。</p>
-<p>如果一个 <strong><code>Program</code></strong> 被操作系统运行（启动）了多次，那么其产生的多个 <strong><code>Process</code></strong>  属于分割（单独）的实体。</p>
-<p>Linux 系统中调度的进程&#x2F;线程，通常被称为任务（Task）</p>
-<p>Linux 中常见的进程状态如下表：</p>
-<table>
-<thead>
-<tr>
-<th>状态标识</th>
-<th>状态名称</th>
-<th>状态说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>R</code></td>
-<td><code>task_running</code></td>
-<td>进程处于运行或就绪状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>S</code></td>
-<td><code>task_interruptible</code><br/> <code>sleeping</code></td>
-<td>可中断的睡眠状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>D</code></td>
-<td><code>task_uninterruptible</code></td>
-<td>不可中断的睡眠状态<br/>1. 它是一种睡眠状态，意味着处于此状态的进程不会消耗 CPU<br/>2. 睡眠的原因是等待某些资源（比如锁或者磁盘 IO），这也是非常多 D 状态的进程都处在处理 IO 操作的原因<br/>3. 是它不能被中断，这个要区别于 <code>硬件中断</code> 的中断，是指不希望在其获取到资源或者超时前被终止。因此他不会被信号唤醒，也就不会响应 <code>kill -9</code> 这类信号。这也是它跟 <code>S（可中断睡眠）</code>状态的区别</td>
-<td></td>
-</tr>
-<tr>
-<td><code>T</code></td>
-<td><code>task_stopped</code> <br/> <code>task_traced</code><br/><code>Traced</code></td>
-<td>暂停状态或跟踪状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Z</code></td>
-<td><code>task_dead</code> <br/> <code>exit_zombie</code><br/><code>zombie</code></td>
-<td>退出状态，进程成为僵尸进程</td>
-<td></td>
-</tr>
-<tr>
-<td><code>X</code></td>
-<td><code>task_dead</code> <br/> <code>exit_dead</code></td>
-<td>退出状态，进程即将被销毁</td>
-<td></td>
-</tr>
-<tr>
-<td><code>I</code></td>
-<td><code>idle</code></td>
-<td>空闲状态</td>
-<td></td>
-</tr>
-<tr>
-<td><code>+</code></td>
-<td></td>
-<td>表示关联了前台操作（Foreground Operation），比如前台运行的进程</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="进程调度"><a href="#进程调度" class="headerlink" title="进程调度"></a>进程调度</h1><p>Linux 中任务（Task）调度算法默认使用 CFS（Completely Fair Scheduler，内核版本 &gt;&#x3D; 2.6.23）.</p>
-<p>CFS 调度算法没有使用固定的进程（此处的进程可能是进程或者线程，Linux 中统称为 Task）优先级（Priority），而是根据进程的 <code>nice value</code> 为进程分配一定比例的（Proportional） CPU 计算时间。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Operating System Concepts v10 Online](https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf)  5.7.1 Example: Linux Scheduling">[1]</span></a></sup></p>
-<p><strong><code>nice</code> 的取值从 <code>-20</code> - <code>+19</code>，值越小，优先级越高，默认值为 <code>0</code></strong> 。优先级高的进程会被分配到更高比例的 CPU 处理时间。</p>
-<p>在 Linux 内核中，优先级分为两种：静态优先级和动态优先级。CFS 使用的是动态优先级，它是根据 <code>nice</code> 值计算出来的。</p>
-<p>CFS Scheduler 不会直接设定 Priorities，而是为每个 Task 维护变量 <code>vruntime（virtual runtime）</code>（可以检查系统 <code>/proc/&lt;PID&gt;/sched</code>），这个值记录了每个 task 使用了多少 CPU 时间。</p>
-<p>CFS 通过将进程的虚拟运行时间（<code>vruntime</code>）与其他进程的虚拟运行时间进行比较来决定调度优先级。权重越大，<code>vruntime</code> 增长越慢，意味着进程的优先级越高，能够更频繁地被调度。</p>
-<p>假入一个任务有默认的 Priority（<code>nice=0</code>），那么他的 <code>vruntime</code> 和实际使用的 CPU 时间相同。例如一个 <code>nice=0</code> 的进程使用了 CPU 200ms，那么他的 <code>vruntime=200ms</code>。<strong>低优先级（low priority，<code>nice&gt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&gt;200ms</code>，相反的，一个 <strong>高优先级（high priority,<code>nice&lt;0</code>）</strong> 的任务在 CPU 上运行了 200ms，那么他的 <code>vruntime&lt;200ms</code>。<strong>基于此，CFS Scheduler 在选择下一个要执行的任务时，会选择 <code>vruntime</code> 最小的任务来运行</strong>。如果有高优先级的任务就绪（可执行），它会抢占（preemptive）正在执行的低优先级的任务。</p>
-<p>假如 Linux 中有 2 个优先级一样的任务（<code>nice=0</code>），一个进程为 I&#x2F;O-bound，另一个为 CPU-bound。通常情况下，在一个 CPU 周期内，I&#x2F;O-bound 的任务会使用很少的 CPU 时间就会因等待 IO 而中断在 CPU 上的执行并进入 CPU 的等待调度队列（schedule queue），而 CPU-bound 的任务会用尽分配给它的整个 CPU 周期。执行一段时间之后， I&#x2F;O-bound 的任务的 <code>vruntime</code> 的值会显著的小于 CPU-bound 的任务的 <code>vruntime</code>，导致 I&#x2F;O-bound 的任务拥有比 CPU-bound 的任务更高的优先级，当 I&#x2F;O-bound 的任务就绪（IO 返回数据）时，它会立即抢占 CPU 开始执行。</p>
-<blockquote>
-<p><code>nice</code> 只能针对单一的进程调整优先级，无法同时将优先级配置关联到相关进程，如 子进程或者同一个服务中的其他进程</p>
-</blockquote>
-<h2 id="修改-nice-的值"><a href="#修改-nice-的值" class="headerlink" title="修改 nice 的值"></a>修改 nice 的值</h2><p>在 Linux 中，<code>nice</code> 值用于调整进程的优先级，数值范围从 <code>-20</code>（ <strong>最高优先级</strong> ）到 <code>19</code>（ <strong>最低优先级</strong> ）。较低的 <code>nice</code> 值表示进程有更高的优先级，会更频繁地获得 CPU 时间，而较高的 <code>nice</code> 值表示进程有较低的优先级。</p>
-<p>你可以使用 <code>nice</code> 和 <code>renice</code> 命令来修改进程的 <code>nice</code> 值</p>
-<blockquote>
-<p>普通用户（<code>root</code> 之外的用户）启动应用程序时默认只能配置初始 <code>nice</code> 值 <code>0-19</code></p>
-<p>普通用户（<code>root</code> 之外的用户）修改正在运行的应用程序的 <code>nice</code> 值，只能改大，不能改小。比如进程启动时，其 <code>nice</code> 为 <code>10</code>，拥有权限的普通用户只能将其 <code>nice</code> 值改为大于 <code>10</code> 的值。 </p>
-</blockquote>
-<h3 id="nice-命令"><a href="#nice-命令" class="headerlink" title="nice 命令"></a>nice 命令</h3><p><strong><code>nice</code> 命令用于在启动进程时指定 <code>nice</code> 值</strong> 。如果不指定，默认 <code>nice</code> 值为 <code>0</code>。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">nice -n 10 command</span><br></pre></td></tr></table></figure>
+    <title>六十四卦之坤为地</title>
+    <url>/20250829163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="坤为地"><a href="#坤为地" class="headerlink" title="坤为地"></a>坤为地</h1><p><img src="https://i.0920811.xyz/img_342.png"></p>
+<p><strong>坤</strong> 是《周易》第二卦，纯阴之卦，是与 <strong>乾（刚健主动）</strong> 纯阳相对的 <strong>柔顺承正</strong> 之卦，象征 <strong>地的包容承载、阴的柔顺和辅助</strong></p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">坤。元，亨，利牝马之贞。君子有攸往，先迷后得主。利西南得朋，东北丧朋。安贞，吉。</span><br></pre></td></tr></table></figure>
 
-<h3 id="renice-命令"><a href="#renice-命令" class="headerlink" title="renice 命令"></a>renice 命令</h3><p><code>renice</code> 命令可以修改已经在运行的进程的 <code>nice</code> 值。需要提供进程 ID（ <strong>PID</strong> ）来指定要修改的进程。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">renice &lt;nice_value&gt; -p &lt;PID&gt;</span><br></pre></td></tr></table></figure>
-<p>如果想要一次修改多个进程的 <code>nice</code> 值，可以传递多个 PID：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo renice 10 -p 1234 2345 3456</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰： 至哉坤元，万物资生，乃顺承天。坤厚载物，德合无疆。含弘光大，品物咸亨。牝马地类，行地无疆，柔顺利贞。君子攸行，先迷失道，后顺得常。西南得朋，乃于类行；东北丧朋，乃终有庆。安贞之吉，应地无疆。</span><br></pre></td></tr></table></figure>
 
-<h1 id="Linux-进程资源控制-cgroups"><a href="#Linux-进程资源控制-cgroups" class="headerlink" title="Linux 进程资源控制 cgroups"></a>Linux 进程资源控制 cgroups</h1><p><code>cgroups</code> 可以将一个任务（<code>task</code>）标识（绑定）到一个特殊的 <strong>控制组（<code>Control Group</code>）</strong> ，此任务启动的子进程可以继承父进程的 <strong>控制组（<code>Control Group</code>）</strong> </p>
-<p><strong>控制组（<code>Control Group</code>）</strong> 可以限制的资源类型如下：</p>
-<table>
-<thead>
-<tr>
-<th>Type</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>blkio</code></td>
-<td><strong>Storage</strong> <br/>限制到存储设备（如 Hard Disk、USB Drivers等）的请求</td>
-</tr>
-<tr>
-<td><code>cpu</code></td>
-<td><strong>CPU</strong> <br/>限制 CPU 调度</td>
-</tr>
-<tr>
-<td><code>cpuacct</code></td>
-<td><strong>Process Accounting</strong> <br/>上报 CPU 使用状态，可以用于统计客户端使用的处理量并进行收费</td>
-</tr>
-<tr>
-<td><code>cpuset</code></td>
-<td><strong>CPU Assignment</strong> <br/>在多处理器的系统上，将 Task 分配到特定的处理器以及关联的内存</td>
-</tr>
-<tr>
-<td><code>devices</code></td>
-<td><strong>Device Access</strong> <br/>限制 <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 对目标设备类型的使用</td>
-</tr>
-<tr>
-<td><code>freezer</code></td>
-<td><strong>Suspend&#x2F;Resume</strong> <br/>暂停&#x2F;恢复  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task</td>
-</tr>
-<tr>
-<td><code>memory</code></td>
-<td><strong>Memory Usage</strong>  <br/>限制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的内存</td>
-</tr>
-<tr>
-<td><code>net_cls</code></td>
-<td><strong>Network Bandwidth</strong> <br/> 制并报告  <strong>控制组（<code>Control Group</code>）</strong> 中的 Task 使用的网络流量，主要通过对网络流量打上 <code>cgroups</code> 相关标签实现</td>
-</tr>
-<tr>
-<td><code>net_prio</code></td>
-<td><strong>Network Traffic</strong> <br/> 控制  <strong>控制组（<code>Control Group</code>）</strong> 中的网络流量的优先级</td>
-</tr>
-<tr>
-<td><code>ns</code></td>
-<td><strong>Namespaces</strong> <br/> 将 <code>cgroups</code> 分配到不同的 Namespaces，如此同一个 <code>cgroups</code> 中的进程只能看到本 Namespace 中的进程</td>
-</tr>
-</tbody></table>
-<h1 id="Linux-进程管理"><a href="#Linux-进程管理" class="headerlink" title="Linux 进程管理"></a>Linux 进程管理</h1><h2 id="进程命令名和进程可执行文件名"><a href="#进程命令名和进程可执行文件名" class="headerlink" title="进程命令名和进程可执行文件名"></a>进程命令名和进程可执行文件名</h2><p>在系统中遇到以下进程：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ps -elf | grep 18686</span></span><br><span class="line">5 S root     18686  1239  0  80   0 - 46620 pipe_w 15:50 ?        00:00:00 /usr/sbin/CROND -n</span><br><span class="line">0 R root     18694 18686  7  80   0 - 610547 -     15:50 ?        00:00:02 /usr/local/php73/bin/php /home/www/admin/artisan PullData</span><br><span class="line">0 S root     18754 18686  0  80   0 - 22453 pipe_w 15:50 ?        00:00:00 /usr/sbin/sendmail -FCronDaemon -i -odi -oem -oi -t -f root</span><br></pre></td></tr></table></figure>
-<p>其中 PID 为 <code>18686</code> 的进程名为 <code>/usr/sbin/CROND</code>，其启动了另外两个子进程。但是在系统中检查，并不存在路径 <code>/usr/sbin/CROND</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">ls</span> -l /usr/sbin/CROND</span></span><br><span class="line">ls: cannot access /usr/sbin/CROND: No such file or directory</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地势坤，君子以厚德载物。</span><br></pre></td></tr></table></figure>
 
-<p>出现此种现象，主要是因为 <em><strong>在启动时，进程的命令名是根据路径传递给 <code>execve()</code> 函数的参数决定的，而不是直接与系统中的文件进行匹配</strong></em>。</p>
-<p>在 Linux 系统中，<code>ps</code> 命令显示的进程信息是从 <code>/proc</code> 文件系统中获取的，而 <code>/proc</code> 文件系统包含有关正在运行的进程的信息，包括每个进程的命令名。因此，即使实际上系统中不存在 <code>/usr/sbin/CROND</code> 文件，但如果进程的命令名是 <code>/usr/sbin/CROND</code>，那么 <code>ps</code> 命令仍然会显示进程的命令名为 <code>/usr/sbin/CROND</code>。</p>
-<p><em><strong>进程的命令名可以查看 <code>/proc/&lt;PID&gt;/cmdline</code> 文件</strong></em>，本示例中显示如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/18686/cmdline</span> </span><br><span class="line">/usr/sbin/CROND-n</span><br></pre></td></tr></table></figure>
-
-<p>对应的系统上的可执行文件的名称可以查看 <code>/proc/&lt;PID&gt;/stat</code>、<code>/proc/&lt;PID&gt;/comm</code>、<code>/proc/&lt;PID&gt;/status</code> 等文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/comm</span> </span><br><span class="line">crond</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/status</span> </span><br><span class="line">Name:	crond</span><br><span class="line">Umask:	0022</span><br><span class="line">State:	S (sleeping)</span><br><span class="line">Tgid:	900</span><br><span class="line">Ngid:	0</span><br><span class="line">Pid:	900</span><br><span class="line">PPid:	1239</span><br><span class="line">TracerPid:	0</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /proc/900/stat</span></span><br><span class="line">900 (crond) S 1239 1239 1239 0 -1 4202816 1627 0 0 0 0 0 0 0 20 0 1 0 139129633 190955520 1478 18446744073709551615 94685936058368 94685936118156 140733000396032 140733000262488 140427856103840 0 0 4096 16387 18446744071797306256 0 0 17 3 0 0 0 0 0 94685938219080 94685938221648 94685948321792 140733000400770 140733000400789 140733000400789 140733000400872 0</span><br></pre></td></tr></table></figure>
-
-<p>在本示例中，实际执行的命令为 <code>crond</code></p>
-<h2 id="进程状态检查"><a href="#进程状态检查" class="headerlink" title="进程状态检查"></a>进程状态检查</h2><h3 id="top-命令"><a href="#top-命令" class="headerlink" title="top 命令"></a>top 命令</h3><p>使用 <code>top</code> 命令可以查看系统负载、CPU 和 内存使用情况。也可以查看单个进程的具体信息。</p>
-<p><code>htop</code> 是 <code>top</code> 命令的一个变种，它提供了更多的交互性、定制性以及其他一些功能，但是它同时使用了相比 <code>top</code> 更多的资源（4 倍多的 <code>syscalls</code>）</p>
-<p><strong><code>top</code> 命令常用选项</strong></p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-H</code></td>
-<td><code>Threads Mode</code>，线程模式。默认情况 <code>top</code> 展示进程的简要信息，使用此选项显示进程中的线程状态。<br/>对应交互式命令 <code>H</code></td>
-<td></td>
-</tr>
-</tbody></table>
-<p><strong><code>top</code> 常用交互命令</strong></p>
-<table>
-<thead>
-<tr>
-<th>命令</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>P</code></td>
-<td>CPU Utilization 排序，默认排序方式</td>
-</tr>
-<tr>
-<td><code>M</code></td>
-<td>Memory Utilization 排序</td>
-</tr>
-<tr>
-<td><code>I</code></td>
-<td>Irix&#x2F;Solaris-Mode 切换。<br/>默认为 Itrix Mode,在这种模式下，如果某个进程使用了系统中的 2 个 CPU 的所有计算资源，则其 CPU 使用率展示为 200%，依此类推。<br/>在 Solaris Mode 下，进程的 CPU 使用率是整体 CPU 使用的资源除于 CPU 数。如在 4 CPU 的系统中，Itrix 模式下，进程 CPU 使用率为 200%，在 Solaris 模式下，则为 50%</td>
-</tr>
-</tbody></table>
 <ul>
-<li>显示单个进程的（线程）详细信息  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">top -H -p 1423</span></span><br><span class="line">top - 09:44:42 up 54 days, 23:53,  2 users,  load average: 8.82, 6.84, 7.21</span><br><span class="line">Threads:  15 total,   0 running,  15 sleeping,   0 stopped,   0 zombie</span><br><span class="line"><span class="meta prompt_">%</span><span class="language-bash">Cpu(s): 40.9 us, 10.8 sy,  0.0 ni, 48.1 <span class="built_in">id</span>,  0.0 wa,  0.0 hi,  0.2 si,  0.0 st</span></span><br><span class="line">KiB Mem : 15790488 total,   466056 free,  7761544 used,  7562888 buff/cache</span><br><span class="line">KiB Swap:        0 total,        0 free,        0 used.  3895716 avail Mem </span><br><span class="line"></span><br><span class="line">  PID USER      PR  NI    VIRT    RES    SHR S %CPU %MEM     TIME+ COMMAND                                                                                  </span><br><span class="line"> 1423 root      20   0 1477368 778788   4260 S 39.5  4.9  11999:41 [watchdog:1:6]                                                                           </span><br><span class="line"> 2572 root      20   0 1477368 778788   4260 S 37.9  4.9  11363:48 [watchdog:1:6]                                                                           </span><br><span class="line"> 1436 root      20   0 1477368 778788   4260 S 34.2  4.9  11286:08 [watchdog:1:6]                                                                           </span><br><span class="line"> 1435 root      20   0 1477368 778788   4260 S 33.9  4.9  12059:53 [watchdog:1:6]                                                                           </span><br><span class="line"> 1434 root      20   0 1477368 778788   4260 S 33.2  4.9  10249:00 [watchdog:1:6]                                                                           </span><br><span class="line"> 1437 root      20   0 1477368 778788   4260 S 30.6  4.9  11717:47 [watchdog:1:6]                                                                           </span><br><span class="line"> 1431 root      20   0 1477368 778788   4260 S 28.9  4.9  11222:06 [watchdog:1:6]                                                                           </span><br><span class="line">21378 root      20   0 1477368 778788   4260 S 27.6  4.9  12143:35 [watchdog:1:6]                                                                           </span><br><span class="line"> 1433 root      20   0 1477368 778788   4260 S 17.6  4.9   8738:21 [watchdog:1:6]                                                                           </span><br><span class="line"> 1428 root      20   0 1477368 778788   4260 S  8.0  4.9   7650:56 [watchdog:1:6]                                                                           </span><br><span class="line"> 1429 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.04 [watchdog:1:6]                                                                           </span><br><span class="line"> 1430 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.05 [watchdog:1:6]                                                                           </span><br><span class="line"> 1432 root      20   0 1477368 778788   4260 S  0.0  4.9   0:00.03 [watchdog:1:6]                                                                           </span><br><span class="line"> 1438 root      20   0 1477368 778788   4260 S  0.0  4.9  12260:30 [watchdog:1:6]                                                                           </span><br><span class="line"> 1529 root      20   0 1477368 778788   4260 S  0.0  4.9  11068:39 [watchdog:1:6]</span><br></pre></td></tr></table></figure></li>
+<li><strong>元，亨</strong> ： 和 <strong><a href="https://0920811.xyz/20250828163229/#乾为天">乾卦的 <code>元，亨</code> 相同</a>，坤 也具备 元亨 之德，但 乾 是主动（刚健）开创，坤 是主动承载顺从（承正）乾道</strong> 。</li>
+<li><strong>牝马之贞</strong> ： 母马。牝马性柔而健，行地无疆，又能顺随牡马（指公马，象征 乾道）而不自为主；用此象来指示 <strong>阴之正</strong> ，即 <strong>柔顺利贞</strong> 之德。 <strong>阴爻宜固守柔顺，则吉（贞、正）。</strong></li>
+<li><strong>攸往</strong> ： 攸，虚词，本义是 所、之所，表示 地方、处所、行为的对象。往，去、行动。攸往，通常表示 <strong>有所行（动）、有所作为、追求目标</strong></li>
+<li><strong>先迷后得主</strong> ： 主动为先则迷，顺道为后则得主（乾为主，坤为从）。言 <strong>阴之道 宜后不宜先</strong> 。 <strong>坤的 行动价值，在于 让正道的力量通过自身的承顺得以落地，而非主导先行</strong></li>
+<li><strong>利西南得朋，东北丧朋</strong> ： 朋，朋友、同伴、同类、志同道合者。 <strong>后天八卦中，坤主西南，为阴，象征和自己同属性（类）得朋；艮主东北，为阳，象征和自己不同属性（类）得朋</strong> 。往西南，会和志同道合者（朋，顺同类）共同协作，有利；往东北，不会有同伴（丧朋），但是会得主（得君者，臣之庆；得亲者，子之庆；得夫者，妇之庆。庆者，未有不离其朋而得者也），也是非常吉利。</li>
+<li><strong>安贞</strong> ： 安于正道（柔顺承载、辅助）、守正（柔顺之正）</li>
+<li><strong>地势坤</strong> ： 象征 地 之厚重、无边无际、高下相承、承载包容万物</li>
 </ul>
-<h3 id="pidstat"><a href="#pidstat" class="headerlink" title="pidstat"></a>pidstat</h3><p><code>pidstat</code> 命令用于检查 Linux 内核管理的进程的状态。帮助文档请查看 <code>man pidstat</code>。要查看特定的进程的信息，使用 <code>-p [PID|ALL]</code> 选项，查看子进程相关信息，参考 <code>-T [TASK | CHILD | ALL]</code> 选项</p>
-<p>命令常用选项</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-d</code></td>
-<td>报告 I&#x2F;O statistics</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-C comm</code></td>
-<td>查看 <code>command name</code> 的详细信息， <code>comm</code> 可以是正则表达式</td>
-<td><code>pidstat -C chrome -T CHILD 1 10</code></td>
-</tr>
-<tr>
-<td><code>-p &#123; pid[,...]   / SELF / ALL &#125;</code></td>
-<td>查看指定的 PID 或者所有（ALL） 进程的统计信息，不指定默认使用 <code>-p ALL</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-e program args</code></td>
-<td>使用指定的 <code>args</code> 运行 <code>program</code> 并使用 <code>pidstat</code> 监控其统计数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-l</code></td>
-<td>在统计输出中，包含详细的命令及其参数</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-r</code></td>
-<td>统计进程的 <code>faults</code> 和 Memory 使用情况</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-T &#123; TASK  / CHILD / ALL &#125;</code> <br/><code>-t</code></td>
-<td>查看子进程相关统计信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-u</code></td>
-<td>CPU 使用率</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-w</code></td>
-<td>统计进程上下文切换（Context Switch）信息</td>
-<td></td>
-</tr>
-</tbody></table>
-<p><strong>查看指定的 PID 以及关联的子进程的统计信息</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -t -p 22737 1 1</span></span><br><span class="line">Linux 3.10.0-1160.49.1.el7.x86_64 (ecs-34a8) 	11/26/2024 	_x86_64_	(2 CPU)</span><br><span class="line"></span><br><span class="line">04:04:52 PM   UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">04:04:53 PM     0     22737         -    0.00    0.00    0.00    0.00     0  python3</span><br><span class="line">04:04:53 PM     0         -     22737    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22805    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22806    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22807    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line">04:04:53 PM     0         -     22808    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22809    0.00    0.00    0.00    0.00     0  |__python3</span><br><span class="line">04:04:53 PM     0         -     22810    0.00    0.00    0.00    0.00     1  |__python3</span><br><span class="line"></span><br><span class="line">Average:      UID      TGID       TID    %usr %system  %guest    %CPU   CPU  Command</span><br><span class="line">Average:        0     22737         -    0.00    0.00    0.00    0.00     -  python3</span><br><span class="line">Average:        0         -     22737    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22759    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22806    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22807    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22808    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22809    0.00    0.00    0.00    0.00     -  |__python3</span><br><span class="line">Average:        0         -     22810    0.00    0.00    0.00    0.00     -  |__python3</span><br></pre></td></tr></table></figure>
+<p><strong>乾坤如车之两轮、鸟之双翼，缺一则无法成事</strong> ：</p>
+<ul>
+<li><strong>乾为创始，坤为成终</strong> ，没有坤的 承载，乾的 开创 将毫无意义；没有乾的 引领，坤的 承载 将毫无方向，二者 相生相济，共同构成 生生不息的宇宙与人事规律</li>
+<li><strong>乾主知，坤主行</strong></li>
+<li><strong>乾为天，坤为地。乾坤并建，宇宙始备</strong></li>
+<li><strong>有乾无坤，则躁进而难久；有坤无乾，则寡断而失机。</strong></li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>坤之德，顺以承乾，故利牝马之贞。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>坤之道，唯在承乾而已。坤若自为主，则迷而无所适。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>坤以顺承为体，故利牝马之贞。安于顺从，厚德以载物，则吉。</code></p>
+</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履霜，坚冰至。</span><br></pre></td></tr></table></figure>
 
-<p><strong>查看进程使用的内存以及 <code>faults</code> 统计信息</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -r | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">03:17:25 PM   UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command</span><br><span class="line">03:17:25 PM     0         1      0.97      0.00  168668   13552   0.08  systemd</span><br><span class="line">03:17:25 PM     0       147      1.85      0.00  228472  158232   0.98  systemd-journal</span><br><span class="line">03:17:25 PM     0       189      0.00      0.00  289100   27392   0.17  multipathd</span><br><span class="line">03:17:25 PM     0       199      0.00      0.00   12160    6376   0.04  systemd-udevd</span><br><span class="line">03:17:25 PM   118       512      0.00      0.00   14624    6400   0.04  systemd-oomd</span><br><span class="line">03:17:25 PM   100       551      0.00      0.00   16044    7296   0.05  systemd-network</span><br><span class="line">03:17:25 PM   101       553      0.00      0.00   26512   10240   0.06  systemd-resolve</span><br><span class="line">03:17:25 PM     0       643      0.00      0.00    2816    1920   0.01  acpid</span><br><span class="line">03:17:25 PM   123       644      0.00      0.00   19088    3840   0.02  avahi-daemon</span><br><span class="line">03:17:25 PM   102       645      0.00      0.00   31628    7436   0.05  dbus-daemon</span><br><span class="line">03:17:25 PM     0       646      0.00      0.00  278416   14852   0.09  NetworkManager</span><br><span class="line">03:17:25 PM     0       649      0.01      0.00  757540   17788   0.11  euc-analytics-a</span><br><span class="line">03:17:25 PM     0       653      0.00      0.00   82768    3840   0.02  irqbalance</span><br><span class="line">03:17:25 PM     0       656      0.00      0.00   48880   10368   0.06  networkd-dispat</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：履霜坚冰，阴始凝也。驯致其道，至坚冰也。</span><br></pre></td></tr></table></figure>
 
-<p><strong>查看进程使用的 CPU 统计信息</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat -u -l | more</span></span><br><span class="line">Linux 6.8.0-1017-aws (U-3TSDMAL9IVFAQ) 	11/26/2024 	_x86_64_	(4 CPU)</span><br><span class="line"></span><br><span class="line">04:08:08 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command</span><br><span class="line">04:08:08 PM     0         1    0.04    0.02    0.00    0.02    0.06     1  /sbin/init</span><br><span class="line">04:08:08 PM     0         2    0.00    0.00    0.00    0.00    0.00     0  kthreadd</span><br><span class="line">04:08:08 PM     0        15    0.00    0.00    0.00    0.01    0.00     0  ksoftirqd/0</span><br><span class="line">04:08:08 PM     0        49    0.00    0.00    0.00    0.00    0.00     2  khugepaged</span><br><span class="line">04:08:08 PM     0        63    0.00    0.00    0.00    0.00    0.00     3  kworker/3:1H-kblockd</span><br><span class="line">04:08:08 PM     0        64    0.00    0.00    0.00    0.00    0.00     3  kswapd0</span><br><span class="line">04:08:08 PM     0        75    0.00    0.00    0.00    0.00    0.00     2  kworker/2:1H-kblockd</span><br><span class="line">04:08:08 PM     0       100    0.00    0.00    0.00    0.00    0.00     0  jbd2/nvme0n1p1-8</span><br><span class="line">04:08:08 PM     0       102    0.00    0.00    0.00    0.00    0.00     1  kworker/1:1H-kblockd</span><br><span class="line">04:08:08 PM     0       129    0.00    0.00    0.00    0.00    0.00     0  kworker/0:1H-kblockd</span><br><span class="line">04:08:08 PM     0       147    0.00    0.00    0.00    0.00    0.01     3  /lib/systemd/systemd-journald</span><br><span class="line">04:08:08 PM     0       189    0.00    0.00    0.00    0.00    0.01     3  /sbin/multipathd -d -s</span><br><span class="line">04:08:08 PM     0       199    0.00    0.00    0.00    0.00    0.00     3  /lib/systemd/systemd-udevd</span><br><span class="line">04:08:08 PM     0       382    0.00    0.00    0.00    0.00    0.00     2  jbd2/nvme1n1p1-8</span><br><span class="line">04:08:08 PM   118       512    0.05    0.05    0.00    0.00    0.10     3  /lib/systemd/systemd-oom</span><br><span class="line">d</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<ul>
+<li><strong>履霜</strong> ： 履，踩、踏、接触。霜，薄寒之征，象征 <strong>阴柔力量的初始形态</strong> ，可指代 <strong>不利因素、负面趋势、潜在风险</strong></li>
+<li><strong>坚冰至</strong> ： 君子见微知著，履霜而知坚冰将至，象征 <strong>对初始微小的不利趋势（征兆）要 主动关注，警觉、不轻视，如此才能防微杜渐；初始微小的不利征兆，若不阻断，必然发展为重大危机</strong></li>
+<li><strong>阴始凝也</strong> ： 不利因素、消极趋势刚开始聚集。 <strong>阴始凝，是履霜、将至坚冰的因</strong> 。象征 <strong>负面力量从无到有，且开始主动聚集</strong></li>
+<li><strong>驯致其道，至坚冰也</strong> ： 驯，顺从、遵循、顺而渐（循序渐进）。 <strong>坚冰至</strong> 不是 突然发生的意外，而是负面因素遵循 <strong>渐进积累的发展</strong> 规律，逐步发展的必然结果。揭示了 <strong>微小隐患→渐进积累→重大危机</strong> 的规律，如 <strong>千丈之堤，以蝼蚁之穴溃</strong></li>
+</ul>
+<p><strong>初六为坤卦最下（初爻、下位），阴爻居阳位（不得位），一阴始生，位（下位）卑且弱，却正是阴气发动之端（初爻为 起点，对应事物发展的初始阶段，微小却关键），阴爻位不当，暗示 微而不正（阴的特质 柔缓、隐蔽、不张扬，易被忽视） 的萌芽最易被忽视</strong> 。需要警觉</p>
+<p><strong>初爻的 始，决定了此时 问题干预成本最低（阴始凝），若任由不利因素继续发展（驯致其道），必将造成重大危机（至坚冰），再去解决就需要付出更大代价</strong> ，初六的预警，本质是 <strong>在成本最低的阶段，解决最根本的问题</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>阴始凝也。履霜则知坚冰之将至，以微知著也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>初六为阴之始，阴虽微，然不可忽；观其始，则可以知其终。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>阴之始凝，履霜则知坚冰之将至。君子见微而知著，防患于未然。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">直，方，大，不习无不利。</span><br></pre></td></tr></table></figure>
 
-<blockquote>
-<p>在使用 <code>pidstat</code> 时如果未指定统计数据的采样间隔及采样次数，则 <strong>默认统计的是从系统启动以来的平均资源使用率，如果目标进程的运行时间相对于系统启动时间很短（例如仅几分钟），那么它的平均 CPU 使用率会趋近于 0</strong> 。比如以下示例：  </p>
-<p><em>未指定采样间隔及采样次数</em> ，统计结果显示进程的 CPU 使用率为 <code>0</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat  | grep gzip</span></span><br><span class="line">01:37:06 PM     0       784    0.00    0.00    0.00    0.00     4  gzip</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之动，直以方也；不习无不利，地道光也。</span><br></pre></td></tr></table></figure>
 
-<p><em>以下命令指定采样间隔和采样次数</em> ，统计结果显示 CPU 使用率较高</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pidstat 1 1 | grep gzip</span></span><br><span class="line">01:37:14 PM     0      1974   15.69    1.96    0.00   87.65     7  gzip</span><br><span class="line">Average:        0      1974   15.69    1.96    0.00   87.65     -  gzip</span><br></pre></td></tr></table></figure>
+<ul>
+<li><strong>直，方，大</strong> ： 直，正直、内质刚正、柔顺承道的本真无妄。方，方正、守规矩、不偏倚（有准则、有边界）、坚守原则。大，无局限、能承载、包容无界的格局（有容乃大），承坤卦 <strong>大</strong> 德</li>
+<li><strong>不习无不利</strong> ： 习，本意为 学习、练习、修习，这里引申为刻意造作、违背本质的修饰。 <strong>不习无不利</strong> 指 <strong>无需刻意修饰、顺应坤德本真，包容承载万物，自然无往不利</strong></li>
+<li><strong>地道光也</strong> ： 地道，指 <strong>坤的根本规律（包容承载、柔顺承正）</strong> ；光，彰显光大、广大而明。</li>
+</ul>
+<p>六二爻，阴爻居阴位，得中得正，位在 <strong>内卦</strong> 之中，为坤之正主，是坤卦中最契合 <strong>地道本真（包容承载、柔顺承正）</strong> 的爻位，象征 <strong>柔顺力量达到 中正纯粹、自然天成 的境界</strong> ，故其德圆满， <strong>不习无不利</strong> （契合地道本真，无需刻意修饰，自然彰显价值光辉）</p>
+<p>直，方，大也是地得特性，古人认为天圆地方，地是方得，是直得，是广大得。</p>
+<p>六爻卦（重卦、六十四卦）中每个卦都有最主要得一爻，称为 <strong>卦主（一卦之主），也称作 主爻</strong> 。每卦包含 <strong>天（上、五爻）、地（初、二爻）、人（三、四爻），称为三才</strong> 。乾卦是天，九五为天位，是乾本位，是主爻（卦主）。坤卦是地，六二是地位，是坤本位，是主爻（卦主），最能代表地得特性。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>直者，不枉曲；方者，不偏倚；大者，无所不包也。不习而利者，性自然也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六二中正，以阴居阴，尽地之道，直方广大，不待勉强而然，故无不利。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六二之德，直以方，大而无私，不待习而成，乃地道之光也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">含章可贞。或从王事，无成有终。</span><br></pre></td></tr></table></figure>
 
-</blockquote>
-<h1 id="参考链接-Bibliography"><a href="#参考链接-Bibliography" class="headerlink" title="参考链接|Bibliography"></a>参考链接|Bibliography</h1><p><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a><br><a href="http://lionheartwang.github.io/blog/2018/06/05/linuxjin-cheng-zhuang-tai-shuo-ming/">Linux进程状态说明</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://os.ecci.ucr.ac.cr/slides/Abraham-Silberschatz-Operating-System-Concepts-10th-2018.pdf">Operating System Concepts v10 Online</a>  5.7.1 Example: Linux Scheduling<a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：含章可贞，以时发也；或从王事，知光大也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>含章</strong> ： 章，文采、才美、美德、才能； 含，包容、内含、藏而不露。 <strong>拥有才华却不刻意显露，如同美玉藏于石中，不轻易示人</strong></li>
+<li><strong>可贞</strong> ： 贞，守正、坚守正道、坚守原则。 <strong>坚守正道不违背原则、不放弃底线</strong></li>
+<li><strong>无成有终</strong> ： 无成，不是没有成就，而是 若从（以辅助者、实行者的角色，非主导者）王事，事成而不居功（不将成就归于自身）、不自傲，必能有好结果。</li>
+<li><strong>知光大也</strong> ： 知，智慧、学识。</li>
+</ul>
+<p>六三爻处 <strong>下卦终位，上接六四的临界位置</strong>，已离田而尚未登天（未至四、五），阴爻居阳位，位不当，故 <strong>含而不敢先</strong> ；然紧邻外卦，才美已具（才华待显、辅助上位）。才美已盛而位未正，宜 <strong>隐藏锋芒而守正（含章可贞），待时而出，若从（顺应、跟随而非主导）王事，要以辅助者的角色行事，不居功（无成有终）</strong></p>
+<p><strong>或从王事，无成有终</strong> 的关键在于 <strong>从和无成</strong> ，要认清自己的位置和角色，以辅助者、实行者的角色，非主导者的角色辅助君主，彰显 坤 的特性。 <strong>无成</strong> 并非 <strong>否定个人价值，而是认清辅助者的定位，不居功、不自傲，这是 六三爻 在位不当的环境下 善终的关键</strong></p>
+<p><strong>含章可贞，以时发也</strong> ，含章并非 无所作为、消极避世，而是要在合适的时机（以时发，因势而发）显露才华（或从王事）。 <strong>含章可贞 是 以时发也 的前提和准备，以时发 是 含章可贞的 目的</strong> 。 <strong>时 指位势适配的时机，如 王事 需要辅助、自身位势安全时</strong></p>
+<p><strong>或从王事，知光大也</strong> ，到了合适的时机，可以从王事，其智慧才学（章）光大的表现。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>章之为德，明也。含章者，不显其明也。以阴居阳，处不当位，宜含光以守正也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六三以阴居阳，非正之地，若逞其章，则失其贞。惟含章守正，俟时而发，乃吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>含章，谓有文明之德而不显。以阴处阳，不当位，故宜含蓄而守正。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">括囊，无咎无誉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：括囊无咎，慎不害也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>括囊</strong> ： 括，扎紧、束缚、系紧、封闭； 囊，袋子、口袋。扎紧口袋，引申为 <strong>谨慎收敛自身的言行、才华、欲望，不轻易显露、不随意行动、不妄言、不妄动</strong></li>
+</ul>
+<p>六四爻，阴爻居阴位（得位），处于 <strong>上卦初位、临近九五君位的敏感地带</strong>，上接乾卦核心（九五阳爻，象征君权、刚健主导者），下承下卦辅助（六三阴爻，象征基层力量），是上（君）传下（臣）达的 权力缓冲带 与 矛盾焦点区。在高危环境中，唯有收敛言行、不妄动不张扬（慎），才能 无咎（避祸），哪怕牺牲 荣誉（无誉） </p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>括囊者，闭藏也。处阴柔之地，不可以自进，宜守闭藏，则无咎也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>以阴居阴，近尊位，若有所施，则必害也。唯括囊而不施，谨慎自守，故无咎而已。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>括囊，闭藏也。六四以阴居阴，近乎六五，若妄动则害，守闭藏则无咎，然无誉也。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">黄裳，元吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：黄裳元吉，文在中也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>黄裳</strong> ： 黄，中央正色、五行居中属土，象 中和；裳，下裙、下装，古人 <strong>上衣下裳</strong> ，衣 象征 在上的尊贵者（如君王穿的冕服），裳 象征 在下的辅助者（如臣子穿的下裳）；象 谦下承上、承顺、不越权</li>
+<li><strong>文</strong> ： 坤的柔顺文德（柔顺、包容、协调、承正），与 武（刚健、武力、开创） 相对。</li>
+</ul>
+<p>六五爻 阴爻居阳位，位尊得中不得正，在坤卦，阴居君位（天子、元首），正是 <strong>以柔居尊</strong> 之典型，既中（居中守正，不偏不倚）且下（谦下承上，不居高位），五虽居 尊位，却仍是 坤卦的柔顺角色（辅助者），而非 乾卦的刚健主导者（决策者），承顺正道，故大吉。坤之六五与乾之九五同为 君位 ，而一刚一柔</p>
+<p>柔顺力量（阴）处于 <strong>尊位而不骄、承正而不越</strong> 的理想状态，以居中守下的文德，承顺刚健正道，最终实现 <strong>元吉</strong></p>
+<p><strong>文德在中</strong> ，能以 坤之文德（柔顺、包容、协调、承正）居中守正，元吉。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>黄，中色也。裳，下服也。处尊位而能中正谦下，故元吉也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居尊位而能下服，以中正之德自处，柔顺不失其正，故大吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>黄，中之色；裳，下之服。居尊位而能中正谦下，柔顺以治，元吉。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">龙战于野，其血玄黄。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：龙战于野，其道穷也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>龙战于野</strong> ： 龙，指 乾之龙（刚健力量） 与 坤之龙（过度发展的阴柔力量） 的对立，象征 阴阳两气 相互争斗。野 是 不受约束的开阔之地，象征 冲突脱离 有序框架（如朝堂、规矩），进入 无规则的混乱状态</li>
+<li><strong>其血玄黄</strong> ： 玄，天色；黄，地色。天地（阴阳、乾坤）交战，其血玄黄，象征两败俱伤，同归于尽。</li>
+<li><strong>其道穷也</strong> ： 阴柔之道（坤之道，柔顺承正（乾的刚健正道））至此而极尽，要么毁灭要么转化（为阳），象征物极必反，阴极阳生。</li>
+</ul>
+<p>上六是坤卦最上（最后）一爻，阴爻居阴位，已到极处。象征 <strong>柔顺力量（坤）过度积累，突破 承顺正道 的边界，与刚健力量（乾）正面冲突</strong> 的凶险状态。任何力量过度发展而失度，终将突破平衡（中），引发毁灭性冲突。</p>
+<p>坤卦六爻皆阴，到了上六爻，阴气至极（上无可上，阴盛无制），已失坤之道（承顺正道），阴盛而与阳斗。与 乾卦 上九 <code>亢龙有悔</code> 一刚一柔，都说明 过犹不及，盛极必衰 的道理。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>阴极而与阳战，非其道也，故穷。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>坤道纯阴，至上六而极。阴盛则必与阳争，争则伤，故曰‘龙战于野，其血玄黄’。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六爻皆阴，至上而穷，阴盛与阳争，故有此象。</code></p>
+</li>
+</ul>
+]]></content>
       <categories>
-        <category>Linux</category>
+        <category>易学</category>
       </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之雷地豫</title>
+    <url>/20250926132040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="雷地豫"><a href="#雷地豫" class="headerlink" title="雷地豫"></a>雷地豫</h1><p><img src="https://i.0920811.xyz/img_356.png"></p>
+<p>豫，上（外）震（雷、动）下（内）坤（地，顺），顺以动，顺为基，动为用，遵循规律、顺应时势而行动，代表安乐、喜悦、愉悦、和顺。天地和顺万物生长，人心和顺上下同心。豫卦和谦卦为正覆卦。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">豫，利建侯行师。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：豫，刚应而志行，顺以动，豫。豫，顺以动，故天地如之，而况建侯行师乎?天地以顺动，故日月不过，而四时不忒;圣人以顺动，则刑罚清而民服。豫之时义大矣哉!</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：雷出地奋，豫。先王以作乐崇德，殷荐之上帝，以配祖考。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>豫，利建侯行师</strong> ： 在安定和顺的环境中，可以积极地开展政治和军事行动。</li>
+<li><strong>刚应而志行</strong> ： 豫卦从复卦变来，复卦初九和六四交换，豫卦九四为全卦唯一刚爻，其余阴爻上下应合。</li>
+<li><strong>天地以顺动，故日月不过，而四时不忒</strong> ： 不忒，无差错。天地遵循 “顺以动” 的规律，日月有序运行无差，四时有序更替。</li>
+<li><strong>雷出地奋，豫</strong> ： 春雷声响起，万物苏醒生长（奋），呈现出一派生机勃勃、和乐兴盛的景象</li>
+<li><strong>先王以作乐崇德，殷荐之上帝，以配祖考</strong> ： 殷，大、盛、盛大。荐，祭祀、祭礼、礼祭。配，配享、陪祭。祖考，祖先、先祖。先王以盛大的礼仪，将音乐（乐）与美德（礼）呈献给天帝，并陪同祭祀先祖（祖考）</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>豫者，顺以动也。动而有顺，则无不通，故利建侯行师</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>豫者，安乐之义。然非逸豫之豫，乃顺时而动，乐以成治。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>豫，喜乐也。下动而上顺，顺以动也。故天地圣人皆法之，以成大治。</code></p>
+<blockquote>
+<p>豫卦，上震（动）下坤（顺），此处下动而上顺，非指卦体，指圣人顺应（上顺）民心而动（下动）</p>
+</blockquote>
+</li>
+</ul>
+<h2 id="处六"><a href="#处六" class="headerlink" title="处六"></a>处六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">鸣豫，凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：初六鸣豫，志穷凶也。</span><br></pre></td></tr></table></figure>
+<p>鸣豫者，志在声乐而无远志，必至于凶。</p>
+<p>初六是豫卦的 “起始爻”，事情刚刚开始（萌芽）就因安乐和顺而炫耀自得，乐而无根基，显而无分寸，易乐极生忧，志向浅薄，志短而失序。缺乏远志，只知沉溺当下之乐，必有凶险。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>豫之为道，当顺以动。今处卑弱，而鸣以自豫，是穷志也，故凶。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>豫贵以顺动，初六乃浅志张扬，流于逸乐，必致凶也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>鸣豫，志浅而自鸣，必凶。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">介于石，不终日，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不终日，贞吉;以中正也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>介于石</strong> ： 介，耿介、坚定、坚固不移。六二的品德如磐石般坚硬稳固，在豫卦的 “和乐氛围” 中，不被浮躁的愉悦裹挟，始终坚守正道原则。</li>
+<li><strong>不终日，贞吉</strong> ： 形容行动果断、及时。当和乐局面中出现 “偏离正道” 的迹象（如他人沉迷享乐、事务即将失序），六二能凭借 “中正” 的洞察力，迅速察觉隐患，不拖延、不犹豫，及时采取行动（或纠正偏差，或坚守原则以避风险），因行动符合 “贞”（正道），故 “吉”；</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六二以柔中处正，能守贞不失，故介如石，不随豫而动。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>二以中正，处豫之时，不为逸乐所动，心如石然。能即止，不延误，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>介于石，言守正如石之坚；不终日，言不待久也。以中正故吉。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">盱豫，悔。迟有悔。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：盱豫有悔，位不当也。</span><br></pre></td></tr></table></figure>
+<ul>
+<li><strong>盱（xū）豫</strong> ： 盱，张目仰望、仰视、张望。形容目光浮动，摇摆不定，不安于位。</li>
+</ul>
+<p>六三爻是一个阴爻居阳位，位置不当，象征着行为不恰当、不适宜。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>三以阴居阳，失位不中，志不安正，故盱望于外以求豫，必悔。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处豫之时，而位不当，志欲豫而不能安，必悔。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>盱豫者，志不安也。迟有悔，不即改正，则悔深。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">由豫，大有得。勿疑。朋盍簪。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：由豫，大有得;志大行也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>由豫</strong> ： 由，遵循、顺从、随着。循豫而行，因时顺动。</li>
+<li><strong>朋盍簪</strong> ： 盍，合、聚、聚集、聚合。簪，簪子、簪饰、头饰，引申为聚集、会合。 同道都会聚拢而来</li>
+</ul>
+<p>豫卦的核心是 <strong>顺以动</strong> ，九四作为唯一阳爻（核心爻），承上启下（连接下卦震的动 与上卦坤的 顺），通过自身刚健行动，带动上位者顺承、下位者追随，最终实现 <strong>上下同豫（志大行也）</strong> ；</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四刚而得位，应乎初六，顺豫而行，志得大施。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>由豫，循理顺时而动也。九四能如此，故大有得，朋党皆来。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>由豫，得于顺时而动；大有得，言志行也；朋盍簪，言群贤附之也。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞疾，恒不死。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六五贞疾，乘刚也。恒不死，中未亡也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>贞疾，恒不死</strong> ： 疾，疾病、困难、困境。坚守正道但遭遇疾病或困难</li>
+</ul>
+<p>六五居上卦坤（顺）的中位，其下紧邻九四（阳爻，刚健之爻），形成 <strong>阴爻乘阳爻（六五乘九四）的格局，乘刚在《周易》中常喻 柔者凌驾于刚者之上</strong></p>
+<p><strong>恒不死</strong> 喻指 局面不崩坏、自身不覆灭，这是对 <strong>贞疾</strong> 补充，六五虽有隐疾，却能长久维持和乐格局与自身地位，核心原因在于 得中。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六五以阴柔居尊，不任其位，故曰贞疾；然得中守正，虽疾而不死。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>豫之时，居尊位者，最当忧惧。六五柔弱而居尊，故有贞疾之象。然能守中正，虽病犹存。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>贞疾，位尊而才弱，如病；恒不死，以其中正故也。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">冥豫，成有渝，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：冥豫在上，何可长也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>冥豫，成有渝</strong> ： 冥，昏昧、昏暗、不明。渝，改变、变化、转变、变易。冥豫 者，昏迷于豫也。过度沉迷和乐而失却清醒，在豫乐已成之时，若能转变（渝&#x3D;改变），悔悟及时，就能无咎 。</li>
+</ul>
+<p>上六阴爻居于全卦之极，处在豫乐的顶点。因阴柔无正，容易沉湎于逸乐，迷昏其中，是 <strong>冥豫</strong> ，但因为居于终位，若能知变、转身，仍可免咎。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上六处豫之极，昏冥而不知止，若能渝变，犹可无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处豫之极，若不知变，则祸至矣。若能自渝，则无咎。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>冥豫’，昏迷而不知止也。然成有渝，改而从正，则无咎。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
   </entry>
   <entry>
     <title>六十四卦之雷风恒</title>
@@ -38359,466 +38861,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之泽雷随</title>
-    <url>/20251001132040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽雷随"><a href="#泽雷随" class="headerlink" title="泽雷随"></a>泽雷随</h1><p><img src="https://i.0920811.xyz/img_357.png"></p>
-<p>随，上（外）兑（泽、悦）下（内）震（雷、动），动而悦，象征着顺应（时势）、顺势而为、随时势而动。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随，元亨，利贞，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：随，刚来而下柔，动而说，随。大亨贞，无咎，而天下随时。随时之义大矣哉!</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽中有雷，随;君子以向晦入宴息。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>刚来而下柔，动而悦</strong> ： 随卦从否卦变来，否卦上九和初六交换，上九下到随卦初九位，处柔爻之下。否卦天地不通，上下两爻交换，天地往来，阴阳交流，变得通常，故元亨0</li>
-<li><strong>君子以向晦入宴息</strong> ： 晦，夜晚、日暮、黄昏。君子效法卦象，随时而行：白天活动，夜晚歇息，动静有度，随顺自然。随之为义，随时而动，不失其正。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>随者，随时也。随时以动，则无往不利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随时而动者，非附和而已，乃因时顺理之谓。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>随，从也。随时而动，随理而行，则元亨利贞无咎。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">官有渝，贞吉。出门交有功。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：官有渝，从正吉也。出门交有功，不失也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>官有渝</strong> ： 官，犹常（道）也。有渝者，变革旧常。能随时改正，必吉。渝，改变、变动、变化。</li>
-</ul>
-<p>初九刚来而下柔，阳爻居阳位，得正，为随卦主爻。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>官有渝者，变常也。能变旧而随时，不失正，则吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随者，当随时而动，不可执常。初九刚正，能随时改易，所以吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>官有渝，谓能变通。随时而变，从正则吉；交际而守正，亦有功。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系小子，失丈夫。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系小子，弗兼与也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>系小子，失丈夫</strong> ： 系，依附、追随、束缚。六二和九五为正应，可以为丈夫，初九为随卦主爻，六二比邻初九，初九为震，为长子，可为小子。若为女性，则顾念子而失丈夫，有离异之象；若男性，丈夫也可为德厚长者，小子为平庸之辈。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二以柔居中，本应九五。若系初九，则失九五。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随在得其所随。六二应九五而正，若舍之而系于初九，是失正也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>小子，指初九；丈夫，指九五。六二居中得正，应于九五，正随之道也。若系初九，则失九五矣。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系丈夫，失小子。随有求，得，利居贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系丈夫，志舍下也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>系丈夫，失小子</strong> ： 舍初九而随九四。</li>
-<li><strong>志舍下也</strong> ： 三欲随上，舍近而求远，是舍小子而随丈夫。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>二则随小子而失丈夫，三则随丈夫而失小子。志舍下也，故利居贞。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随在择所随，三能舍近就远，志在上也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>小子谓初九，丈夫谓九五。三舍近随远，志在随正也。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随有获，贞凶。有孚在道，以明，何咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：随有获，其义凶也。有孚在道，明功也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>随有获，贞凶</strong> ： 获，获利、获得。九四阳爻居阴位，刚而位不当，又处于近君位，易因刚健（锋芒过露）而居功逐利，招致凶险。</li>
-<li><strong>有孚在道，明功也</strong> ： 孚，诚心、诚信、诚实、真诚。明，明辨、清晰。随人做事，居功获利，其义凶。心怀诚信，明辨所处，则无咎害。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四失位，随而有获，非正也，故贞凶。唯有孚守道，乃可以免咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四以刚居阴位，非正。若随而得，必有凶。然能诚信守道，则虽得，亦无咎。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>随有获，非正也，故凶。有孚在道，则虽获亦可，无咎。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">孚于嘉，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：孚于嘉，吉;位正中也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>孚于嘉</strong> ： 嘉，美好、优秀、善的人或事。</li>
-</ul>
-<p>九五居尊位，阳爻居阳位，又在全卦的中位，正中而得正。以刚健中正之德居尊位，又能以孚随正道、美善之事（嘉），所以合随道。为全卦最好的一爻。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五刚中居尊，孚信在上，下应六二，故孚于嘉而吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五以刚中正居尊位，应六二之柔顺，君臣相孚，随从正道，吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>孚于嘉，言以诚信随美善也。九五中正居尊，正应六二，吉之道也。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拘系之，乃从维之。王用亨于西山。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拘系之，上穷也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>拘系之，乃从维之</strong> ： 拘系，拘束、束缚、捆绑。从、跟从、追随、顺从。维，维系、维持、加固。</li>
-<li><strong>王用亨于西山</strong> ： 用亨，通享，祭祀、祭礼。西山，西周的重要祭祀之地（传为周文王祭祀先祖或天地的场所，象征 “庄重、终结性的仪式”）</li>
-</ul>
-<p>上六阴爻处随卦最上（极），随之至极，随之穷尽，只知（能、过渡）追随，反而被束缚、限制。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上六随之极，柔而无正，故拘系。然犹能随正，则乃可维。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随之至极，必至困穷。然能返正，从维大道，犹可以济。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>拘系之，随极而困也。乃从维之，犹可以归正。王用亨于西山，言随正以大祭，归于至诚。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之泽山咸</title>
-    <url>/20251119103840/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽山咸"><a href="#泽山咸" class="headerlink" title="泽山咸"></a>泽山咸</h1><p><img src="https://i.0920811.xyz/img_376.png"></p>
-<p>泽山咸，下（内）艮（山、止）上（外）兑（泽、悦），咸，感也。阴阳正应相互感应，交感流通，为夫妇之道。咸卦为《周易》下经首卦。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸，亨，利贞。取女吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：咸，感也。柔上而刚下，二气感应以相与。止而说，男下女。是以亨利贞，取女吉也。天地感而万物化生，圣人感人心而天下和平。观其所感，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰： 山上有泽，咸。君子以虚受人。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸，感也</strong> ： 咸卦由天地否卦上九和六三交换而来，否卦上九和六三阴阳正应，相互交换是柔上而刚下，成为泽山咸。阴阳交感，上下流通，打破否之阻塞，是以亨通。</li>
-<li><strong>止而说，男下女，是以亨利贞，取女吉也</strong> ： 艮为山为止、为少男，兑为泽为悦、为少女。少男位居少女之下，是少男以谦恭卑下的态度和少女相处，是男向女求婚之象，故取女吉也。</li>
-<li><strong>山上有泽，咸。君子以虚受人</strong> ： 山上有泽，象征大山能够包容下大泽，有广阔的胸怀，君子观此卦，应胸怀广阔，虚怀若谷，有容人之度。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其拇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其拇，志在外也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其拇，志在外也</strong> ： 拇，大脚趾。象征感应刚刚发生，尚在最轻微、最表面的阶段，尚未深入，也未行动。初六有九四为正应，故言志在外。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>拇，动之始也。感之微也。志动于外，故曰咸其拇。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>感之始也，意向未定，才动于外耳。</code></p>
-</li>
-<li><p><code>拇为足端，所感最微。夫妇之道，感于微，乃能成天下之大。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其腓，凶，居吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽凶居吉，顺不害也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其腓</strong> ： 腓，小腿、小腿肚。六二居内卦之中，得位得中，本有柔顺之德，宜静不宜动。虽有凶象，但安居可吉，是因为顺从正道，故不受害。六二在互巽中，巽为随顺，随顺不害。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>腓，随动之物也。以柔顺之质，而为感所牵，则凶。能守其中，不随外动，则吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六二顺而中，宜居以守，不宜随感而动。故虽凶，居则吉。</code></p>
-</li>
-<li><p><code>腓不自主，被动而随，若从其感，必有凶害。能居止守中，则感虽动亦不害。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其股，执其随，往吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其股，亦不处也。志在随人，所执下也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其股，执其随</strong> ： 股，大腿，行动的主力部分，象征强烈的行动欲。执，执着、坚持。固执地要跟着别人走。九三以阳居阳，刚而不中，又处内卦之终，上应于上六。刚躁好动，遇外诱即跃跃欲试，故“亦不处也”。失其主，丧其守，志在随人，所以“往吝”。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>股，行动之本也。感而动之，不能处也。执志随人，失其正也，故往必有吝。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>志随于人，以刚动之，必陷于过失。</code></p>
-</li>
-<li><p><code>大腿能行，故曰不处。随人而不由己，执志于下，故往必吝也。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞吉悔亡，憧憧往来，朋从尔思。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：贞吉悔亡，未感害也。憧憧往来，未光大也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>贞吉悔亡，憧憧往来，朋从尔思</strong> ： 憧憧，心神不定、思绪摇摆的样子，反复纠结、进退不定的状态。憧憧往来，心神不定、反复走动之貌，象征内心无主、取舍不定。朋从尔思，志同道合者会理解并顺从你的核心想法，因本质未偏离正道，但未光大，只是部分感通。</li>
-</ul>
-<p>九四居外卦之始，上体为兑，兑为口、为悦，主“外诱”。刚居柔位，不中不正，最易“心随境转”，故先戒以“贞”。四与初六相应，本有相感之势；但四位多惧，若一任情感而动，容易失足。故首提“贞”——以正自持，方可“悔亡”。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>贞则吉，守正则悔亡也。憧憧往来，志未定也。朋从尔思，党类相应，未能光大也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>利在守正，不可妄动。旷荡往来，志不专也。</code></p>
-</li>
-<li><p><code>往来无定，故憧憧。朋从其思，但同类之应，非深感之至。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其脢，无悔。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其脢，志末也</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其脢，无悔</strong> ： 脢，脊背、背脊肉，身之正中。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>脢，近心之处也。感之深也。处得其正，故无悔。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>感之深而不失正，故无悔。志近而未至心，故曰志末。</code></p>
-</li>
-<li><p><code>脢者，心之所附，感之已深也。近心而不入心，志之末也。能感而中正，因此无悔。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其辅、颊、舌</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其辅颊舌，滕口说也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其辅颊舌，滕口说也</strong> ： 辅，两腮旁的骨、牙床。颊，面颊、脸颊。舌，舌头。滕口，张口、喋喋不休、口舌动的样子。说，通悦，取悦</li>
-</ul>
-<p>上六阴居卦极，与九三（盲动）相应，象征虚言。位高而无实，唯剩“口说”之应，故成“滕口”之象（“滕”通“腾”，腾涌、滔滔不绝之意），口惠而实不至。</p>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之山水蒙</title>
-    <url>/20250826163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山水蒙"><a href="#山水蒙" class="headerlink" title="山水蒙"></a>山水蒙</h1><p><img src="https://i.0920811.xyz/img_340.png"></p>
-<p>《序卦》 : <code>物生必蒙，故受之以蒙。蒙者，蒙也，物之稚也。</code></p>
-<p>《杂卦》 : <code>屯而不失其居，蒙杂而著</code></p>
-<p><strong>蒙 是蒙昧、万物得幼稚状态。屯是万物刚刚出现，蒙是杂乱蒙茸的显现出来</strong> 。 “有万物乃立君、师，屯寓君道，蒙寓师道”。 <strong>蒙卦 是蒙昧、幼稚下的启蒙、启发，象征蒙昧初开、启蒙育人，进行启蒙教育，为师之道</strong></p>
-<p><strong>六十四卦，两两相偶，非覆即变</strong> 。六十四卦的排列方式都是两卦组成一对。两卦的关系，要么是互为覆卦，要么是挂图的变象。比如 <strong>屯卦和蒙卦，需卦与讼卦，师卦与比卦，是互为覆卦。变像是覆卦为其本身，正看（从上往下）、倒看（从下往上）卦象相同，比如 乾卦与坤卦、坎卦与离卦、大过卦与颐卦、中孚卦与小过卦</strong></p>
-<p><strong>蒙卦，坎下艮上，坎为水为险（陷）、艮为山为止，象征 险中求止、以静制动</strong> 。</p>
-<p>九二为卦主（主爻）</p>
-<p>蒙昧如同 <code>险陷</code>（人因无知而犯错），需用 <code>止</code> （规则约束）来避险。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙。亨。匪我求童蒙，童蒙求我。初筮告，再三渎，渎则不告。利贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙，山下有险，险而止，蒙。蒙亨，以亨行时中也。匪我求童蒙，童蒙求我，志应也。初筮告，以刚中也。再三渎，渎则不告，渎蒙也。蒙以养正，圣功也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山下出泉，蒙。君子以果行育德。</span><br></pre></td></tr></table></figure>
-
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">发蒙，利用刑人，用说桎梏。以往吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用刑人，以正法也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>发蒙</strong> ，开启蒙昧、启发蒙昧无知的人</li>
-<li><strong>刑人</strong> ，对有过错的人施以刑法，意思是通过惩戒，来教育、警醒蒙昧之人，并使之知晓规范、规矩。</li>
-<li><strong>说</strong> ，通 <code>脱</code>， 解脱、解除</li>
-<li><strong>桎梏</strong> ，脚镣和手铐、喻指约束、拘束。禁锢手部为枷，禁锢足部为校，桎梏为禁锢手（桎）脚（梏）</li>
-</ul>
-<p><strong>利用刑人，以正法也。</strong> 强调刑罚的目的在于 <strong>正法，即纠正过错，引导归正（树立规范、示范惩戒），而非单纯惩治</strong> 。</p>
-<p><strong>正法</strong> 是启蒙的核心前提，蒙卦的 启蒙 不是盲目灌输，而是 <strong>以正导蒙</strong> —— 先明确 何为正（法则），再引导 向于正（行为）。<strong>刑人</strong> 的手段（如校规、家规、法律案例），本质是将 抽象的法则 具象化，让蒙昧者直观理解 <strong>正</strong> 的标准，避免因无知而 <strong>失正</strong> 。</p>
-<p><strong>以说桎梏</strong> ，通过树立规则和示范，避免蒙童因无知导致违规或者犯罪行为</p>
-<p><strong>以往，吝</strong> ： <code>往</code> 为 <code>冒进、急于推进</code>； <code>吝</code> 为 <code>遗憾、困难</code> 。若在启蒙刚起步、规矩未立之时就冒进求成，必遭遗憾或阻碍。</p>
-<p><strong>初六在蒙卦最下位，阴爻居阳位， <code>阴柔之质</code> 却处 <code>阳刚之位</code>，位不当（正），象征 <code>蒙昧者本无自律能力，却易躁动妄为（如孩童无知却爱打闹、新人入职不懂规则却急于表现），此时若无规则约束，易陷入 险（犯错），故需 刑人 立规</code> 。  且处 <em>蒙昧之始</em> ，柔弱无知</strong> 。人的行为易偏离正道（阴爻居阳位，本有 <em>躁动失序</em> 之性），此时 <code>启蒙</code> 的第一步不是灌输知识，而是 <strong>立规矩</strong></p>
-<ul>
-<li><code>刑人</code> 是 <code>立规的手段</code> —— 通过明确的 <em>禁止性规范（如 不可说谎 、不可越界）</em>，让蒙昧者感知 <code>边界</code>，如同用 <code>桎梏</code> 的象征意义警示 <em>违规的代价</em></li>
-<li><code>说桎梏</code> 是 <code>立规的目的</code> —— 不是用规则囚禁人，而是通过规则去除 <em>无知带来的错误行为（如孩童因无知破坏物品，立规矩后可避免）</em> ，让人从 <code>蒙昧的束缚</code> 中解脱，走向有序。</li>
-</ul>
-<p>蒙昧的本质是 <strong>无序（行为无边界、思维无逻辑），启蒙的第一步是 建立秩序</strong> 。</p>
-<p><strong>以往，吝</strong> 强调启蒙的 <em>渐进性</em>。蒙昧的破除是一个过程，需遵循 <code>先立规→再启智→后成德</code> 的顺序：初六是 <strong>立规(知礼)</strong> 的阶段，若跳过此阶段直接 启智（如教孩童复杂知识却不教礼貌），或冒进 求成（如要求新人立刻独立完成复杂任务），只会因基础不牢而失败。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>发蒙之时，必以刑为先，使畏而后可教也</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>刑以发蒙，正法而已，若过责而不解，则为吝矣</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>刑人者，戒惧使知也。脱桎梏者，刑即行而释之也。发蒙之道，当如此。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包蒙，吉。纳妇，吉。子克家。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：子克家，刚柔接也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>包蒙</strong> - 包，包容、接纳，不排斥、不苛责；蒙，蒙昧、无知，需启蒙的蒙昧者</li>
-<li><strong>纳妇</strong> - 娶妻，喻指接受柔顺（阴，妇，象征 阴柔之物）的辅助者，表明刚健者与柔顺者结合，互补而吉。</li>
-<li><strong>子克家</strong> - 子，儿子、继承人，也指 <em>君子、主事者</em> 。 克 为胜任、承担。 <em>克家</em> ，能治理家庭（齐家）。君子若能包容、善教，并能刚柔相济，就能治理家庭 → 吉。</li>
-<li><strong>子克家，刚柔接也</strong> - 因为 <strong>阳刚（九二）与阴柔（六五）相接应，刚柔相合，内外调和</strong> 。</li>
-</ul>
-<p><strong>九二 爻是下卦 坎 卦的核心爻，九二 阳爻居阴位，得中而位不当，但居中承上、下应群阴（乘初六之柔（蒙童），上应六五之柔（君师）），成为蒙卦 以柔济刚、包容启蒙 的关键，其爻辞与象辞通过 包蒙、纳妇、子克家 三个意象，揭示了启蒙教育的核心法则 —— 以包容接纳为基，以刚柔相济为法，最终实现 教而有成</strong></p>
-<ul>
-<li><strong>包蒙</strong> 是启蒙的前提：不筛选、不放弃任何蒙昧者（如老师不歧视基础差的学生，管理者不排斥新人的笨拙），以宽广胸怀接纳差异，为启蒙奠定基础；</li>
-<li><strong>纳妇</strong> 是启蒙的方法：以 柔 待 蒙 —— 不用单一刚硬的方式（如仅靠惩罚、说教），而是接纳蒙昧者的柔顺本性（如孩童需耐心引导，而非强制灌输），用适配的方式启发；</li>
-<li><strong>子克家</strong> 是启蒙的成果：要么主导者圆满完成教化责任（如家长培养出能担当的子女），要么蒙昧者成长为 “能克家” 的可用之才（如新人成长为能独当一面的骨干），实现 “蒙开而有成”。</li>
-</ul>
-<p>九二在蒙卦中的核心地位，源于其 <strong>得中（不偏不倚、态度平和、不极端）、应上（上应六五之柔）、承下（乘初六之柔）</strong> 的三重优势</p>
-<ul>
-<li><strong>得中</strong> ： 九二居下卦坎的中位，<strong>中</strong> 象征 <strong>不偏不倚，不过刚亦不过柔</strong> ，不无原则的溺爱（如放任蒙昧者犯错），又防止无规的（避免初六 <em>刑人</em> 的）刚硬过苛</li>
-<li><strong>应上</strong> ： 九二阳爻与上卦六五阴爻 <strong>阴阳正应（二爻对应五爻）</strong> ，六五为蒙卦 <strong>君位</strong> （象征启蒙的目标与资源），九二的 <strong>包蒙</strong> 行为能获得上位的认可与支持（如老师的教学理念获学校认同，管理者的培育计划获公司支持），为 <strong>子克家</strong> 提供保障。</li>
-<li><strong>承下</strong> ： 九二是下卦唯一阳爻（主爻），初六、六三、六四阴爻均围绕其展开（象征蒙昧者需依赖启蒙者引导），九二以阳刚的智慧主导启蒙，却以阴位的柔顺包容差异（ <strong>纳妇</strong> ），形成 <em>刚为主、柔为用</em> 的格局，让蒙昧者愿被引导，故 吉。</li>
-</ul>
-<p><strong>刚柔接也</strong> 是蒙卦启蒙的核心法则： <strong>阳刚（智慧、原则）是 骨</strong> ，确保启蒙不偏离 <em>启蒙</em> 的目标； <strong>阴柔（包容、适配）是 肉</strong> ，确保启蒙能落地、被接受。二者缺一不可 —— 无刚则无方向，无柔则无温度，唯有刚柔相济，才能实现 <strong>教而有成（子克家）</strong> 。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>包蒙者，以宽容之道养之也。纳妇者，能接柔顺之应也。刚柔接应，则子能克家矣。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九二阳刚中正而应于五，能包容蒙昧，接纳柔顺，故能治家而吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>包蒙，容受而教之也。纳妇，取其柔顺之助也。子克家，谓能和内外而治也。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">勿用娶女，见金夫，不有躬。无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：勿用娶女，行不顺也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>勿用</strong> ： 不宜、不可。</li>
-<li><strong>金夫</strong> ： 手持（金银）钱财得男子。此处指 <strong>九二</strong> ，六三正应上九，理当从上九，但六三近比九二，九二是众望所归，势众富有，为金夫。</li>
-<li><strong>不有躬</strong> ： 躬，自身、立场。 <strong>不有躬</strong> 即 <strong>失去自我立场、无法自主</strong> 。一旦被外在功利诱惑吸引，就会丧失自身的原则与自主性。</li>
-<li><strong>无攸利</strong> ： <strong>攸</strong> 为 <strong>所</strong> ，意为 <strong>没有任何益处</strong> ，强调这种 <strong>失正逐利</strong> 的行为终将导致负面结果（没有好处）。</li>
-<li><strong>勿用娶女，行不顺也</strong> : 六三承刚，柔乘刚，不顺。</li>
-</ul>
-<p><strong>六三爻 阴爻居阳位，位不当，处险终，乘刚，上下犹豫不定，贪慕财势，见利忘义，取悦九二，苟且失身</strong> 。</p>
-<ul>
-<li><strong>位不当</strong> ： <strong>阴爻居阳位，阴柔之质 却处 阳刚之位，不中不正，乘九二之刚（九二为 金夫），阴柔凌驾阳刚，失正不顺</strong> <blockquote>
-<p>六三阴爻居阳位，位不当，意味着其行为易躁动、行事失正。其本与上九有正应，却受邻近的九二吸引。九二是下卦唯一阳爻，为诸多蒙昧者归依之处，势头正盛，六三便将其认作 “金夫”，舍正应关系而攀附九二，进而失去自我原则，出现 “不有躬” 的状况。</p>
-</blockquote>
-</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>女志在金夫，不有躬也。失其正而行不顺，故无攸利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>女见金夫而失贞，不守其身，志在财利，不可与成夫妇，故勿用娶女也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>女子志在金夫，不自有其躬。若娶此女，则必无所利。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">困蒙，吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：困蒙之吝，独远实也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>困蒙</strong> ： 困于蒙昧，不得启发，难以摆脱。</li>
-<li><strong>吝</strong> ： 困难、遗憾、不顺。六四以阴爻处于上下两阴爻之间，远离九二阳爻这个 <strong>蒙师</strong>，无法得到有效的启蒙和引导，就像独自被困在蒙昧的困境中，所以会有遗憾和困难。</li>
-<li><strong>独</strong> ： 独自、孤立</li>
-<li><strong>远实</strong> ： 远离真正的贤师、正道。 <strong>是说六四独自远离了充实的阳爻，在蒙卦中，阳爻代表启蒙者、有真才实学的人，六四远离了九二和上九两个阳爻，处于蒙昧的环境中，没有人能够启发它，所以才会陷入困蒙的境地而有遗憾。</strong></li>
-</ul>
-<p>六四爻阴爻居阴位，虽然得位（位正），但所处的位置并不理想。它上下都是阴爻，周围都是蒙昧之人，缺乏阳刚之气的引领和启发。这就好比一个人处于一个缺乏知识和智慧的环境中，又没有遇到良师益友来指导自己，所以只能被困在蒙昧之中，难以获得进步和发展。这种情况虽然不会带来凶险（位正），但长期下去，会因为得不到及时的启蒙而错过很多机会，给自己带来遗憾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六四以阴柔处险，又远于刚中之应，独处而无所辅，故困蒙而吝。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>困于蒙者，不得师也。六四无应，远于五之刚中，不能得师之益，故吝。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>困蒙者，孤立无援，不得师益之象；然位正，故但为吝耳。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童蒙，吉</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：童蒙之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
-<ul>
-<li><strong>顺</strong> ： 柔顺。 六五在上互卦坤中，坤为顺。</li>
-<li><strong>巽</strong> ： 蒙卦六五是从观卦六二上升而来，在观卦中，上卦为巽，在蒙卦中，上互卦为坤。</li>
-</ul>
-<p><strong>六五以柔德（阴）居尊位（五位为天子位），位不当 却 得中，与下卦 <em>九二之师（求九二之刚明）</em> 相正应，形成 柔得中而应刚，既有君位之尊，又怀童子之虚心，象征君主尊师重道、礼贤下士，故能化民成俗，蒙以养正。故吉。</strong></p>
-<p><strong>六五与下卦九二阳爻为 正应，九二是蒙卦唯一的 <em>启蒙核心</em> （阳刚智慧、包容引导），如同 良师、贤臣。六五以 童蒙 之态接纳九二的引导，相当于 君得贤臣辅、上得良师启，启蒙有明确的 正源，不会被错误信息误导，故 吉。</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>童蒙者，质朴而未开，虚心受教，顺以从正，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六五居尊位，以阴柔为主，而能下应九二之刚中，是以顺从谦巽，得童蒙之吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>以柔居尊位，不自是，而能下应于二，谦虚顺巽，乃所以为吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">击蒙。不利为寇，利御寇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用御寇，上下顺也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>击蒙</strong> ： 击，攻击、惩治。击蒙，以刚硬手段纠正偏差（非暴力摧残）。<strong>蒙</strong> 此处特指 <em>顽固不化、向恶发展的蒙昧</em>（区别于初六 <em>待启之蒙</em> 、六五 <em>谦逊之蒙</em> ），如孩童屡教不改的恶习、成人因无知陷入的错误执念。合意为：对向恶的蒙昧采取强硬惩戒，以遏制其偏离正道。</li>
-<li><strong>寇</strong> ： 敌寇、盗贼，指作乱之人。</li>
-<li><strong>御寇</strong> ： 防御、抵御寇乱。</li>
-</ul>
-<p>上九是蒙卦的最末一爻（终爻），阳爻居阴位，位不当，亢极，却处 <strong>蒙卦终极</strong> ，承担着 <strong>以刚正纠偏、防范蒙昧恶变</strong> 的关键角色。</p>
-<p><strong>不利为寇</strong> ，上九正应六三，六三 <strong>见金夫，不有躬</strong> 不应上九。 <strong>六三在坎中，坎为盗寇，故不利为寇</strong> </p>
-<p><strong>利御寇，上下顺也</strong> ，御 为 “防御、守护”， <strong>上九下有互坤，坤为众，为顺，有众顺从，故利御寇</strong> </p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上九以刚居上，非所以为教也。然蒙不可不击，故曰击蒙。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>击蒙者，谓冥顽不化，不可教以义理者，当用刑罚以击之。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>不利为寇，言不可恃强而横行；利御寇，言可以御恶以为正也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>八卦之阴阳属性</title>
     <url>/20250807163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于八卦（单卦）得阴阳属性，目前有很多种说法，本篇为常见得说法总结。</p>
@@ -39428,154 +39470,186 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>六十四卦之雷地豫</title>
-    <url>/20250926132040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="雷地豫"><a href="#雷地豫" class="headerlink" title="雷地豫"></a>雷地豫</h1><p><img src="https://i.0920811.xyz/img_356.png"></p>
-<p>豫，上（外）震（雷、动）下（内）坤（地，顺），顺以动，顺为基，动为用，遵循规律、顺应时势而行动，代表安乐、喜悦、愉悦、和顺。天地和顺万物生长，人心和顺上下同心。豫卦和谦卦为正覆卦。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">豫，利建侯行师。</span><br></pre></td></tr></table></figure>
+    <title>六十四卦之山水蒙</title>
+    <url>/20250826163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山水蒙"><a href="#山水蒙" class="headerlink" title="山水蒙"></a>山水蒙</h1><p><img src="https://i.0920811.xyz/img_340.png"></p>
+<p>《序卦》 : <code>物生必蒙，故受之以蒙。蒙者，蒙也，物之稚也。</code></p>
+<p>《杂卦》 : <code>屯而不失其居，蒙杂而著</code></p>
+<p><strong>蒙 是蒙昧、万物得幼稚状态。屯是万物刚刚出现，蒙是杂乱蒙茸的显现出来</strong> 。 “有万物乃立君、师，屯寓君道，蒙寓师道”。 <strong>蒙卦 是蒙昧、幼稚下的启蒙、启发，象征蒙昧初开、启蒙育人，进行启蒙教育，为师之道</strong></p>
+<p><strong>六十四卦，两两相偶，非覆即变</strong> 。六十四卦的排列方式都是两卦组成一对。两卦的关系，要么是互为覆卦，要么是挂图的变象。比如 <strong>屯卦和蒙卦，需卦与讼卦，师卦与比卦，是互为覆卦。变像是覆卦为其本身，正看（从上往下）、倒看（从下往上）卦象相同，比如 乾卦与坤卦、坎卦与离卦、大过卦与颐卦、中孚卦与小过卦</strong></p>
+<p><strong>蒙卦，坎下艮上，坎为水为险（陷）、艮为山为止，象征 险中求止、以静制动</strong> 。</p>
+<p>九二为卦主（主爻）</p>
+<p>蒙昧如同 <code>险陷</code>（人因无知而犯错），需用 <code>止</code> （规则约束）来避险。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙。亨。匪我求童蒙，童蒙求我。初筮告，再三渎，渎则不告。利贞。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：豫，刚应而志行，顺以动，豫。豫，顺以动，故天地如之，而况建侯行师乎?天地以顺动，故日月不过，而四时不忒;圣人以顺动，则刑罚清而民服。豫之时义大矣哉!</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙，山下有险，险而止，蒙。蒙亨，以亨行时中也。匪我求童蒙，童蒙求我，志应也。初筮告，以刚中也。再三渎，渎则不告，渎蒙也。蒙以养正，圣功也。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：雷出地奋，豫。先王以作乐崇德，殷荐之上帝，以配祖考。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山下出泉，蒙。君子以果行育德。</span><br></pre></td></tr></table></figure>
+
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">发蒙，利用刑人，用说桎梏。以往吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用刑人，以正法也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>豫，利建侯行师</strong> ： 在安定和顺的环境中，可以积极地开展政治和军事行动。</li>
-<li><strong>刚应而志行</strong> ： 豫卦从复卦变来，复卦初九和六四交换，豫卦九四为全卦唯一刚爻，其余阴爻上下应合。</li>
-<li><strong>天地以顺动，故日月不过，而四时不忒</strong> ： 不忒，无差错。天地遵循 “顺以动” 的规律，日月有序运行无差，四时有序更替。</li>
-<li><strong>雷出地奋，豫</strong> ： 春雷声响起，万物苏醒生长（奋），呈现出一派生机勃勃、和乐兴盛的景象</li>
-<li><strong>先王以作乐崇德，殷荐之上帝，以配祖考</strong> ： 殷，大、盛、盛大。荐，祭祀、祭礼、礼祭。配，配享、陪祭。祖考，祖先、先祖。先王以盛大的礼仪，将音乐（乐）与美德（礼）呈献给天帝，并陪同祭祀先祖（祖考）</li>
+<li><strong>发蒙</strong> ，开启蒙昧、启发蒙昧无知的人</li>
+<li><strong>刑人</strong> ，对有过错的人施以刑法，意思是通过惩戒，来教育、警醒蒙昧之人，并使之知晓规范、规矩。</li>
+<li><strong>说</strong> ，通 <code>脱</code>， 解脱、解除</li>
+<li><strong>桎梏</strong> ，脚镣和手铐、喻指约束、拘束。禁锢手部为枷，禁锢足部为校，桎梏为禁锢手（桎）脚（梏）</li>
 </ul>
+<p><strong>利用刑人，以正法也。</strong> 强调刑罚的目的在于 <strong>正法，即纠正过错，引导归正（树立规范、示范惩戒），而非单纯惩治</strong> 。</p>
+<p><strong>正法</strong> 是启蒙的核心前提，蒙卦的 启蒙 不是盲目灌输，而是 <strong>以正导蒙</strong> —— 先明确 何为正（法则），再引导 向于正（行为）。<strong>刑人</strong> 的手段（如校规、家规、法律案例），本质是将 抽象的法则 具象化，让蒙昧者直观理解 <strong>正</strong> 的标准，避免因无知而 <strong>失正</strong> 。</p>
+<p><strong>以说桎梏</strong> ，通过树立规则和示范，避免蒙童因无知导致违规或者犯罪行为</p>
+<p><strong>以往，吝</strong> ： <code>往</code> 为 <code>冒进、急于推进</code>； <code>吝</code> 为 <code>遗憾、困难</code> 。若在启蒙刚起步、规矩未立之时就冒进求成，必遭遗憾或阻碍。</p>
+<p><strong>初六在蒙卦最下位，阴爻居阳位， <code>阴柔之质</code> 却处 <code>阳刚之位</code>，位不当（正），象征 <code>蒙昧者本无自律能力，却易躁动妄为（如孩童无知却爱打闹、新人入职不懂规则却急于表现），此时若无规则约束，易陷入 险（犯错），故需 刑人 立规</code> 。  且处 <em>蒙昧之始</em> ，柔弱无知</strong> 。人的行为易偏离正道（阴爻居阳位，本有 <em>躁动失序</em> 之性），此时 <code>启蒙</code> 的第一步不是灌输知识，而是 <strong>立规矩</strong></p>
+<ul>
+<li><code>刑人</code> 是 <code>立规的手段</code> —— 通过明确的 <em>禁止性规范（如 不可说谎 、不可越界）</em>，让蒙昧者感知 <code>边界</code>，如同用 <code>桎梏</code> 的象征意义警示 <em>违规的代价</em></li>
+<li><code>说桎梏</code> 是 <code>立规的目的</code> —— 不是用规则囚禁人，而是通过规则去除 <em>无知带来的错误行为（如孩童因无知破坏物品，立规矩后可避免）</em> ，让人从 <code>蒙昧的束缚</code> 中解脱，走向有序。</li>
+</ul>
+<p>蒙昧的本质是 <strong>无序（行为无边界、思维无逻辑），启蒙的第一步是 建立秩序</strong> 。</p>
+<p><strong>以往，吝</strong> 强调启蒙的 <em>渐进性</em>。蒙昧的破除是一个过程，需遵循 <code>先立规→再启智→后成德</code> 的顺序：初六是 <strong>立规(知礼)</strong> 的阶段，若跳过此阶段直接 启智（如教孩童复杂知识却不教礼貌），或冒进 求成（如要求新人立刻独立完成复杂任务），只会因基础不牢而失败。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>豫者，顺以动也。动而有顺，则无不通，故利建侯行师</code></p>
+<p><code>发蒙之时，必以刑为先，使畏而后可教也</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>豫者，安乐之义。然非逸豫之豫，乃顺时而动，乐以成治。</code></p>
+<p>  <code>刑以发蒙，正法而已，若过责而不解，则为吝矣</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>豫，喜乐也。下动而上顺，顺以动也。故天地圣人皆法之，以成大治。</code></p>
-<blockquote>
-<p>豫卦，上震（动）下坤（顺），此处下动而上顺，非指卦体，指圣人顺应（上顺）民心而动（下动）</p>
+<p>  <code>刑人者，戒惧使知也。脱桎梏者，刑即行而释之也。发蒙之道，当如此。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包蒙，吉。纳妇，吉。子克家。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：子克家，刚柔接也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>包蒙</strong> - 包，包容、接纳，不排斥、不苛责；蒙，蒙昧、无知，需启蒙的蒙昧者</li>
+<li><strong>纳妇</strong> - 娶妻，喻指接受柔顺（阴，妇，象征 阴柔之物）的辅助者，表明刚健者与柔顺者结合，互补而吉。</li>
+<li><strong>子克家</strong> - 子，儿子、继承人，也指 <em>君子、主事者</em> 。 克 为胜任、承担。 <em>克家</em> ，能治理家庭（齐家）。君子若能包容、善教，并能刚柔相济，就能治理家庭 → 吉。</li>
+<li><strong>子克家，刚柔接也</strong> - 因为 <strong>阳刚（九二）与阴柔（六五）相接应，刚柔相合，内外调和</strong> 。</li>
+</ul>
+<p><strong>九二 爻是下卦 坎 卦的核心爻，九二 阳爻居阴位，得中而位不当，但居中承上、下应群阴（乘初六之柔（蒙童），上应六五之柔（君师）），成为蒙卦 以柔济刚、包容启蒙 的关键，其爻辞与象辞通过 包蒙、纳妇、子克家 三个意象，揭示了启蒙教育的核心法则 —— 以包容接纳为基，以刚柔相济为法，最终实现 教而有成</strong></p>
+<ul>
+<li><strong>包蒙</strong> 是启蒙的前提：不筛选、不放弃任何蒙昧者（如老师不歧视基础差的学生，管理者不排斥新人的笨拙），以宽广胸怀接纳差异，为启蒙奠定基础；</li>
+<li><strong>纳妇</strong> 是启蒙的方法：以 柔 待 蒙 —— 不用单一刚硬的方式（如仅靠惩罚、说教），而是接纳蒙昧者的柔顺本性（如孩童需耐心引导，而非强制灌输），用适配的方式启发；</li>
+<li><strong>子克家</strong> 是启蒙的成果：要么主导者圆满完成教化责任（如家长培养出能担当的子女），要么蒙昧者成长为 “能克家” 的可用之才（如新人成长为能独当一面的骨干），实现 “蒙开而有成”。</li>
+</ul>
+<p>九二在蒙卦中的核心地位，源于其 <strong>得中（不偏不倚、态度平和、不极端）、应上（上应六五之柔）、承下（乘初六之柔）</strong> 的三重优势</p>
+<ul>
+<li><strong>得中</strong> ： 九二居下卦坎的中位，<strong>中</strong> 象征 <strong>不偏不倚，不过刚亦不过柔</strong> ，不无原则的溺爱（如放任蒙昧者犯错），又防止无规的（避免初六 <em>刑人</em> 的）刚硬过苛</li>
+<li><strong>应上</strong> ： 九二阳爻与上卦六五阴爻 <strong>阴阳正应（二爻对应五爻）</strong> ，六五为蒙卦 <strong>君位</strong> （象征启蒙的目标与资源），九二的 <strong>包蒙</strong> 行为能获得上位的认可与支持（如老师的教学理念获学校认同，管理者的培育计划获公司支持），为 <strong>子克家</strong> 提供保障。</li>
+<li><strong>承下</strong> ： 九二是下卦唯一阳爻（主爻），初六、六三、六四阴爻均围绕其展开（象征蒙昧者需依赖启蒙者引导），九二以阳刚的智慧主导启蒙，却以阴位的柔顺包容差异（ <strong>纳妇</strong> ），形成 <em>刚为主、柔为用</em> 的格局，让蒙昧者愿被引导，故 吉。</li>
+</ul>
+<p><strong>刚柔接也</strong> 是蒙卦启蒙的核心法则： <strong>阳刚（智慧、原则）是 骨</strong> ，确保启蒙不偏离 <em>启蒙</em> 的目标； <strong>阴柔（包容、适配）是 肉</strong> ，确保启蒙能落地、被接受。二者缺一不可 —— 无刚则无方向，无柔则无温度，唯有刚柔相济，才能实现 <strong>教而有成（子克家）</strong> 。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>包蒙者，以宽容之道养之也。纳妇者，能接柔顺之应也。刚柔接应，则子能克家矣。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九二阳刚中正而应于五，能包容蒙昧，接纳柔顺，故能治家而吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>包蒙，容受而教之也。纳妇，取其柔顺之助也。子克家，谓能和内外而治也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">勿用娶女，见金夫，不有躬。无攸利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：勿用娶女，行不顺也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>勿用</strong> ： 不宜、不可。</li>
+<li><strong>金夫</strong> ： 手持（金银）钱财得男子。此处指 <strong>九二</strong> ，六三正应上九，理当从上九，但六三近比九二，九二是众望所归，势众富有，为金夫。</li>
+<li><strong>不有躬</strong> ： 躬，自身、立场。 <strong>不有躬</strong> 即 <strong>失去自我立场、无法自主</strong> 。一旦被外在功利诱惑吸引，就会丧失自身的原则与自主性。</li>
+<li><strong>无攸利</strong> ： <strong>攸</strong> 为 <strong>所</strong> ，意为 <strong>没有任何益处</strong> ，强调这种 <strong>失正逐利</strong> 的行为终将导致负面结果（没有好处）。</li>
+<li><strong>勿用娶女，行不顺也</strong> : 六三承刚，柔乘刚，不顺。</li>
+</ul>
+<p><strong>六三爻 阴爻居阳位，位不当，处险终，乘刚，上下犹豫不定，贪慕财势，见利忘义，取悦九二，苟且失身</strong> 。</p>
+<ul>
+<li><strong>位不当</strong> ： <strong>阴爻居阳位，阴柔之质 却处 阳刚之位，不中不正，乘九二之刚（九二为 金夫），阴柔凌驾阳刚，失正不顺</strong> <blockquote>
+<p>六三阴爻居阳位，位不当，意味着其行为易躁动、行事失正。其本与上九有正应，却受邻近的九二吸引。九二是下卦唯一阳爻，为诸多蒙昧者归依之处，势头正盛，六三便将其认作 “金夫”，舍正应关系而攀附九二，进而失去自我原则，出现 “不有躬” 的状况。</p>
 </blockquote>
 </li>
 </ul>
-<h2 id="处六"><a href="#处六" class="headerlink" title="处六"></a>处六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">鸣豫，凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：初六鸣豫，志穷凶也。</span><br></pre></td></tr></table></figure>
-<p>鸣豫者，志在声乐而无远志，必至于凶。</p>
-<p>初六是豫卦的 “起始爻”，事情刚刚开始（萌芽）就因安乐和顺而炫耀自得，乐而无根基，显而无分寸，易乐极生忧，志向浅薄，志短而失序。缺乏远志，只知沉溺当下之乐，必有凶险。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>豫之为道，当顺以动。今处卑弱，而鸣以自豫，是穷志也，故凶。</code></p>
+<p><code>女志在金夫，不有躬也。失其正而行不顺，故无攸利。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>豫贵以顺动，初六乃浅志张扬，流于逸乐，必致凶也。</code></p>
+<p>  <code>女见金夫而失贞，不守其身，志在财利，不可与成夫妇，故勿用娶女也。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>鸣豫，志浅而自鸣，必凶。</code></p>
+<p>  <code>女子志在金夫，不自有其躬。若娶此女，则必无所利。</code></p>
 </li>
 </ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">介于石，不终日，贞吉。</span><br></pre></td></tr></table></figure>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">困蒙，吝。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不终日，贞吉;以中正也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：困蒙之吝，独远实也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>介于石</strong> ： 介，耿介、坚定、坚固不移。六二的品德如磐石般坚硬稳固，在豫卦的 “和乐氛围” 中，不被浮躁的愉悦裹挟，始终坚守正道原则。</li>
-<li><strong>不终日，贞吉</strong> ： 形容行动果断、及时。当和乐局面中出现 “偏离正道” 的迹象（如他人沉迷享乐、事务即将失序），六二能凭借 “中正” 的洞察力，迅速察觉隐患，不拖延、不犹豫，及时采取行动（或纠正偏差，或坚守原则以避风险），因行动符合 “贞”（正道），故 “吉”；</li>
+<li><strong>困蒙</strong> ： 困于蒙昧，不得启发，难以摆脱。</li>
+<li><strong>吝</strong> ： 困难、遗憾、不顺。六四以阴爻处于上下两阴爻之间，远离九二阳爻这个 <strong>蒙师</strong>，无法得到有效的启蒙和引导，就像独自被困在蒙昧的困境中，所以会有遗憾和困难。</li>
+<li><strong>独</strong> ： 独自、孤立</li>
+<li><strong>远实</strong> ： 远离真正的贤师、正道。 <strong>是说六四独自远离了充实的阳爻，在蒙卦中，阳爻代表启蒙者、有真才实学的人，六四远离了九二和上九两个阳爻，处于蒙昧的环境中，没有人能够启发它，所以才会陷入困蒙的境地而有遗憾。</strong></li>
 </ul>
+<p>六四爻阴爻居阴位，虽然得位（位正），但所处的位置并不理想。它上下都是阴爻，周围都是蒙昧之人，缺乏阳刚之气的引领和启发。这就好比一个人处于一个缺乏知识和智慧的环境中，又没有遇到良师益友来指导自己，所以只能被困在蒙昧之中，难以获得进步和发展。这种情况虽然不会带来凶险（位正），但长期下去，会因为得不到及时的启蒙而错过很多机会，给自己带来遗憾。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>六二以柔中处正，能守贞不失，故介如石，不随豫而动。</code></p>
+<p><code>六四以阴柔处险，又远于刚中之应，独处而无所辅，故困蒙而吝。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>二以中正，处豫之时，不为逸乐所动，心如石然。能即止，不延误，故吉。</code></p>
+<p>  <code>困于蒙者，不得师也。六四无应，远于五之刚中，不能得师之益，故吝。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>介于石，言守正如石之坚；不终日，言不待久也。以中正故吉。</code></p>
+<p>  <code>困蒙者，孤立无援，不得师益之象；然位正，故但为吝耳。</code></p>
 </li>
 </ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">盱豫，悔。迟有悔。</span><br></pre></td></tr></table></figure>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童蒙，吉</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：盱豫有悔，位不当也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：童蒙之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
 <ul>
-<li><strong>盱（xū）豫</strong> ： 盱，张目仰望、仰视、张望。形容目光浮动，摇摆不定，不安于位。</li>
+<li><strong>顺</strong> ： 柔顺。 六五在上互卦坤中，坤为顺。</li>
+<li><strong>巽</strong> ： 蒙卦六五是从观卦六二上升而来，在观卦中，上卦为巽，在蒙卦中，上互卦为坤。</li>
 </ul>
-<p>六三爻是一个阴爻居阳位，位置不当，象征着行为不恰当、不适宜。</p>
+<p><strong>六五以柔德（阴）居尊位（五位为天子位），位不当 却 得中，与下卦 <em>九二之师（求九二之刚明）</em> 相正应，形成 柔得中而应刚，既有君位之尊，又怀童子之虚心，象征君主尊师重道、礼贤下士，故能化民成俗，蒙以养正。故吉。</strong></p>
+<p><strong>六五与下卦九二阳爻为 正应，九二是蒙卦唯一的 <em>启蒙核心</em> （阳刚智慧、包容引导），如同 良师、贤臣。六五以 童蒙 之态接纳九二的引导，相当于 君得贤臣辅、上得良师启，启蒙有明确的 正源，不会被错误信息误导，故 吉。</strong></p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>三以阴居阳，失位不中，志不安正，故盱望于外以求豫，必悔。</code></p>
+<p><code>童蒙者，质朴而未开，虚心受教，顺以从正，故吉。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>处豫之时，而位不当，志欲豫而不能安，必悔。</code></p>
+<p>  <code>六五居尊位，以阴柔为主，而能下应九二之刚中，是以顺从谦巽，得童蒙之吉。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>盱豫者，志不安也。迟有悔，不即改正，则悔深。</code></p>
+<p>  <code>以柔居尊位，不自是，而能下应于二，谦虚顺巽，乃所以为吉。</code></p>
 </li>
 </ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">由豫，大有得。勿疑。朋盍簪。</span><br></pre></td></tr></table></figure>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">击蒙。不利为寇，利御寇。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：由豫，大有得;志大行也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用御寇，上下顺也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>由豫</strong> ： 由，遵循、顺从、随着。循豫而行，因时顺动。</li>
-<li><strong>朋盍簪</strong> ： 盍，合、聚、聚集、聚合。簪，簪子、簪饰、头饰，引申为聚集、会合。 同道都会聚拢而来</li>
+<li><strong>击蒙</strong> ： 击，攻击、惩治。击蒙，以刚硬手段纠正偏差（非暴力摧残）。<strong>蒙</strong> 此处特指 <em>顽固不化、向恶发展的蒙昧</em>（区别于初六 <em>待启之蒙</em> 、六五 <em>谦逊之蒙</em> ），如孩童屡教不改的恶习、成人因无知陷入的错误执念。合意为：对向恶的蒙昧采取强硬惩戒，以遏制其偏离正道。</li>
+<li><strong>寇</strong> ： 敌寇、盗贼，指作乱之人。</li>
+<li><strong>御寇</strong> ： 防御、抵御寇乱。</li>
 </ul>
-<p>豫卦的核心是 <strong>顺以动</strong> ，九四作为唯一阳爻（核心爻），承上启下（连接下卦震的动 与上卦坤的 顺），通过自身刚健行动，带动上位者顺承、下位者追随，最终实现 <strong>上下同豫（志大行也）</strong> ；</p>
+<p>上九是蒙卦的最末一爻（终爻），阳爻居阴位，位不当，亢极，却处 <strong>蒙卦终极</strong> ，承担着 <strong>以刚正纠偏、防范蒙昧恶变</strong> 的关键角色。</p>
+<p><strong>不利为寇</strong> ，上九正应六三，六三 <strong>见金夫，不有躬</strong> 不应上九。 <strong>六三在坎中，坎为盗寇，故不利为寇</strong> </p>
+<p><strong>利御寇，上下顺也</strong> ，御 为 “防御、守护”， <strong>上九下有互坤，坤为众，为顺，有众顺从，故利御寇</strong> </p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>九四刚而得位，应乎初六，顺豫而行，志得大施。</code></p>
+<p><code>上九以刚居上，非所以为教也。然蒙不可不击，故曰击蒙。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>由豫，循理顺时而动也。九四能如此，故大有得，朋党皆来。</code></p>
+<p>  <code>击蒙者，谓冥顽不化，不可教以义理者，当用刑罚以击之。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>由豫，得于顺时而动；大有得，言志行也；朋盍簪，言群贤附之也。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞疾，恒不死。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六五贞疾，乘刚也。恒不死，中未亡也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>贞疾，恒不死</strong> ： 疾，疾病、困难、困境。坚守正道但遭遇疾病或困难</li>
-</ul>
-<p>六五居上卦坤（顺）的中位，其下紧邻九四（阳爻，刚健之爻），形成 <strong>阴爻乘阳爻（六五乘九四）的格局，乘刚在《周易》中常喻 柔者凌驾于刚者之上</strong></p>
-<p><strong>恒不死</strong> 喻指 局面不崩坏、自身不覆灭，这是对 <strong>贞疾</strong> 补充，六五虽有隐疾，却能长久维持和乐格局与自身地位，核心原因在于 得中。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六五以阴柔居尊，不任其位，故曰贞疾；然得中守正，虽疾而不死。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>豫之时，居尊位者，最当忧惧。六五柔弱而居尊，故有贞疾之象。然能守中正，虽病犹存。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>贞疾，位尊而才弱，如病；恒不死，以其中正故也。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">冥豫，成有渝，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：冥豫在上，何可长也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>冥豫，成有渝</strong> ： 冥，昏昧、昏暗、不明。渝，改变、变化、转变、变易。冥豫 者，昏迷于豫也。过度沉迷和乐而失却清醒，在豫乐已成之时，若能转变（渝&#x3D;改变），悔悟及时，就能无咎 。</li>
-</ul>
-<p>上六阴爻居于全卦之极，处在豫乐的顶点。因阴柔无正，容易沉湎于逸乐，迷昏其中，是 <strong>冥豫</strong> ，但因为居于终位，若能知变、转身，仍可免咎。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上六处豫之极，昏冥而不知止，若能渝变，犹可无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处豫之极，若不知变，则祸至矣。若能自渝，则无咎。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>冥豫’，昏迷而不知止也。然成有渝，改而从正，则无咎。</code></p>
+<p>  <code>不利为寇，言不可恃强而横行；利御寇，言可以御恶以为正也。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -39584,344 +39658,270 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之坤为地</title>
-    <url>/20250829163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="坤为地"><a href="#坤为地" class="headerlink" title="坤为地"></a>坤为地</h1><p><img src="https://i.0920811.xyz/img_342.png"></p>
-<p><strong>坤</strong> 是《周易》第二卦，纯阴之卦，是与 <strong>乾（刚健主动）</strong> 纯阳相对的 <strong>柔顺承正</strong> 之卦，象征 <strong>地的包容承载、阴的柔顺和辅助</strong></p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">坤。元，亨，利牝马之贞。君子有攸往，先迷后得主。利西南得朋，东北丧朋。安贞，吉。</span><br></pre></td></tr></table></figure>
+    <title>六十四卦之泽山咸</title>
+    <url>/20251119103840/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽山咸"><a href="#泽山咸" class="headerlink" title="泽山咸"></a>泽山咸</h1><p><img src="https://i.0920811.xyz/img_376.png"></p>
+<p>泽山咸，下（内）艮（山、止）上（外）兑（泽、悦），咸，感也。阴阳正应相互感应，交感流通，为夫妇之道。咸卦为《周易》下经首卦。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸，亨，利贞。取女吉。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰： 至哉坤元，万物资生，乃顺承天。坤厚载物，德合无疆。含弘光大，品物咸亨。牝马地类，行地无疆，柔顺利贞。君子攸行，先迷失道，后顺得常。西南得朋，乃于类行；东北丧朋，乃终有庆。安贞之吉，应地无疆。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：咸，感也。柔上而刚下，二气感应以相与。止而说，男下女。是以亨利贞，取女吉也。天地感而万物化生，圣人感人心而天下和平。观其所感，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地势坤，君子以厚德载物。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰： 山上有泽，咸。君子以虚受人。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>元，亨</strong> ： 和 <strong><a href="https://0920811.xyz/20250828163229/#乾为天">乾卦的 <code>元，亨</code> 相同</a>，坤 也具备 元亨 之德，但 乾 是主动（刚健）开创，坤 是主动承载顺从（承正）乾道</strong> 。</li>
-<li><strong>牝马之贞</strong> ： 母马。牝马性柔而健，行地无疆，又能顺随牡马（指公马，象征 乾道）而不自为主；用此象来指示 <strong>阴之正</strong> ，即 <strong>柔顺利贞</strong> 之德。 <strong>阴爻宜固守柔顺，则吉（贞、正）。</strong></li>
-<li><strong>攸往</strong> ： 攸，虚词，本义是 所、之所，表示 地方、处所、行为的对象。往，去、行动。攸往，通常表示 <strong>有所行（动）、有所作为、追求目标</strong></li>
-<li><strong>先迷后得主</strong> ： 主动为先则迷，顺道为后则得主（乾为主，坤为从）。言 <strong>阴之道 宜后不宜先</strong> 。 <strong>坤的 行动价值，在于 让正道的力量通过自身的承顺得以落地，而非主导先行</strong></li>
-<li><strong>利西南得朋，东北丧朋</strong> ： 朋，朋友、同伴、同类、志同道合者。 <strong>后天八卦中，坤主西南，为阴，象征和自己同属性（类）得朋；艮主东北，为阳，象征和自己不同属性（类）得朋</strong> 。往西南，会和志同道合者（朋，顺同类）共同协作，有利；往东北，不会有同伴（丧朋），但是会得主（得君者，臣之庆；得亲者，子之庆；得夫者，妇之庆。庆者，未有不离其朋而得者也），也是非常吉利。</li>
-<li><strong>安贞</strong> ： 安于正道（柔顺承载、辅助）、守正（柔顺之正）</li>
-<li><strong>地势坤</strong> ： 象征 地 之厚重、无边无际、高下相承、承载包容万物</li>
+<li><strong>咸，感也</strong> ： 咸卦由天地否卦上九和六三交换而来，否卦上九和六三阴阳正应，相互交换是柔上而刚下，成为泽山咸。阴阳交感，上下流通，打破否之阻塞，是以亨通。</li>
+<li><strong>止而说，男下女，是以亨利贞，取女吉也</strong> ： 艮为山为止、为少男，兑为泽为悦、为少女。少男位居少女之下，是少男以谦恭卑下的态度和少女相处，是男向女求婚之象，故取女吉也。</li>
+<li><strong>山上有泽，咸。君子以虚受人</strong> ： 山上有泽，象征大山能够包容下大泽，有广阔的胸怀，君子观此卦，应胸怀广阔，虚怀若谷，有容人之度。</li>
 </ul>
-<p><strong>乾坤如车之两轮、鸟之双翼，缺一则无法成事</strong> ：</p>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其拇。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其拇，志在外也。</span><br></pre></td></tr></table></figure>
+
 <ul>
-<li><strong>乾为创始，坤为成终</strong> ，没有坤的 承载，乾的 开创 将毫无意义；没有乾的 引领，坤的 承载 将毫无方向，二者 相生相济，共同构成 生生不息的宇宙与人事规律</li>
-<li><strong>乾主知，坤主行</strong></li>
-<li><strong>乾为天，坤为地。乾坤并建，宇宙始备</strong></li>
-<li><strong>有乾无坤，则躁进而难久；有坤无乾，则寡断而失机。</strong></li>
+<li><strong>咸其拇，志在外也</strong> ： 拇，大脚趾。象征感应刚刚发生，尚在最轻微、最表面的阶段，尚未深入，也未行动。初六有九四为正应，故言志在外。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>坤之德，顺以承乾，故利牝马之贞。</code></p>
+<p><code>拇，动之始也。感之微也。志动于外，故曰咸其拇。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>坤之道，唯在承乾而已。坤若自为主，则迷而无所适。</code></p>
+<p>  <code>感之始也，意向未定，才动于外耳。</code></p>
 </li>
-<li><p>朱熹</p>
-<p>  <code>坤以顺承为体，故利牝马之贞。安于顺从，厚德以载物，则吉。</code></p>
+<li><p><code>拇为足端，所感最微。夫妇之道，感于微，乃能成天下之大。</code></p>
 </li>
 </ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">履霜，坚冰至。</span><br></pre></td></tr></table></figure>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其腓，凶，居吉。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：履霜坚冰，阴始凝也。驯致其道，至坚冰也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽凶居吉，顺不害也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>履霜</strong> ： 履，踩、踏、接触。霜，薄寒之征，象征 <strong>阴柔力量的初始形态</strong> ，可指代 <strong>不利因素、负面趋势、潜在风险</strong></li>
-<li><strong>坚冰至</strong> ： 君子见微知著，履霜而知坚冰将至，象征 <strong>对初始微小的不利趋势（征兆）要 主动关注，警觉、不轻视，如此才能防微杜渐；初始微小的不利征兆，若不阻断，必然发展为重大危机</strong></li>
-<li><strong>阴始凝也</strong> ： 不利因素、消极趋势刚开始聚集。 <strong>阴始凝，是履霜、将至坚冰的因</strong> 。象征 <strong>负面力量从无到有，且开始主动聚集</strong></li>
-<li><strong>驯致其道，至坚冰也</strong> ： 驯，顺从、遵循、顺而渐（循序渐进）。 <strong>坚冰至</strong> 不是 突然发生的意外，而是负面因素遵循 <strong>渐进积累的发展</strong> 规律，逐步发展的必然结果。揭示了 <strong>微小隐患→渐进积累→重大危机</strong> 的规律，如 <strong>千丈之堤，以蝼蚁之穴溃</strong></li>
+<li><strong>咸其腓</strong> ： 腓，小腿、小腿肚。六二居内卦之中，得位得中，本有柔顺之德，宜静不宜动。虽有凶象，但安居可吉，是因为顺从正道，故不受害。六二在互巽中，巽为随顺，随顺不害。</li>
 </ul>
-<p><strong>初六为坤卦最下（初爻、下位），阴爻居阳位（不得位），一阴始生，位（下位）卑且弱，却正是阴气发动之端（初爻为 起点，对应事物发展的初始阶段，微小却关键），阴爻位不当，暗示 微而不正（阴的特质 柔缓、隐蔽、不张扬，易被忽视） 的萌芽最易被忽视</strong> 。需要警觉</p>
-<p><strong>初爻的 始，决定了此时 问题干预成本最低（阴始凝），若任由不利因素继续发展（驯致其道），必将造成重大危机（至坚冰），再去解决就需要付出更大代价</strong> ，初六的预警，本质是 <strong>在成本最低的阶段，解决最根本的问题</strong></p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>阴始凝也。履霜则知坚冰之将至，以微知著也。</code></p>
+<p><code>腓，随动之物也。以柔顺之质，而为感所牵，则凶。能守其中，不随外动，则吉。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>初六为阴之始，阴虽微，然不可忽；观其始，则可以知其终。</code></p>
+<p>  <code>六二顺而中，宜居以守，不宜随感而动。故虽凶，居则吉。</code></p>
 </li>
-<li><p>朱熹</p>
-<p>  <code>阴之始凝，履霜则知坚冰之将至。君子见微而知著，防患于未然。</code></p>
+<li><p><code>腓不自主，被动而随，若从其感，必有凶害。能居止守中，则感虽动亦不害。</code></p>
 </li>
 </ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">直，方，大，不习无不利。</span><br></pre></td></tr></table></figure>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其股，执其随，往吝。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之动，直以方也；不习无不利，地道光也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其股，亦不处也。志在随人，所执下也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>直，方，大</strong> ： 直，正直、内质刚正、柔顺承道的本真无妄。方，方正、守规矩、不偏倚（有准则、有边界）、坚守原则。大，无局限、能承载、包容无界的格局（有容乃大），承坤卦 <strong>大</strong> 德</li>
-<li><strong>不习无不利</strong> ： 习，本意为 学习、练习、修习，这里引申为刻意造作、违背本质的修饰。 <strong>不习无不利</strong> 指 <strong>无需刻意修饰、顺应坤德本真，包容承载万物，自然无往不利</strong></li>
-<li><strong>地道光也</strong> ： 地道，指 <strong>坤的根本规律（包容承载、柔顺承正）</strong> ；光，彰显光大、广大而明。</li>
+<li><strong>咸其股，执其随</strong> ： 股，大腿，行动的主力部分，象征强烈的行动欲。执，执着、坚持。固执地要跟着别人走。九三以阳居阳，刚而不中，又处内卦之终，上应于上六。刚躁好动，遇外诱即跃跃欲试，故“亦不处也”。失其主，丧其守，志在随人，所以“往吝”。</li>
 </ul>
-<p>六二爻，阴爻居阴位，得中得正，位在 <strong>内卦</strong> 之中，为坤之正主，是坤卦中最契合 <strong>地道本真（包容承载、柔顺承正）</strong> 的爻位，象征 <strong>柔顺力量达到 中正纯粹、自然天成 的境界</strong> ，故其德圆满， <strong>不习无不利</strong> （契合地道本真，无需刻意修饰，自然彰显价值光辉）</p>
-<p>直，方，大也是地得特性，古人认为天圆地方，地是方得，是直得，是广大得。</p>
-<p>六爻卦（重卦、六十四卦）中每个卦都有最主要得一爻，称为 <strong>卦主（一卦之主），也称作 主爻</strong> 。每卦包含 <strong>天（上、五爻）、地（初、二爻）、人（三、四爻），称为三才</strong> 。乾卦是天，九五为天位，是乾本位，是主爻（卦主）。坤卦是地，六二是地位，是坤本位，是主爻（卦主），最能代表地得特性。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>直者，不枉曲；方者，不偏倚；大者，无所不包也。不习而利者，性自然也。</code></p>
+<p><code>股，行动之本也。感而动之，不能处也。执志随人，失其正也，故往必有吝。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>六二中正，以阴居阴，尽地之道，直方广大，不待勉强而然，故无不利。</code></p>
+<p>  <code>志随于人，以刚动之，必陷于过失。</code></p>
 </li>
-<li><p>朱熹</p>
-<p>  <code>六二之德，直以方，大而无私，不待习而成，乃地道之光也。</code></p>
+<li><p><code>大腿能行，故曰不处。随人而不由己，执志于下，故往必吝也。</code></p>
 </li>
 </ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">含章可贞。或从王事，无成有终。</span><br></pre></td></tr></table></figure>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞吉悔亡，憧憧往来，朋从尔思。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：含章可贞，以时发也；或从王事，知光大也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：贞吉悔亡，未感害也。憧憧往来，未光大也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>含章</strong> ： 章，文采、才美、美德、才能； 含，包容、内含、藏而不露。 <strong>拥有才华却不刻意显露，如同美玉藏于石中，不轻易示人</strong></li>
-<li><strong>可贞</strong> ： 贞，守正、坚守正道、坚守原则。 <strong>坚守正道不违背原则、不放弃底线</strong></li>
-<li><strong>无成有终</strong> ： 无成，不是没有成就，而是 若从（以辅助者、实行者的角色，非主导者）王事，事成而不居功（不将成就归于自身）、不自傲，必能有好结果。</li>
-<li><strong>知光大也</strong> ： 知，智慧、学识。</li>
+<li><strong>贞吉悔亡，憧憧往来，朋从尔思</strong> ： 憧憧，心神不定、思绪摇摆的样子，反复纠结、进退不定的状态。憧憧往来，心神不定、反复走动之貌，象征内心无主、取舍不定。朋从尔思，志同道合者会理解并顺从你的核心想法，因本质未偏离正道，但未光大，只是部分感通。</li>
 </ul>
-<p>六三爻处 <strong>下卦终位，上接六四的临界位置</strong>，已离田而尚未登天（未至四、五），阴爻居阳位，位不当，故 <strong>含而不敢先</strong> ；然紧邻外卦，才美已具（才华待显、辅助上位）。才美已盛而位未正，宜 <strong>隐藏锋芒而守正（含章可贞），待时而出，若从（顺应、跟随而非主导）王事，要以辅助者的角色行事，不居功（无成有终）</strong></p>
-<p><strong>或从王事，无成有终</strong> 的关键在于 <strong>从和无成</strong> ，要认清自己的位置和角色，以辅助者、实行者的角色，非主导者的角色辅助君主，彰显 坤 的特性。 <strong>无成</strong> 并非 <strong>否定个人价值，而是认清辅助者的定位，不居功、不自傲，这是 六三爻 在位不当的环境下 善终的关键</strong></p>
-<p><strong>含章可贞，以时发也</strong> ，含章并非 无所作为、消极避世，而是要在合适的时机（以时发，因势而发）显露才华（或从王事）。 <strong>含章可贞 是 以时发也 的前提和准备，以时发 是 含章可贞的 目的</strong> 。 <strong>时 指位势适配的时机，如 王事 需要辅助、自身位势安全时</strong></p>
-<p><strong>或从王事，知光大也</strong> ，到了合适的时机，可以从王事，其智慧才学（章）光大的表现。</p>
+<p>九四居外卦之始，上体为兑，兑为口、为悦，主“外诱”。刚居柔位，不中不正，最易“心随境转”，故先戒以“贞”。四与初六相应，本有相感之势；但四位多惧，若一任情感而动，容易失足。故首提“贞”——以正自持，方可“悔亡”。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>章之为德，明也。含章者，不显其明也。以阴居阳，处不当位，宜含光以守正也。</code></p>
+<p><code>贞则吉，守正则悔亡也。憧憧往来，志未定也。朋从尔思，党类相应，未能光大也。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>六三以阴居阳，非正之地，若逞其章，则失其贞。惟含章守正，俟时而发，乃吉。</code></p>
+<p>  <code>利在守正，不可妄动。旷荡往来，志不专也。</code></p>
 </li>
-<li><p>朱熹</p>
-<p>  <code>含章，谓有文明之德而不显。以阴处阳，不当位，故宜含蓄而守正。</code></p>
+<li><p><code>往来无定，故憧憧。朋从其思，但同类之应，非深感之至。</code></p>
 </li>
 </ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">括囊，无咎无誉。</span><br></pre></td></tr></table></figure>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其脢，无悔。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：括囊无咎，慎不害也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其脢，志末也</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>括囊</strong> ： 括，扎紧、束缚、系紧、封闭； 囊，袋子、口袋。扎紧口袋，引申为 <strong>谨慎收敛自身的言行、才华、欲望，不轻易显露、不随意行动、不妄言、不妄动</strong></li>
+<li><strong>咸其脢，无悔</strong> ： 脢，脊背、背脊肉，身之正中。</li>
 </ul>
-<p>六四爻，阴爻居阴位（得位），处于 <strong>上卦初位、临近九五君位的敏感地带</strong>，上接乾卦核心（九五阳爻，象征君权、刚健主导者），下承下卦辅助（六三阴爻，象征基层力量），是上（君）传下（臣）达的 权力缓冲带 与 矛盾焦点区。在高危环境中，唯有收敛言行、不妄动不张扬（慎），才能 无咎（避祸），哪怕牺牲 荣誉（无誉） </p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>括囊者，闭藏也。处阴柔之地，不可以自进，宜守闭藏，则无咎也。</code></p>
+<p><code>脢，近心之处也。感之深也。处得其正，故无悔。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>以阴居阴，近尊位，若有所施，则必害也。唯括囊而不施，谨慎自守，故无咎而已。</code></p>
+<p>  <code>感之深而不失正，故无悔。志近而未至心，故曰志末。</code></p>
 </li>
-<li><p>朱熹</p>
-<p>  <code>括囊，闭藏也。六四以阴居阴，近乎六五，若妄动则害，守闭藏则无咎，然无誉也。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">黄裳，元吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：黄裳元吉，文在中也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>黄裳</strong> ： 黄，中央正色、五行居中属土，象 中和；裳，下裙、下装，古人 <strong>上衣下裳</strong> ，衣 象征 在上的尊贵者（如君王穿的冕服），裳 象征 在下的辅助者（如臣子穿的下裳）；象 谦下承上、承顺、不越权</li>
-<li><strong>文</strong> ： 坤的柔顺文德（柔顺、包容、协调、承正），与 武（刚健、武力、开创） 相对。</li>
-</ul>
-<p>六五爻 阴爻居阳位，位尊得中不得正，在坤卦，阴居君位（天子、元首），正是 <strong>以柔居尊</strong> 之典型，既中（居中守正，不偏不倚）且下（谦下承上，不居高位），五虽居 尊位，却仍是 坤卦的柔顺角色（辅助者），而非 乾卦的刚健主导者（决策者），承顺正道，故大吉。坤之六五与乾之九五同为 君位 ，而一刚一柔</p>
-<p>柔顺力量（阴）处于 <strong>尊位而不骄、承正而不越</strong> 的理想状态，以居中守下的文德，承顺刚健正道，最终实现 <strong>元吉</strong></p>
-<p><strong>文德在中</strong> ，能以 坤之文德（柔顺、包容、协调、承正）居中守正，元吉。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>黄，中色也。裳，下服也。处尊位而能中正谦下，故元吉也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居尊位而能下服，以中正之德自处，柔顺不失其正，故大吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>黄，中之色；裳，下之服。居尊位而能中正谦下，柔顺以治，元吉。</code></p>
+<li><p><code>脢者，心之所附，感之已深也。近心而不入心，志之末也。能感而中正，因此无悔。</code></p>
 </li>
 </ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">龙战于野，其血玄黄。</span><br></pre></td></tr></table></figure>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其辅、颊、舌</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：龙战于野，其道穷也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其辅颊舌，滕口说也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>龙战于野</strong> ： 龙，指 乾之龙（刚健力量） 与 坤之龙（过度发展的阴柔力量） 的对立，象征 阴阳两气 相互争斗。野 是 不受约束的开阔之地，象征 冲突脱离 有序框架（如朝堂、规矩），进入 无规则的混乱状态</li>
-<li><strong>其血玄黄</strong> ： 玄，天色；黄，地色。天地（阴阳、乾坤）交战，其血玄黄，象征两败俱伤，同归于尽。</li>
-<li><strong>其道穷也</strong> ： 阴柔之道（坤之道，柔顺承正（乾的刚健正道））至此而极尽，要么毁灭要么转化（为阳），象征物极必反，阴极阳生。</li>
+<li><strong>咸其辅颊舌，滕口说也</strong> ： 辅，两腮旁的骨、牙床。颊，面颊、脸颊。舌，舌头。滕口，张口、喋喋不休、口舌动的样子。说，通悦，取悦</li>
 </ul>
-<p>上六是坤卦最上（最后）一爻，阴爻居阴位，已到极处。象征 <strong>柔顺力量（坤）过度积累，突破 承顺正道 的边界，与刚健力量（乾）正面冲突</strong> 的凶险状态。任何力量过度发展而失度，终将突破平衡（中），引发毁灭性冲突。</p>
-<p>坤卦六爻皆阴，到了上六爻，阴气至极（上无可上，阴盛无制），已失坤之道（承顺正道），阴盛而与阳斗。与 乾卦 上九 <code>亢龙有悔</code> 一刚一柔，都说明 过犹不及，盛极必衰 的道理。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>阴极而与阳战，非其道也，故穷。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>坤道纯阴，至上六而极。阴盛则必与阳争，争则伤，故曰‘龙战于野，其血玄黄’。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六爻皆阴，至上而穷，阴盛与阳争，故有此象。</code></p>
-</li>
-</ul>
+<p>上六阴居卦极，与九三（盲动）相应，象征虚言。位高而无实，唯剩“口说”之应，故成“滕口”之象（“滕”通“腾”，腾涌、滔滔不绝之意），口惠而实不至。</p>
 ]]></content>
       <categories>
         <category>易学</category>
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之地天泰</title>
-    <url>/20250918102639/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地天泰"><a href="#地天泰" class="headerlink" title="地天泰"></a>地天泰</h1><p><img src="https://i.0920811.xyz/img_351.png"></p>
-<p>地天泰，下乾（天、阳）在内，上坤（地、阴）在外，阴阳交感、天地交泰，万物生机。泰卦象征通泰、太平、和合、通达、顺遂，正道兴盛，社会秩序顺畅。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">泰，小往大来，吉亨。</span><br></pre></td></tr></table></figure>
+    <title>六十四卦之泽雷随</title>
+    <url>/20251001132040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽雷随"><a href="#泽雷随" class="headerlink" title="泽雷随"></a>泽雷随</h1><p><img src="https://i.0920811.xyz/img_357.png"></p>
+<p>随，上（外）兑（泽、悦）下（内）震（雷、动），动而悦，象征着顺应（时势）、顺势而为、随时势而动。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随，元亨，利贞，无咎。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：泰，小往大来，吉亨。则是天地交，而万物通也;上下交，而其志同也。内阳而外阴，内健而外顺，内君子而外小人，君子道长，小人道消也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：随，刚来而下柔，动而说，随。大亨贞，无咎，而天下随时。随时之义大矣哉!</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天地交，泰，后以财(裁)成天地之道，辅相天地之宜，以左右民。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽中有雷，随;君子以向晦入宴息。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>小往大来，吉亨</strong> ： <strong>（地天）泰卦从（天地）否卦运动而来</strong> ，<strong>小谓阴</strong> ，阴爻（象征柔小、小人、次要因素）向外退去， <strong>大谓阳</strong> ，阳爻（象征刚大、君子、主要因素）向内到来。 <strong>爻从上向下运动为来，从下向上运动为往</strong> 。小者退去（往），大者前来，阴退阳进，上下相交，天地通泰。小人之道衰退，君子之道兴盛。隐喻 自然与社会的良性状态，此时亨通吉祥。</li>
-<li><strong>后以财(裁)成天地之道，辅相天地之宜，以左右民</strong> ： 后，指君主或领导者。财，通裁，裁断、顺应（参赞天地、成就万物）。辅相，辅助、配合。左右民，引导、帮助百姓。君子（君王）观泰卦之象，当顺应天地运行之道，参赞化育，以安定百姓，治理天下。</li>
+<li><strong>刚来而下柔，动而悦</strong> ： 随卦从否卦变来，否卦上九和初六交换，上九下到随卦初九位，处柔爻之下。否卦天地不通，上下两爻交换，天地往来，阴阳交流，变得通常，故元亨0</li>
+<li><strong>君子以向晦入宴息</strong> ： 晦，夜晚、日暮、黄昏。君子效法卦象，随时而行：白天活动，夜晚歇息，动静有度，随顺自然。随之为义，随时而动，不失其正。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>天地交而万物通，后法之，以裁成天地之道，辅相天地之宜，使万物各得其所，以安定百姓。</code></p>
+<p><code>随者，随时也。随时以动，则无往不利。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>天地交泰，阴阳和合而万物生长。君子观此象，当参赞天地之化育，裁成辅助，使民各安其性命之宜。</code></p>
+<p>  <code>随时而动者，非附和而已，乃因时顺理之谓。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>天地交感，万物以生。君子（在位者）法天地以理财用，成就化育，左右百姓。</code></p>
+<p>  <code>随，从也。随时而动，随理而行，则元亨利贞无咎。</code></p>
 </li>
 </ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拔茅茹，以其汇，征吉。</span><br></pre></td></tr></table></figure>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">官有渝，贞吉。出门交有功。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拔茅征吉，志在外也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：官有渝，从正吉也。出门交有功，不失也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>拔茅茹，以其汇</strong> ： 茅，茅草。茹，茅草的根部。汇，同类、群体、相关得事物，表示成群结伴。茅茹，茅草根系相连，象征 同类、同道之人，拔茅茹指的是拔起茅草，连根带叶一起拔起，喻指 君子行动时，如同拔茅连带其根系，自然团结身边志同道合者。</li>
-<li><strong>志在外也</strong> ： 外指上卦坤。</li>
+<li><strong>官有渝</strong> ： 官，犹常（道）也。有渝者，变革旧常。能随时改正，必吉。渝，改变、变动、变化。</li>
 </ul>
-<p>初九象征君子在泰时之初，欲有所进取。君子与志同道合者相互提携，不独行，群体前进，故吉。</p>
+<p>初九刚来而下柔，阳爻居阳位，得正，为随卦主爻。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>茅草根连，拔一则三。喻君子同志相引，进而不孤。初九阳刚在下，拔而相与，以群行正，故征吉。</code></p>
+<p><code>官有渝者，变常也。能变旧而随时，不失正，则吉。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>初九以阳居下，志欲进而应上。茅茹以其根相连，拔之必并，喻君子同志相引而进。志在外而不独行，征则吉。</code></p>
+<p>  <code>随者，当随时而动，不可执常。初九刚正，能随时改易，所以吉。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>拔茅茹，以其汇，言君子同志相引而进。初九在下，方欲进也。征而得吉，以其不孤也。</code></p>
+<p>  <code>官有渝，谓能变通。随时而变，从正则吉；交际而守正，亦有功。</code></p>
 </li>
 </ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包荒，用冯河，不遐遗，朋亡，得尚于中行。</span><br></pre></td></tr></table></figure>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系小子，失丈夫。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：包荒，得尚于中行，以光大也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系小子，弗兼与也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>包荒</strong> ： 包，包容、容纳、宽容。荒，荒芜、荒远、广阔。意为 君子有宽广胸襟，能包容差异、接纳不同声音</li>
-<li><strong>用冯（píng）河</strong> ： 冯河，徒步涉水过河。比喻（面对困难）勇敢无畏的行为。九二到五位，前临互兑，兑为泽，可以为河，互震为足，刚健而足可涉河，故 “用冯河”</li>
-<li><strong>不遐遗</strong> ： 遐，遥远、远。遗，遗漏、遗弃。不遗漏远方的事物或人，即关注全面。</li>
-<li><strong>朋亡</strong> ： 朋，私人朋党、小团体。君子不结党营私，摒弃小团体利益，以全局为重。</li>
-<li><strong>得尚于中行</strong> ： 中行 指 中道、不偏不倚的准则，是九二 居中位 的核心体现，意为 君子通过包荒、冯河、不遐遗、朋亡的行动，最终实现对中道的尊崇与践行，让所有行为都不偏极端，契合泰的通达本质。</li>
+<li><strong>系小子，失丈夫</strong> ： 系，依附、追随、束缚。六二和九五为正应，可以为丈夫，初九为随卦主爻，六二比邻初九，初九为震，为长子，可为小子。若为女性，则顾念子而失丈夫，有离异之象；若男性，丈夫也可为德厚长者，小子为平庸之辈。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>九二居中得正，有大臣之象。能包容荒失，不责小过；能冒险以济事；不远弃人；不偏党；归于中正之道。此所以能光大也。</code></p>
+<p><code>六二以柔居中，本应九五。若系初九，则失九五。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>二以阳居阴，得中正之德。处泰之时，当任大臣之位，能包容、敢担当、广纳人材、不为朋党，而守中正。此其美也。</code></p>
+<p>  <code>随在得其所随。六二应九五而正，若舍之而系于初九，是失正也。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>包荒者，能包容荒僻之人；冯河者，有勇敢之志；不遐遗者，任用不遗远人；朋亡者，不偏党；得尚于中行者，以此诸德而归于中道。</code></p>
+<p>  <code>小子，指初九；丈夫，指九五。六二居中得正，应于九五，正随之道也。若系初九，则失九五矣。</code></p>
 </li>
 </ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无平不陂，无往不复，艰贞无咎。勿恤其孚，于食有福。</span><br></pre></td></tr></table></figure>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系丈夫，失小子。随有求，得，利居贞。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无往不复，天地际也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无平不陂（pō），无往不复</strong> ： 陂，倾斜、斜坡、崎岖不平。没有永远平坦而不倾斜的道路，没有只前进而不回归的事物，物极必反核心思想的经典表达，隐喻泰卦的 通达 不会永恒，太平中已暗藏向 否卦（闭塞）转化的可能，需警惕 泰极否来</li>
-<li><strong>艰贞无咎</strong> ： 艰，艰难、忧患。艰难而守正，方能无咎。</li>
-<li><strong>勿恤其孚，于食有福</strong> ： 恤，忧虑、怀疑。孚，诚信、信任、诚心。不必忧虑是否有人信任。于食有福比喻在生活上有保障，能够享受安乐</li>
-<li><strong>无往不复，天地际也</strong> ： 际，相交、交接、交界。天地相交，往则复返。泰到尽处则转为否，阳长到极致则阴生，这是天地运转、阴阳消长的自然规律。</li>
-</ul>
-<p>九三作为泰卦 下卦终、上卦近 的交界爻，是 泰极否来 的预警点，其核心价值是为 身处顺境者 提供风险警告。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>泰至三而极，将变否。故曰“无平不陂，无往不复”。居此时者，唯艰难而守正，乃得无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>三处下卦之上，泰极将变，危机已兆。然能艰难守正，虽处泰末，犹可无咎。不必忧信，有自然之孚，于饮食之间自得其福。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>泰至三极而将否，故曰“无平不陂，无往不复”。能艰贞则无咎，不必忧人之信，自然有孚，于食有福。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">翩翩不富，以其邻，不戒以孚。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：翩翩不富，皆失实也。不戒以孚，中心愿也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系丈夫，志舍下也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>翩翩不富</strong> ： 翩翩，轻盈、自在得样子、鸟飞轻疾之貌。不富，没有财物或者资源、德资不充实、根基未实。刚爻为实，柔爻为虚，坤为虚、为吝啬，故为 ”不富“</li>
-<li><strong>以其邻，不戒以孚</strong> ： 六四上承六五（邻君位），无需戒备（警惧），但以诚待之。</li>
-<li><strong>翩翩不富，皆失实也</strong> ： 阴居阴位（得位），在上卦坤之初，近君而不在中（失中），又与初九相应（四应初），上卦三阴失实，六四身在其间，</li>
-<li><strong>不戒以孚，中心愿也</strong> ： 六四位势特征是 初入外朝、肩上未重、距九五最近，取道于九五之中正，是内心真诚的愿望，但以诚待上，无需戒惧。</li>
+<li><strong>系丈夫，失小子</strong> ： 舍初九而随九四。</li>
+<li><strong>志舍下也</strong> ： 三欲随上，舍近而求远，是舍小子而随丈夫。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>翩翩，轻动之貌。四阴处近君之地而失中，不足自保，故曰不富；‘以其邻’者，取信于五也；‘不戒以孚’，诚出于中也。</code></p>
+<p><code>二则随小子而失丈夫，三则随丈夫而失小子。志舍下也，故利居贞。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>四以阴处外卦之始，未安其位，故翩翩。不富者，德力未厚也。近五而从，乃‘以其邻’；中心愿从，故‘不戒以孚’。</code></p>
+<p>  <code>随在择所随，三能舍近就远，志在上也。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>翩翩，飞动之貌；言其来上未定也。德不厚，故不富。以九五为邻而从之，则虽不戒而自孚，盖诚出于中心也。</code></p>
+<p>  <code>小子谓初九，丈夫谓九五。三舍近随远，志在随正也。</code></p>
 </li>
 </ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">帝乙归妹，以祉元吉。</span><br></pre></td></tr></table></figure>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随有获，贞凶。有孚在道，以明，何咎。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：以祉元吉，中以行愿也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：随有获，其义凶也。有孚在道，明功也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>帝乙归妹</strong> ： 归，女儿出嫁。帝乙是商代帝王，商王帝乙为缓和与周族的关系，将女儿嫁给周文王（或其部族），属于通过联姻实现政治和谐的事件。爻辞以这一史实为喻，强调 正应 的重要性。泰卦互震为兄，互兑为妹。</li>
-<li><strong>以祉元吉</strong> ： 祉，福祉、吉祥、福分。有此大福，大吉大利。六五河九二阴阳正应，且都在中位，乾为福、祉。上下应和，能行中道，心愿能得实现。</li>
+<li><strong>随有获，贞凶</strong> ： 获，获利、获得。九四阳爻居阴位，刚而位不当，又处于近君位，易因刚健（锋芒过露）而居功逐利，招致凶险。</li>
+<li><strong>有孚在道，明功也</strong> ： 孚，诚心、诚信、诚实、真诚。明，明辨、清晰。随人做事，居功获利，其义凶。心怀诚信，明辨所处，则无咎害。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>六五以柔中居尊位，有如天子归妹，得其正也，故元吉。</code></p>
+<p><code>九四失位，随而有获，非正也，故贞凶。唯有孚守道，乃可以免咎。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>六五之阴，居尊位得中，以柔顺中正而应九二之刚，譬如天子嫁女，有福祉而大吉。</code></p>
+<p>  <code>九四以刚居阴位，非正。若随而得，必有凶。然能诚信守道，则虽得，亦无咎。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>帝乙归妹，言嫁妹以礼也。以其得中正而合礼，故元吉。</code></p>
+<p>  <code>随有获，非正也，故凶。有孚在道，则虽获亦可，无咎。</code></p>
 </li>
 </ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">城复于隍，勿用师。自邑告命，贞吝。</span><br></pre></td></tr></table></figure>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">孚于嘉，吉。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：城复于隍，其命乱也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：孚于嘉，吉;位正中也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>城复于隍</strong> ： 城、城墙，代表防御、根基。隍，城外得壕沟，无水为隍，有水为池。指城墙坍塌倒入壕沟，比喻政事由盛转衰，防御失守，秩序大坏、局势崩坏。</li>
-<li><strong>自邑告命，贞吝</strong> ： 邑，小国、小城、城邑。只能在自己得城郭内部发布命令（无法向外推行），说明权威丧失、影响力萎缩，即便坚守正道（贞），也因外部局势崩坏、内部能力不足，难以扭转困境，最终只会有 “吝”（憾惜、不便），强调此时 “守正亦难安”，需正视局势的局限性。</li>
+<li><strong>孚于嘉</strong> ： 嘉，美好、优秀、善的人或事。</li>
 </ul>
-<p>上六居《泰卦》之终，三阴在上，三阳在下，阴盛阳退，泰已极而转为否。</p>
+<p>九五居尊位，阳爻居阳位，又在全卦的中位，正中而得正。以刚健中正之德居尊位，又能以孚随正道、美善之事（嘉），所以合随道。为全卦最好的一爻。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>泰极而否，阴道成而阳道消，上六处极，故城复于隍。阴长阳消，虽欲用师，不可得也。</code></p>
+<p><code>九五刚中居尊，孚信在上，下应六二，故孚于嘉而吉。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>上六阴极，象泰将否。‘城复于隍’者，政乱而邦危也。虽有守正之志，势不可为，徒有吝耳。</code></p>
+<p>  <code>九五以刚中正居尊位，应六二之柔顺，君臣相孚，随从正道，吉。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>上六居泰之极，阴气盛满，故有城坏之象。戒曰不可用兵，惟各自保邑，犹可以免，但必有吝。</code></p>
+<p>  <code>孚于嘉，言以诚信随美善也。九五中正居尊，正应六二，吉之道也。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拘系之，乃从维之。王用亨于西山。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拘系之，上穷也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>拘系之，乃从维之</strong> ： 拘系，拘束、束缚、捆绑。从、跟从、追随、顺从。维，维系、维持、加固。</li>
+<li><strong>王用亨于西山</strong> ： 用亨，通享，祭祀、祭礼。西山，西周的重要祭祀之地（传为周文王祭祀先祖或天地的场所，象征 “庄重、终结性的仪式”）</li>
+</ul>
+<p>上六阴爻处随卦最上（极），随之至极，随之穷尽，只知（能、过渡）追随，反而被束缚、限制。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上六随之极，柔而无正，故拘系。然犹能随正，则乃可维。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随之至极，必至困穷。然能返正，从维大道，犹可以济。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>拘系之，随极而困也。乃从维之，犹可以归正。王用亨于西山，言随正以大祭，归于至诚。</code></p>
 </li>
 </ul>
 ]]></content>
