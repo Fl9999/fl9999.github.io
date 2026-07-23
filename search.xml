@@ -1233,6 +1233,58 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.0920811.xyz/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1327,58 +1379,6 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.0920811.xyz/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -28402,6 +28402,168 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Pixie 安装配置</title>
+    <url>/2026050713030/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pixie 是一款专为 Kubernetes 设计的 <strong>开源全栈可观测性工具</strong> 。它最大的特色是利用 eBPF（extended Berkeley Packet Filter）技术，在不修改业务代码、不重启 Pod、不注入 Sidecar 的情况下，自动采集集群内的所有监控数据。Pixie 被称为 <strong>K8s 的分布式调试器</strong></p>
+<p><strong>Pixie 的核心优势</strong></p>
+<ul>
+<li><p><strong>无侵入性 (Auto-telemetry)</strong> ： 部署后，自动获取 HTTP&#x2F;gRPC 请求、SQL 查询、系统调用和火焰图。</p>
+</li>
+<li><p><strong>边缘计算架构</strong> ： 数据存储在集群节点的内存中，查询时才进行分布式计算。这意味着：</p>
+</li>
+<li><p><strong>极速</strong> ： 查询结果近乎实时。</p>
+</li>
+<li><p><strong>省钱</strong> ： 不会有海量日志传输到云端产生的高额带宽和存储费。</p>
+</li>
+<li><p><strong>动态可编程</strong> ： 使用 PxL（基于 Python 的查询语言）编写脚本，可以像写脚本一样实时分析系统性能。</p>
+</li>
+</ul>
+<p><strong>Pixie 核心组件</strong></p>
+<ul>
+<li><p><strong>Vizier</strong> ： 运行在 K8s 集群中的控制器，负责管理各个节点的边缘收集器。</p>
+</li>
+<li><p><strong>PEM (Pixie Edge Module)</strong> ： 以 DaemonSet 形式运行在每个节点，利用 eBPF 采集数据并存储在本地内存。</p>
+</li>
+<li><p><strong>Cloud Add-on</strong> ： 提供用户界面 (UI) 和 API 访问。</p>
+</li>
+</ul>
+<p><strong>快速安装</strong><br>Pixie 的安装非常简单，通常通过 CLI 完成。</p>
+<blockquote>
+<p>确保 Linux 内核版本在 4.16+（推荐 5.10+，2026 年的主流系统如 Ubuntu 22.04+、AlmaLinux 9 等都完美支持）。如果在过旧的内核上强行运行 eBPF 程序，极少数情况下可能导致内核态的不稳定。</p>
+</blockquote>
+<ol>
+<li><p>下载 Pixie CLI</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">bash -c &quot;$(curl -fsSL https://withpixie.ai/install.sh)&quot;</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>脚本会从 Pixie 的官方 GitHub Release 页面或 CDN 下载最新版本的 px 命令行工具，并将其安装到 <code>/usr/local/bin</code> 目录。<br><strong><code>px</code> 是你后续与 Kubernetes 集群交互的唯一入口，所有的部署（deploy）、查询（collect）和脚本运行都通过它完成。</strong>。<br>它会检查你本地的 <code>~/.kube/config</code> 文件，确保你当前有权限连接到一个 Kubernetes 集群。<br>当你执行完这个脚本后，Pixie 还没有安装到你的 Kubernetes 集群里。它只是在你的跳板机或开发机上装好了“遥控器”。要真正让 Pixie 开始监控集群，你通常需要继续执行 <code>px deploy</code> 命令。</p>
+</blockquote>
+</li>
+<li><p>部署到 K8s 集群。这将自动安装 Vizier 和 PEM 到集群中</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">px deploy</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>这个命令会将 Vizier 和 PEM 部署到你的 Kubernetes 集群中。</p>
+</blockquote>
+</li>
+</ol>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>PostgreSQL</title>
+    <url>/20260305145910/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="PostgreSQL-常用命令"><a href="#PostgreSQL-常用命令" class="headerlink" title="PostgreSQL 常用命令"></a>PostgreSQL 常用命令</h1><table>
+<thead>
+<tr>
+<th>命令</th>
+<th>功能描述</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>\l</code></td>
+<td>列出所有数据库</td>
+</tr>
+<tr>
+<td><code>\c</code></td>
+<td>数据库名,切换当前连接的数据库 (Connect)</td>
+</tr>
+<tr>
+<td><code>\dt</code></td>
+<td>列出当前数据库中所有的表 (Describe Tables)</td>
+</tr>
+<tr>
+<td><code>\d</code></td>
+<td>表名,查看指定表的结构（列名、类型、索引等）</td>
+</tr>
+<tr>
+<td><code>\du</code></td>
+<td>列出所有角色&#x2F;用户</td>
+</tr>
+<tr>
+<td><code>\dn</code></td>
+<td>列出所有模式 (Schema)</td>
+</tr>
+<tr>
+<td><code>\df</code></td>
+<td>列出所有函数</td>
+</tr>
+<tr>
+<td><code>\x</code></td>
+<td>开启&#x2F;关闭扩展显示模式（当列很多时，这会让查询结果按行显示，非常清晰）</td>
+</tr>
+<tr>
+<td><code>\?</code></td>
+<td>查看所有反斜杠命令的帮助</td>
+</tr>
+</tbody></table>
+<ul>
+<li><p><strong>创建数据库</strong> ： <code>CREATE DATABASE db_name;</code></p>
+</li>
+<li><p><strong>删除数据库</strong> ：<code>DROP DATABASE db_name;</code></p>
+</li>
+<li><p><strong>导出数据库 (终端执行)</strong> ：<code>pg_dump -U 用户名 数据库名 &gt; 备份文件.sql</code></p>
+</li>
+<li><p><strong>导入数据库 (终端执行)</strong> : <code>psql -U 用户名 数据库名 &lt; 备份文件.sql</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>predixy 安装配置</title>
+    <url>/202207271506/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
+<ul>
+<li>Centos 7</li>
+<li>predixy-1.0.5</li>
+</ul>
+<blockquote>
+<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3></blockquote>
+<p><a href="https://github.com/joyieldInc/predixy">下载地址</a>, clone或下载最新的版本或指定版本下载后解压</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install libstdc++-static -y</span><br><span class="line">cd predixy-1.0.5</span><br><span class="line">make</span><br><span class="line">cp src/predixy /usr/local/bin/</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>需要依赖 <code>libstdc++-static</code>, 否则make会报错：<br>&#x2F;bin&#x2F;ld: cannot find -lstdc++<br>collect2: error: ld returned 1 exit status<br>make[1]: *** [predixy] Error 1<br>make[1]: Leaving directory &#96;&#x2F;root&#x2F;predixy-1.0.5&#x2F;src’<br>make: *** [default] Error 2</p>
+</blockquote>
+<blockquote>
+<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3></blockquote>
+<ul>
+<li><p>predixy.conf，整体配置文件，会引用下面的配置文件</p>
+</li>
+<li><p>cluster.conf，用于Redis Cluster时，配置后端redis信息</p>
+</li>
+<li><p>sentinel.conf，用于Redis Sentinel时，配置后端redis信息</p>
+</li>
+<li><p>auth.conf，访问权限控制配置，可以定义多个验证密码，可每个密码指定读、写、管理权限，以及定义可访问的健空间</p>
+</li>
+<li><p>dc.conf，多数据中心支持，可以定义读写分离规则，读流量权重分配</p>
+</li>
+<li><p>latency.conf， 延迟监控规则定义，可以指定需要监控的命令以及延时时间间隔</p>
+</li>
+</ul>
+<blockquote>
+<h3 id="启动"><a href="#启动" class="headerlink" title="启动"></a>启动</h3></blockquote>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">predixy /predixy/conf/predixy.conf</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>使用默认的配置文件predixy.conf， predixy将监听地址0.0.0.0:7617，后端的redis是Redis Cluster 127.0.0.1:6379  </p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Redis</tag>
+        <tag>Predixy</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Prometheus blackbox export 安装配置</title>
     <url>/202309261542/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><code>blackbox_exporter</code> 是一个由 Prometheus 社区维护的项目，它允许用户通过 HTTP、HTTPS、DNS、TCP 和 ICMP 协议对服务进行“黑盒”方式的探测，以检测和监控网络协议的可用性和响应时间。</p>
@@ -39868,167 +40030,5 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
-  </entry>
-  <entry>
-    <title>predixy 安装配置</title>
-    <url>/202207271506/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3></blockquote>
-<ul>
-<li>Centos 7</li>
-<li>predixy-1.0.5</li>
-</ul>
-<blockquote>
-<h3 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h3></blockquote>
-<p><a href="https://github.com/joyieldInc/predixy">下载地址</a>, clone或下载最新的版本或指定版本下载后解压</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install libstdc++-static -y</span><br><span class="line">cd predixy-1.0.5</span><br><span class="line">make</span><br><span class="line">cp src/predixy /usr/local/bin/</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>需要依赖 <code>libstdc++-static</code>, 否则make会报错：<br>&#x2F;bin&#x2F;ld: cannot find -lstdc++<br>collect2: error: ld returned 1 exit status<br>make[1]: *** [predixy] Error 1<br>make[1]: Leaving directory &#96;&#x2F;root&#x2F;predixy-1.0.5&#x2F;src’<br>make: *** [default] Error 2</p>
-</blockquote>
-<blockquote>
-<h3 id="配置文件说明"><a href="#配置文件说明" class="headerlink" title="配置文件说明"></a>配置文件说明</h3></blockquote>
-<ul>
-<li><p>predixy.conf，整体配置文件，会引用下面的配置文件</p>
-</li>
-<li><p>cluster.conf，用于Redis Cluster时，配置后端redis信息</p>
-</li>
-<li><p>sentinel.conf，用于Redis Sentinel时，配置后端redis信息</p>
-</li>
-<li><p>auth.conf，访问权限控制配置，可以定义多个验证密码，可每个密码指定读、写、管理权限，以及定义可访问的健空间</p>
-</li>
-<li><p>dc.conf，多数据中心支持，可以定义读写分离规则，读流量权重分配</p>
-</li>
-<li><p>latency.conf， 延迟监控规则定义，可以指定需要监控的命令以及延时时间间隔</p>
-</li>
-</ul>
-<blockquote>
-<h3 id="启动"><a href="#启动" class="headerlink" title="启动"></a>启动</h3></blockquote>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">predixy /predixy/conf/predixy.conf</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>使用默认的配置文件predixy.conf， predixy将监听地址0.0.0.0:7617，后端的redis是Redis Cluster 127.0.0.1:6379  </p>
-</blockquote>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Redis</tag>
-        <tag>Predixy</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Pixie 安装配置</title>
-    <url>/2026050713030/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Pixie 是一款专为 Kubernetes 设计的 <strong>开源全栈可观测性工具</strong> 。它最大的特色是利用 eBPF（extended Berkeley Packet Filter）技术，在不修改业务代码、不重启 Pod、不注入 Sidecar 的情况下，自动采集集群内的所有监控数据。Pixie 被称为 <strong>K8s 的分布式调试器</strong></p>
-<p><strong>Pixie 的核心优势</strong></p>
-<ul>
-<li><p><strong>无侵入性 (Auto-telemetry)</strong> ： 部署后，自动获取 HTTP&#x2F;gRPC 请求、SQL 查询、系统调用和火焰图。</p>
-</li>
-<li><p><strong>边缘计算架构</strong> ： 数据存储在集群节点的内存中，查询时才进行分布式计算。这意味着：</p>
-</li>
-<li><p><strong>极速</strong> ： 查询结果近乎实时。</p>
-</li>
-<li><p><strong>省钱</strong> ： 不会有海量日志传输到云端产生的高额带宽和存储费。</p>
-</li>
-<li><p><strong>动态可编程</strong> ： 使用 PxL（基于 Python 的查询语言）编写脚本，可以像写脚本一样实时分析系统性能。</p>
-</li>
-</ul>
-<p><strong>Pixie 核心组件</strong></p>
-<ul>
-<li><p><strong>Vizier</strong> ： 运行在 K8s 集群中的控制器，负责管理各个节点的边缘收集器。</p>
-</li>
-<li><p><strong>PEM (Pixie Edge Module)</strong> ： 以 DaemonSet 形式运行在每个节点，利用 eBPF 采集数据并存储在本地内存。</p>
-</li>
-<li><p><strong>Cloud Add-on</strong> ： 提供用户界面 (UI) 和 API 访问。</p>
-</li>
-</ul>
-<p><strong>快速安装</strong><br>Pixie 的安装非常简单，通常通过 CLI 完成。</p>
-<blockquote>
-<p>确保 Linux 内核版本在 4.16+（推荐 5.10+，2026 年的主流系统如 Ubuntu 22.04+、AlmaLinux 9 等都完美支持）。如果在过旧的内核上强行运行 eBPF 程序，极少数情况下可能导致内核态的不稳定。</p>
-</blockquote>
-<ol>
-<li><p>下载 Pixie CLI</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">bash -c &quot;$(curl -fsSL https://withpixie.ai/install.sh)&quot;</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>脚本会从 Pixie 的官方 GitHub Release 页面或 CDN 下载最新版本的 px 命令行工具，并将其安装到 <code>/usr/local/bin</code> 目录。<br><strong><code>px</code> 是你后续与 Kubernetes 集群交互的唯一入口，所有的部署（deploy）、查询（collect）和脚本运行都通过它完成。</strong>。<br>它会检查你本地的 <code>~/.kube/config</code> 文件，确保你当前有权限连接到一个 Kubernetes 集群。<br>当你执行完这个脚本后，Pixie 还没有安装到你的 Kubernetes 集群里。它只是在你的跳板机或开发机上装好了“遥控器”。要真正让 Pixie 开始监控集群，你通常需要继续执行 <code>px deploy</code> 命令。</p>
-</blockquote>
-</li>
-<li><p>部署到 K8s 集群。这将自动安装 Vizier 和 PEM 到集群中</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">px deploy</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>这个命令会将 Vizier 和 PEM 部署到你的 Kubernetes 集群中。</p>
-</blockquote>
-</li>
-</ol>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>PostgreSQL</title>
-    <url>/20260305145910/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="PostgreSQL-常用命令"><a href="#PostgreSQL-常用命令" class="headerlink" title="PostgreSQL 常用命令"></a>PostgreSQL 常用命令</h1><table>
-<thead>
-<tr>
-<th>命令</th>
-<th>功能描述</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>\l</code></td>
-<td>列出所有数据库</td>
-</tr>
-<tr>
-<td><code>\c</code></td>
-<td>数据库名,切换当前连接的数据库 (Connect)</td>
-</tr>
-<tr>
-<td><code>\dt</code></td>
-<td>列出当前数据库中所有的表 (Describe Tables)</td>
-</tr>
-<tr>
-<td><code>\d</code></td>
-<td>表名,查看指定表的结构（列名、类型、索引等）</td>
-</tr>
-<tr>
-<td><code>\du</code></td>
-<td>列出所有角色&#x2F;用户</td>
-</tr>
-<tr>
-<td><code>\dn</code></td>
-<td>列出所有模式 (Schema)</td>
-</tr>
-<tr>
-<td><code>\df</code></td>
-<td>列出所有函数</td>
-</tr>
-<tr>
-<td><code>\x</code></td>
-<td>开启&#x2F;关闭扩展显示模式（当列很多时，这会让查询结果按行显示，非常清晰）</td>
-</tr>
-<tr>
-<td><code>\?</code></td>
-<td>查看所有反斜杠命令的帮助</td>
-</tr>
-</tbody></table>
-<ul>
-<li><p><strong>创建数据库</strong> ： <code>CREATE DATABASE db_name;</code></p>
-</li>
-<li><p><strong>删除数据库</strong> ：<code>DROP DATABASE db_name;</code></p>
-</li>
-<li><p><strong>导出数据库 (终端执行)</strong> ：<code>pg_dump -U 用户名 数据库名 &gt; 备份文件.sql</code></p>
-</li>
-<li><p><strong>导入数据库 (终端执行)</strong> : <code>psql -U 用户名 数据库名 &lt; 备份文件.sql</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
   </entry>
 </search>
