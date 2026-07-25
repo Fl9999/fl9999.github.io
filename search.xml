@@ -21219,349 +21219,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>iptables 服务使用说明</title>
-    <url>/202210241051/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，<code>netfilter</code> 的架构是在整个网络流程(TCP&#x2F;IP 协议栈)的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
-<p>IP 层的 5 个钩子点的位置，对应就是 <code>iptables</code> 的 5 条内置链，分别是</p>
-<ul>
-<li><code>PREROUTING</code></li>
-<li><code>FORWARD</code></li>
-<li><code>INPUT</code></li>
-<li><code>OUTPUT</code></li>
-<li><code>POSTROUTING</code></li>
-</ul>
-<p><img src="https://i.0920811.xyz/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 <code>netfilter</code> 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过 <strong>查询本地路由表</strong> 决定这个数据包的流向</p>
-<ul>
-<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
-<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 <code>netfilter</code> 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
-</ul>
-<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
-<p>除了 5 条内置的链，<code>iptables</code> 还有 5 张表，这 5 张表主要是用来给 <code>iptables</code> 中的规则（rule）分类，系统中所有的 <code>iptables</code> 规则都被划分到不同的表集合中。5 张表分别为</p>
-<ul>
-<li><code>raw</code> - <code>iptables</code> 是有状态的，即 <code>iptables</code> 对数据包有连接追踪 (<code>connection trackong</code>) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
-<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
-<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
-<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(<code>drop</code>)、或拒绝(<code>reject</code>)</li>
-<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
-</ul>
-<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，<code>iptables</code> 不支持自定义表。不是每个链上都能挂表，<code>iptables</code> 表与链的对应关系如下图</p>
-<table>
-<thead>
-<tr>
-<th>-</th>
-<th>PREROUTING</th>
-<th>FORWARD</th>
-<th>INPUT</th>
-<th>OUTPUT</th>
-<th>POSTROUTING</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>raw</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>mangle</code></td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (SNAT)</code></td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (DNAT)</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>filter</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>security</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-</tbody></table>
-<p><code>iptables</code> 表和链的工作流程图如下</p>
-<p><img src="https://i.0920811.xyz/img_134.png"></p>
-<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-F ,--flush</code></td>
-<td>清除所有规则，默认规则除外</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-P ,--policy</code></td>
-<td>设置默认规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t ,--table</code></td>
-<td>指定要操作的表，默认为 <code>filter</code> 表</td>
-<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--list ,-L [chain [rulenum]]</code></td>
-<td>列出（指定的链或所有链）的规则</td>
-<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
-</tr>
-<tr>
-<td><code>--verbose	,-v</code></td>
-<td>verbose mode</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--numeric	,-n</code></td>
-<td>不解析协议和端口号，以数字的形式显示</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--line-numbers</code></td>
-<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--jump	,-j</code></td>
-<td>匹配的规则的处理 target</td>
-<td><code>iptables -A INPUT  -j LOG</code></td>
-</tr>
-<tr>
-<td><code>--append  ,-A chain</code></td>
-<td>像指定的链中追加规则</td>
-<td><code>-A INPUT -i lo -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--insert  ,-I chain [rulenum]</code></td>
-<td>向指定的链中指定的位置插入规则</td>
-<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--delete  ,-D chain rulenum</code></td>
-<td>删除指定链中的指定位置的规则</td>
-<td><code>iptables -D INPUT 10 </code></td>
-</tr>
-<tr>
-<td><code>--replace ,-R chain rulenum</code></td>
-<td>更新指定链中的指定位置的规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-S, --list-rules [chain]</code></td>
-<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
-<td></td>
-</tr>
-</tbody></table>
-<span id="more"></span>
-<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>删除指定行号的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
-
-<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
-<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
-<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
-<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
-<p>重启 <code>rsyslog</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
-<li><p><code>journalctl -k</code> 命令查看</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
-</ul>
-<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
-<p>iptables 中日志相关的选项：</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--log-prefix</code></td>
-<td>记录的日志的内容前缀</td>
-<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
-</tr>
-<tr>
-<td><code>--log-level</code></td>
-<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
-<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
-</tr>
-</tbody></table>
-<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
-<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
-
-<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
-
-<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
-
-<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
-
-<h2 id="iptables-配合-ipset-实现批量-IP-控制"><a href="#iptables-配合-ipset-实现批量-IP-控制" class="headerlink" title="iptables 配合 ipset 实现批量 IP 控制"></a>iptables 配合 ipset 实现批量 IP 控制</h2><p><code>ipset</code> 是 Linux 内核中的一个工具，根据创建 ipset 时指定的类型，它可以存储多个 IP 地址、IP 网络（network）、TCP&#x2F;UDP 端口、MAC 地址等，并且支持动态更新其中的内容。<strong>比如配合 <code>iptables</code> 使用时，可以将多个目标 IP 地址或者网络存储于其中并可以动态更新 <code>iptables</code> 规则（更新 <code>ipset</code> 后无需重启 <code>iptables</code> 即可生效）</strong></p>
-<ol>
-<li><p>创建 <code>ipset</code> 并指定 <code>ipset</code> 类型为 <code>hash:ip</code>，更多支持的类型可以通过 <code>ipset -h</code> 查看</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p>添加目标 IP 到 <code>ipset</code>，可以多次添加</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>在 <code>iptables</code> 中使用 <code>ipset</code></p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ipset 作为源 IP 允许访问</span></span><br><span class="line">iptables -A INPUT -m set --match-set allowed_ips src -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">源 IP 不在 ipset 中则不允许访问</span></span><br><span class="line">iptables -A INPUT -m set ! --match-set allowed_ips src -j DROP</span><br></pre></td></tr></table></figure>
-</li>
-<li><p><strong>默认情况下，<code>ipset</code> 属于临时配置，没有持久化，系统重启后内容会丢失</strong>。要配置 <code>ipset</code> 持久化，可以参考以下步骤</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保存 ipset 配置</span></span><br><span class="line">ipset save &gt; /etc/ipset.conf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">恢复 ipset 配置</span></span><br><span class="line">ipset restore &lt; /etc/ipset.conf</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="docker-compose-场景下使用-iptables-进行白名单限制"><a href="#docker-compose-场景下使用-iptables-进行白名单限制" class="headerlink" title="docker compose 场景下使用 iptables 进行白名单限制"></a>docker compose 场景下使用 iptables 进行白名单限制</h2><p>假设有以下 <code>docker-compose.yml</code> 文件</p>
-<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  nextcloud_aio_mastercontainer:</span><br><span class="line">    image: nextcloud/all-in-one:latest</span><br><span class="line">    container_name: nextcloud-aio-mastercontainer</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;8000:80&quot;</span><br><span class="line">      - &quot;8080:8080&quot;</span><br><span class="line">      - &quot;8443:8443&quot;</span><br><span class="line">    volumes:</span><br><span class="line">      - aio_mastercontainer:/mnt/docker-aio-config</span><br><span class="line">      - /var/run/docker.sock:/var/run/docker.sock:ro</span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  aio_mastercontainer:</span><br><span class="line">    driver: local</span><br><span class="line">    driver_opts:</span><br><span class="line">      type: none</span><br><span class="line">      o: bind</span><br><span class="line">      device: ./data/</span><br></pre></td></tr></table></figure>
-
-<p>在 <code>docker compose up</code> 正常启动后， Docker 会根据 <code>docker-compose.yml</code> 中的定义配置 <code>iptables</code> 防火墙规则，以下为上面 <code>docker-compose.yml</code> 定义的数据端口在 <code>iptables</code> 规则中的数据流向分析</p>
-<ol>
-<li>数据报文首先经过 <code>iptables</code> 的 <code>PREROUTING</code> 链，在 <code>PREROUTING</code> 链中会进行 <code>DNAT</code>，位于 <code>nat</code> 表中，查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -t nat -L -v -n</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 4376 packets, 255K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">80051 4690K DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 3891 packets, 233K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 12629 packets, 1082K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 12637 packets, 1083K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    3   200 MASQUERADE  all  --  *      !br-43e659324492  172.21.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8443</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8080</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 RETURN     all  --  br-43e659324492 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8080 to:172.21.0.2:8080</span><br><span class="line">    2   100 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 to:172.21.0.2:80</span><br></pre></td></tr></table></figure>
-<blockquote>
-<ol>
-<li><code>DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</code> : 所有的报文会被跳转到 <code>DOCKER</code> 链进行处理</li>
-<li><code>DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</code> : 只要不是从 <code>br-43e659324492</code> 网卡（本示例中的 <code>docker-compose.yml</code> 使用的网络）进入的数据包，不论目标网卡&#x2F;源 IP&#x2F;目标 IP 为何，只有其目标端口为 <code>8443</code>，则对其进行 DNAT，将其目标 IP 和端口修改为 <code>172.21.0.2:8443</code>（本示例中的容器）。其他 2 条 DNAT 同理。</li>
-</ol>
-</blockquote>
-</li>
-<li><em><strong>在 <code>iptables</code> 的 <code>PREROUTING</code> 链处理完成后，数据流入 <code>iptables</code> 的 <code>FORWARD</code> 链</strong></em>。规则定义位于 <code>filter</code> 表中。查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -L -v -n --line-numbers</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     605K  585M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0       </span><br><span class="line">...    </span><br><span class="line">9      461 33197 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">10     178  4984 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">11   10055  481K REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2      259  186K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      128  179K ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        8   356 DOCKER     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5      123  7065 ACCEPT     all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  br-43e659324492 br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7        0     0 ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">8        0     0 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">9        0     0 ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">10       0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">11       0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 42129 packets, 7533K bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8443</span><br><span class="line">2        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8080</span><br><span class="line">3        2   100 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      123  7065 DOCKER-ISOLATION-STAGE-2  all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      123  7065 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<ol>
-<li>数据流进入 <code>iptables</code> 的 <code>FORWARD</code> 链。</li>
-<li><code>DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 首先会被全部跳转到 <code>DOCKER-USER</code> 链进行处理。</li>
-<li><code>RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 默认情况下，<code>DOCKER-USER</code> 链未作任何处理，数据流跳转回 <code>FORWARD</code> 链中的原位置，继续进入下一个链 <code>DOCKER-ISOLATION-STAGE-1</code></li>
-<li><code>ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0</code> : 数据流到了此处，表示目标网络为本示例中的容器的网络，对数据全部放行接收。数据进入容器。</li>
-</ol>
-</blockquote>
-</li>
-</ol>
-<p>根据以上对数据流向的分析，如果要对进入容器的数据进行源 IP 限制，建议将其放置在 <code>DOCKER-USER</code> 链中。具体实现参考如下：</p>
-<ol>
-<li><p>配置 <code>ipset</code>，用于对多个源 IP 设置白名单</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>配置 <code>iptables</code>，如果源 IP 不在白名单中，则禁止访问特定的端口</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">iptables -t filter -I DOCKER-USER 1 -m set ! --match-set allowed_ips src -m multiport -p tcp --dports 8000,8080,8443 -j DROP -m comment --comment &quot;for Nextcloud&quot;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="docker-场景下的自定义-iptables-规则的持久化问题"><a href="#docker-场景下的自定义-iptables-规则的持久化问题" class="headerlink" title="docker 场景下的自定义 iptables 规则的持久化问题"></a>docker 场景下的自定义 iptables 规则的持久化问题</h2><p>在使用 Docker 或者 Docker Compose 部署应用的场景下，假如需要在 Docker 的基础上对 <code>iptables</code> 防火墙做自定义配置，如示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，此种情况下，要对自定义的防火墙规则做 <strong>持久化</strong> （ <strong><code>iptables</code> 或者 <code>docker</code> 重启后规则自动加载</strong>），可以参考以下几种方法：</p>
-<ol>
-<li><p>将配置写入 <code>iptables</code> 默认配置文件，<code>iptables</code> 重启后自动加载自定义规则，针对 示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，可以在 <code>iptables</code> 配置中写入配置</p>
-  <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT ACCEPT [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [0:0]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 提前定义链 &#x27;DOCKER-USER&#x27;，否则加载配置会报错： iptables-restore: line 24 failed</span></span></span><br><span class="line">:DOCKER-USER - [0:0]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">... 其他规则</span></span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 添加 Docker 自定义规则</span></span></span><br><span class="line">-A DOCKER-USER -m set ! --match-set allowed_ips src -m multiport  -p tcp --dports 3000,8080  -j REJECT</span><br><span class="line"></span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
-<li><p>以 Docker Compose 场景为例。可以创建一个容器，专门用来运行配置 <code>iptables</code> 命令。</p>
-<ol>
-<li><p>创建一个自定义 <code>iptables</code> 容器，此容器主要执行修改 <code>iptables</code> 自定义规则</p>
- <figure class="highlight shell"><figcaption><span>Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM alpine:latest</span><br><span class="line">RUN apk --no-cache add iptables</span><br><span class="line">COPY setup-iptables.sh /usr/local/bin/</span><br><span class="line">RUN chmod +x /usr/local/bin/setup-iptables.sh</span><br><span class="line">ENTRYPOINT [&quot;setup-iptables.sh&quot;]</span><br></pre></td></tr></table></figure></li>
-<li><p>编写 <code>setup-iptables.sh</code> 脚本:</p>
- <figure class="highlight shell"><figcaption><span>setup-iptables.sh</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line">iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>配置 <code>docker-compose.yml</code>，在 <code>docker-compose.yml</code> 中添加上面配置的容器</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  iptables:</span><br><span class="line">    build: .</span><br><span class="line">    network_mode: &quot;host&quot;</span><br><span class="line">    restart: &quot;no&quot;</span><br><span class="line">    deploy:</span><br><span class="line">      restart_policy:</span><br><span class="line">        condition: none</span><br><span class="line">  your_service:</span><br><span class="line">    image: your_image</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    # Other configuration options for your service</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p> <strong>当运行 <code>docker-compose up</code> 时，<code>iptables</code> 服务(容器)会启动并执行 <code>setup-iptables.sh</code> 脚本，将自定义规则添加到 <code>DOCKER-USER</code> 链中。</strong></p>
-<blockquote>
-<p>根据实际需求谨慎编写 <code>setup-iptables.sh</code> 脚本内容，防止 <code>iptables</code> 规则混乱</p>
-</blockquote>
-</li>
-</ol>
-</li>
-<li><p>要在 Docker Compose 中自定义防火墙规则，可以使用 Docker Compose 的 <code>post-up</code> 脚本功能。</p>
-<ol>
-<li><p>创建 <code>docker-compose.yml</code> 文件</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建 <code>docker-compose.override.yml</code> 文件</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.override.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    entrypoint: [&quot;sh&quot;, &quot;-c&quot;, &quot;iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT &amp;&amp; exec myservice&quot;]</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>启动 Docker Compose。  这样， 每次启动服务时，都会在 <code>DOCKER-USER</code> 链中添加指定的防火墙规则。确保 <code>myservice</code> 的入口点脚本正确无误，以防止启动失败。</p>
-<blockquote>
-<p><code>docker-compose up</code> 会时同时加载 <code>docker-compose.yml</code> 和 <code>docker-compose.override.yml</code>。</p>
-<p>Docker Compose 会将 <code>docker-compose.override.yml</code> 中的配置与 <code>docker-compose.yml</code> 中的配置合并。<strong>覆盖相同配置项，新增不同配置项</strong>。</p>
-</blockquote>
-</li>
-</ol>
-<p> 以上 2 个 <code>compose</code> 配置文件也可以合并成一个 <code>docker-compose.yml</code>：<br> <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line">    entrypoint: /path/to/setup-firewall.sh myservice-command</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></p>
-<blockquote>
-<p>这样，<strong>每次启动服务时，都会先执行防火墙规则，然后启动实际服务。</strong></p>
-</blockquote>
-</li>
-</ol>
-<h1 id="Ubuntu-22-04-安装-iptables"><a href="#Ubuntu-22-04-安装-iptables" class="headerlink" title="Ubuntu 22.04 安装 iptables"></a>Ubuntu 22.04 安装 iptables</h1><p>Ubuntu 22.04 (Jammy Jellyfish) 默认使用 <code>UFW (Uncomplicated Firewall)</code> 作为防火墙管理工具。UFW 是一个用户友好的前端工具，旨在简化 <code>iptables</code> 的配置。它默认是未激活的，但安装在系统中，用户可以根据需要启用和配置它。</p>
-<p>检查 UFW 状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status ufw</span></span><br><span class="line">● ufw.service - Uncomplicated firewall</span><br><span class="line">     Loaded: loaded (/lib/systemd/system/ufw.service; enabled; vendor preset: enabled)</span><br><span class="line">     Active: active (exited) since Wed 2024-08-14 10:14:19 CST; 2 weeks 3 days ago</span><br><span class="line">       Docs: man:ufw(8)</span><br><span class="line">   Main PID: 389 (code=exited, status=0/SUCCESS)</span><br><span class="line">        CPU: 4ms</span><br><span class="line"></span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Starting Uncomplicated firewall...</span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Finished Uncomplicated firewall.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>卸载 UFW 软件包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl stop ufw</span><br><span class="line"></span><br><span class="line">sudo apt purge ufw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">清理未使用的依赖项</span></span><br><span class="line">sudo apt autoremove</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 iptables</span></span><br><span class="line">sudo apt install iptables</span><br></pre></td></tr></table></figure>
-
-<p><strong>在 Ubuntu 22.04 (Jammy Jellyfish) 中，<code>iptables</code> 仍然是管理防火墙规则的重要工具，不过 Ubuntu 22.04 默认使用 <code>nftables</code> 作为防火墙框架，<code>iptables</code> 已经被 <code>nftables</code> 取代。在这种情况下，<code>iptables</code> 实际上是通过 <code>nftables</code> 的兼容层 (<code>iptables-nft</code>) 实现的</strong>。这意味着你在使用 <code>iptables</code> 命令时，实际上是在通过 <code>nftables</code> 管理规则。</p>
-<blockquote>
-<p><code>nftables</code> 防火墙框架的默认客户端工具是 <code>nft</code>.</p>
-</blockquote>
-<p>检查 <code>iptables</code> 可执行文件路径会发现 <code>iptables</code> 实际上是 <code>iptables-nft</code> 命令的软链接</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">which</span> iptables</span></span><br><span class="line">/usr/sbin/iptables</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /usr/sbin/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 26 Oct  4  2023 /usr/sbin/iptables -&gt; /etc/alternatives/iptables*</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /etc/alternatives/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 22 Oct  4  2023 /etc/alternatives/iptables -&gt; /usr/sbin/iptables-nft*</span><br></pre></td></tr></table></figure>
-
-<p>安装 <code>iptables</code> 后可以使用 <code>iptables</code> 命令管理防火墙规则，但是没有 <code>iptables</code> 服务存在。为了方便 <code>iptables</code> 服务的管理，可以参考以下配置将  <code>iptables</code> 添加为系统服务</p>
-<figure class="highlight shell"><figcaption><span>/etc/systemd/system/iptables.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=IPv4 firewall with iptables</span><br><span class="line">Before=network-pre.target</span><br><span class="line">Wants=network-pre.target</span><br><span class="line">Before=ip6tables.service</span><br><span class="line">After=syslog.target</span><br><span class="line">AssertPathExists=/etc/sysconfig/iptables</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=oneshot</span><br><span class="line">RemainAfterExit=yes</span><br><span class="line">ExecStart=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecReload=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecStop=/usr/sbin/iptables -F</span><br><span class="line">Environment=BOOTUP=serial</span><br><span class="line">Environment=CONSOLETYPE=serial</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=basic.target</span><br></pre></td></tr></table></figure>
-
-<p>防火墙规则配置文件 <code>/etc/sysconfig/iptables</code>(可以自定义路径)</p>
-<blockquote>
-<p><strong>使用以上方式的 <code>iptables</code> 服务，其本质上（底层框架）还是使用的 <code>nftables</code> 防火墙，此方式只是对还不熟悉 <code>nft</code> 而熟悉 <code>iptables</code> 的管理员提供了一种熟悉的管理防火墙（<code>nftables</code>）的方式(通过 <code>iptables-nft</code> 实现)</strong></p>
-</blockquote>
-<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
-<p>ssh 连接失败后查看日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
-<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
-<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
-<p>将其默认规则改为 <code>ACCEPT</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
-<p>重新使用 ssh 登陆，连接正常。</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>iptables</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Linux KVM 配置说明</title>
     <url>/20260507140030/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>KVM（Kernel-based Virtual Machine）</strong> 是 Linux 内核的一个模块，它将 Linux 内核转变为一个 Type-1（裸机级） <strong>虚拟机管理程序（Hypervisor&#x2F;VMM）</strong> 。</p>
@@ -37900,457 +37557,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之天火同人</title>
-    <url>/20250923102639/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天火同人"><a href="#天火同人" class="headerlink" title="天火同人"></a>天火同人</h1><p><img src="https://i.0920811.xyz/img_353.png"></p>
-<p>天火同人，上（外）卦为乾（天），下（内）卦为离（火），天在上，火在下，火性向上，与天相合，象征着人与人之间的和谐相处。同人，与人同道，同心同德、聚合同道，讲合作与共济。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人：同人于野，亨。利涉大川，利君子贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：同人，柔得位得中，而应乎乾，曰同人。同人曰，同人于野，亨。利涉大川，乾行也。文明以健，中正而应，君子正也。唯君子为能通天下之志。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与火，同人;君子以类族辨物。</span><br></pre></td></tr></table></figure>
-
-<p>全卦只有六二为柔爻，柔顺中正，正应九五，上下应合，为全卦主爻，柔爻于其他刚爻同心同德，称同人。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>同人者，谓同其道也。非徒同人，必以道同，乃可亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人必以道合，不以利合。能公于天下，则亨。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于野，言无私也。利涉大川，言刚健有为。惟君子能持正，以通天下之志。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于门，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：出门同人，又谁咎也。</span><br></pre></td></tr></table></figure>
-
-<p>出门同人，这里的 <strong>出门</strong> 象征着起点或初始阶段，门更象征 <strong>亲疏、内外、私域与公域得边界</strong> 。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初九阳刚得正，志在同人，但力有限，始同于门，然亦无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人之道，必广而公。初在卑位，未能大同，先同于门，亦已善矣。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>初九刚正，欲同于人，始于门户之内，无咎也。能出门同人，则无咎之至也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于宗，吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于宗，吝道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>同人于宗</strong> ： 宗，本宗、宗族、家族内部、表示有血缘或亲近关系的小群体、亲信、小圈子。这种行为是一种狭隘、保守的方式。虽然有一定的亲和力，但过于局限，缺乏广泛性。</li>
-</ul>
-<p>阴爻居中（得中），柔顺中正，本有善德。只正应九五（阳刚中正之君），忽视了其他刚爻，故为取吝之道。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二柔中而得正，能与人同，然以宗为限，不能大通，故吝。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人贵在大公，不可偏私。二以柔居中，德本可同，但局于宗族，未免为吝。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于宗，谓偏于所亲而已，不广于天下也。吝道也。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">伏戎于莽，升其高陵，三岁不兴。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：伏戎于莽，敌刚也。三岁不兴，安行也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>伏戎于莽</strong> ： 伏，埋伏、隐藏。戎，军队、部队。莽，草莽、草丛、丛林之地。</li>
-<li><strong>升其高陵</strong> ： 登上高地（高丘）观察局势。高陵，象征占据有利地形、隐藏实力、谨慎观望。</li>
-<li><strong>三岁不兴，安行也</strong> ： 三年（多年）不会发动进攻，要确保安全稳定。象征谨慎行事，避免轻举妄动。</li>
-</ul>
-<p>九三爻是同人卦的第三爻，处于下卦的上位，代表积极主动、刚健、果断的品质，但处于下卦与上卦的交界，位置险要，自身力量尚未完全整合，也未与上卦的正道核心（九五）形成呼应。 <strong>伏戎于莽，升其高陵，三岁不兴</strong> 强调了在交往中遇到强大对手时，需要采取隐蔽和谨慎的策略。要占据有利地形，做好充分准备，但不要轻易发动攻击，以确保安全和稳定。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九三刚而不中，处势不利，故伏戎以待，不敢动也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九三处险，志在同人，但上有强刚，不得进。故伏兵草莽，登高以望，久而不举，以安其行。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九三刚正而不中，上应九六之刚，故为敌刚。潜兵不动，得以自安。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘其墉，弗克攻，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：乘其墉，义弗克也，其吉，则困而反则也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>乘其墉，弗克攻</strong> ： 墉，城墙、防御工事。登上城墙，象征着占据了有利位置，有了进攻的机会。但没有发动攻击。这表示在有机会发动攻击时，选择了克制和谨慎。</li>
-<li><strong>义弗克也</strong> ： 义，指道义、正义。登上城墙，但按道义不能发动攻击。</li>
-<li><strong>其吉，则困而反则也</strong> ： 这里的 困而反则 指在困境中回归正道，遵循正确的原则。</li>
-</ul>
-<p>九四为阳爻居阴位（位不正），处于上卦 “乾”（刚健）的初爻，紧邻下卦 “离”（文明）的九三（阳爻），既有阳刚进取的本能，又因 “位不正” 而有顾虑。 <strong>弗克攻</strong> 不是不能攻，而是不应攻（义弗克也）， <strong>同人 的本质是 以正道聚人，而非 以武力征服</strong> 。</p>
-<p>九四虽 “位不正”（阳爻居阴位），却能得 “吉”，核心在于 “困而反则” ：在 “进取与道义” 的困境（位不当，阳爻居阴位，易躁动失道）中回归正道（反则、义弗克也）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四以阳居阴，失位而不中，志欲进而不得，故象乘墉。然义不可攻，止而不攻，是以吉也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四志欲同人，然义不可攻，能止其欲而不行，是以吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>乘其墉者，有攻之势也；弗克攻者，义不可也。知义而止，故吉。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人，先号啕而后笑。大师克，相遇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人之先，以中直也。大师相遇，言相克也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>先号啕而后笑</strong> ： 号啕，大声哭叫。这里比喻一开始遭遇隔阂、不合，难以同人。最后能和同，心志融洽而喜乐。</li>
-<li><strong>大师克，相遇</strong> ： 大师，大军。克，克服、攻克。克服同人得障碍，实现同人。</li>
-<li><strong>同人之先，以中直也</strong> ： “号啕” 的根源是 “中直”，九五坚守中正刚直，直率不曲，所以容易先有冲突，后才化解</li>
-</ul>
-<p>九五阳爻居尊位（君位），而且居中，正是“中直”的位置。它与六二正应（阴柔中正），上下呼应，构成同人之象。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五以中正居尊，志直不曲，故与人同，先相克而后相亲。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>刚直之人，未易相合，初多乖戾；然志在道同，终必相合</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>先号啕而后笑，谓其初虽有相克之难，然终于相遇而合也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于郊，无悔。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于郊，志未得也。</span><br></pre></td></tr></table></figure>
-
-<p>“郊” 在 “野”（旷野，“同人” 理想之境）与 “城”（核心区域）之间，意味着上九已突破私域局限，能在更广阔的范围聚合同道，但尚未完全进入 “通天下之志” 的终极理想（同人于野）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上九处同人之终，志在大同，而位极孤危，不能尽合，故同人于郊，无悔而已。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人当以天下为公，上九虽同人于郊，已出门户，不为私比，然犹未达于大同，故无悔而志未得。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于郊，犹未尽天下之同也。然已不私比，故无悔</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天雷无妄</title>
-    <url>/20251016103340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
-<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
-<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
-<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
-<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
-</li>
-<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
-
-<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
-</li>
-<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
-</li>
-<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
-</ul>
-<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
-</li>
-<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
-</li>
-<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
-<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
-</ul>
-<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
-</li>
-<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
-</li>
-<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
-</li>
-<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
-</li>
-<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
-</li>
-<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
-</li>
-<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
-
-<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
-</li>
-<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
-</li>
-<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天山遁</title>
-    <url>/20251122162040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
-<p>天山遁，下（内）艮（山、止）上乾（天、健），遁者，退也。是阳消阴息的十二消息卦之一，处于柔爻长而刚爻退的过程中。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁，亨，小利贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：遁亨，遁而亨也。刚当位而应，与时行也。小利贞，浸而长也。遁之时义大矣哉！</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下有山，遁。君子以远小人，不恶而严。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>遁亨，遁而亨也</strong> ： 遁卦从乾卦一阴生得天风姤，再生一阴至天山遁，为阴长阳消的过程。天地自然都是在阴阳消息中不停运动，不论阴长阳消还是阴消阳长都是自然之道，都是亨通。在阴长阳消的自然大势中，阴来阳往、刚屈柔伸，对刚爻（阳）来说，遁（退）就是亨。刚爻为大，柔爻为小，刚往柔来，小利贞。</li>
-<li><strong>刚当位而应，与时行也</strong> ： 指九五刚爻正应六二。六二为全卦主爻，代表柔爻的上涨势头。全卦阳爻多于阴爻，刚爻势大，九五刚爻尊位得正，是为当位，但阴长阳退为大势所趋，九五正应六二，能主动退让，是能顺应大势，即与时行也。</li>
-<li><strong>君子以远小人，不恶而严</strong> ： 恶，惹、招惹、惹怒。严，划清界限、界限分明。小人势长，远离小人，不招惹小人，但要和其划清界限，不同流合污。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁尾，厉。勿用有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：遁尾之厉，不往何灾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>遁尾，厉。勿用有攸往</strong> ： 遁尾，退避之际落在最后，喻“当遁而迟疑，落在人后”。</li>
-</ul>
-<p>初六处全卦最下，阴柔才弱，又居最外（艮下），本当最先见几而退；却迟钝观望，反成“尾”，故危。这一爻不宜行动，安分自首可保无灾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处遁之始而不能遁，至于尾，故厉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>尾者，遁之晚也。晚而遁，危厉之道也。</code></p>
-</li>
-<li><p><code>遁之时宜速，今至尾而后遁，是以危厉。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">执之用黄牛之革，莫之胜说。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：执用黄牛，固志也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>执之用黄牛之革，莫之胜说</strong> ： 执，捆住、扎住、抓住。革，皮革、坚韧的牛皮绳、革带。说，通脱，挣脱、脱开、解开。黄牛，黄为中央之色，牛性顺而皮韧，象征中德柔顺而坚定，与六二之正位相合。</li>
-</ul>
-<p>六二阴爻居阴位，柔得中得正，在下卦艮（山、止）中位，坚守中道，不为小人所动摇、不为外物所诱惑</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>以阴居中，志能自固，故莫之得动。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>能固其志，守遁之正，不为外物所夺。</code></p>
-</li>
-<li><p><code>黄牛之革，坚韧而不裂。六二止退得宜，故莫之胜说。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系遁，有疾厉，畜臣妾吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系遁之厉，有疾惫也；畜臣妾吉，不可大事也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>系遁，有疾厉，畜臣妾吉</strong> ： 系，被牵绊、羁绊、有所牵挂。疾厉，有疾病缠身得风险。臣妾，泛指从属、附属的人或事，也象征小事、内务。</li>
-</ul>
-<p>九三处内卦之极，刚居阳位，上临九四之“敌刚”，下比六二之“系私”，进退两难；欲遁而被私情、家事或旧部所牵，故成“系遁”。就像疾病缠身，不仅痛苦，而且消耗精力（象曰：有疾惫也），最终招致危险（“厉”）。在大环境不利、需要退避（遁）时，九三虽无法彻底脱身，但如果能将精力放在管理内务、巩固自身根基、处理身边的小事上，则是吉祥的。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>系遁者，不能得遁也。处动之极，欲进不得，欲退不能，有疾惫之象。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九三刚而不中，欲遁不得，宜于小事，而不可以大事也。</code></p>
-</li>
-<li><p><code>刚中处遁，心急志动，而遁不得，故有疾厉。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">好遁。君子吉，小人否。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子好遁，小人否也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>好遁。君子吉，小人否</strong> ： 好，乐于、喜欢、善于。君子识时务乐于退避，小人则不然（不乐于退避）。</li>
-</ul>
-<p>君子知道何时进、何时退，在小人壮大、时势不利时，能洞察先机，主动退避以保全自身，符合遁卦的卦义，故为吉祥。小人贪恋权力、地位和物质，即使面对危险，也不愿意放弃自己的所得。因此，在需要退避时，他们不乐于、不肯退避（“否”），最终会因时机错过而遭受灾祸。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处遁之时，得以退避，故好遁也。君子以退为吉，小人不能遁也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>遁之道在九四而得其正。能遁者，君子也；不能遁者，小人也。</code></p>
-</li>
-<li><p><code>九四虽刚，而处柔位，能好遁者，故吉。小人不能遁，故否。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">嘉遁，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：嘉遁贞吉，以正志也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>嘉遁贞吉，以正志也</strong> ： 嘉，美、善、值得赞颂、值得称颂。美好的退避、高尚的抽身、君子之退。</li>
-</ul>
-<p>九五刚尊得中而应六二，以刚健中正之德，主动让贤、让功，既契合时势规律，又坚守自身正道，故美其退曰“嘉遁”。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处尊而能遁，嘉之至也。志正故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>能遁于君位之尊，非迫也，自得也。其遁之美，在于是也。</code></p>
-</li>
-<li><p><code>九五居尊，能自遁避，不与小人争。其志正也，故贞吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">肥遁，无不利</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：肥遁无不利，无所疑也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>肥遁，无不利</strong> ： 肥，这里不是指肥胖，而是指丰裕、富足、安逸、从容。从容而退，满载而退，毫无顾虑、迟疑。</li>
-</ul>
-<p>上九阳爻居阴位，处卦之极、刚柔相济</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>肥者，大也。退避无害，得其全也，无不利也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>退而无所累，德全而去，谓之肥遁。</code></p>
-</li>
-<li><p><code>上九处遁之终，遁既得其全，故无不利也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之天泽履</title>
     <url>/20250917160539/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天泽履"><a href="#天泽履" class="headerlink" title="天泽履"></a>天泽履</h1><p><img src="https://i.0920811.xyz/img_350.png"></p>
@@ -40029,6 +39235,800 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之天火同人</title>
+    <url>/20250923102639/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天火同人"><a href="#天火同人" class="headerlink" title="天火同人"></a>天火同人</h1><p><img src="https://i.0920811.xyz/img_353.png"></p>
+<p>天火同人，上（外）卦为乾（天），下（内）卦为离（火），天在上，火在下，火性向上，与天相合，象征着人与人之间的和谐相处。同人，与人同道，同心同德、聚合同道，讲合作与共济。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人：同人于野，亨。利涉大川，利君子贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：同人，柔得位得中，而应乎乾，曰同人。同人曰，同人于野，亨。利涉大川，乾行也。文明以健，中正而应，君子正也。唯君子为能通天下之志。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与火，同人;君子以类族辨物。</span><br></pre></td></tr></table></figure>
+
+<p>全卦只有六二为柔爻，柔顺中正，正应九五，上下应合，为全卦主爻，柔爻于其他刚爻同心同德，称同人。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>同人者，谓同其道也。非徒同人，必以道同，乃可亨。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人必以道合，不以利合。能公于天下，则亨。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>同人于野，言无私也。利涉大川，言刚健有为。惟君子能持正，以通天下之志。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于门，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：出门同人，又谁咎也。</span><br></pre></td></tr></table></figure>
+
+<p>出门同人，这里的 <strong>出门</strong> 象征着起点或初始阶段，门更象征 <strong>亲疏、内外、私域与公域得边界</strong> 。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初九阳刚得正，志在同人，但力有限，始同于门，然亦无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人之道，必广而公。初在卑位，未能大同，先同于门，亦已善矣。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>初九刚正，欲同于人，始于门户之内，无咎也。能出门同人，则无咎之至也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于宗，吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于宗，吝道也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>同人于宗</strong> ： 宗，本宗、宗族、家族内部、表示有血缘或亲近关系的小群体、亲信、小圈子。这种行为是一种狭隘、保守的方式。虽然有一定的亲和力，但过于局限，缺乏广泛性。</li>
+</ul>
+<p>阴爻居中（得中），柔顺中正，本有善德。只正应九五（阳刚中正之君），忽视了其他刚爻，故为取吝之道。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六二柔中而得正，能与人同，然以宗为限，不能大通，故吝。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人贵在大公，不可偏私。二以柔居中，德本可同，但局于宗族，未免为吝。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>同人于宗，谓偏于所亲而已，不广于天下也。吝道也。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">伏戎于莽，升其高陵，三岁不兴。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：伏戎于莽，敌刚也。三岁不兴，安行也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>伏戎于莽</strong> ： 伏，埋伏、隐藏。戎，军队、部队。莽，草莽、草丛、丛林之地。</li>
+<li><strong>升其高陵</strong> ： 登上高地（高丘）观察局势。高陵，象征占据有利地形、隐藏实力、谨慎观望。</li>
+<li><strong>三岁不兴，安行也</strong> ： 三年（多年）不会发动进攻，要确保安全稳定。象征谨慎行事，避免轻举妄动。</li>
+</ul>
+<p>九三爻是同人卦的第三爻，处于下卦的上位，代表积极主动、刚健、果断的品质，但处于下卦与上卦的交界，位置险要，自身力量尚未完全整合，也未与上卦的正道核心（九五）形成呼应。 <strong>伏戎于莽，升其高陵，三岁不兴</strong> 强调了在交往中遇到强大对手时，需要采取隐蔽和谨慎的策略。要占据有利地形，做好充分准备，但不要轻易发动攻击，以确保安全和稳定。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九三刚而不中，处势不利，故伏戎以待，不敢动也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九三处险，志在同人，但上有强刚，不得进。故伏兵草莽，登高以望，久而不举，以安其行。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九三刚正而不中，上应九六之刚，故为敌刚。潜兵不动，得以自安。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘其墉，弗克攻，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：乘其墉，义弗克也，其吉，则困而反则也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>乘其墉，弗克攻</strong> ： 墉，城墙、防御工事。登上城墙，象征着占据了有利位置，有了进攻的机会。但没有发动攻击。这表示在有机会发动攻击时，选择了克制和谨慎。</li>
+<li><strong>义弗克也</strong> ： 义，指道义、正义。登上城墙，但按道义不能发动攻击。</li>
+<li><strong>其吉，则困而反则也</strong> ： 这里的 困而反则 指在困境中回归正道，遵循正确的原则。</li>
+</ul>
+<p>九四为阳爻居阴位（位不正），处于上卦 “乾”（刚健）的初爻，紧邻下卦 “离”（文明）的九三（阳爻），既有阳刚进取的本能，又因 “位不正” 而有顾虑。 <strong>弗克攻</strong> 不是不能攻，而是不应攻（义弗克也）， <strong>同人 的本质是 以正道聚人，而非 以武力征服</strong> 。</p>
+<p>九四虽 “位不正”（阳爻居阴位），却能得 “吉”，核心在于 “困而反则” ：在 “进取与道义” 的困境（位不当，阳爻居阴位，易躁动失道）中回归正道（反则、义弗克也）</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四以阳居阴，失位而不中，志欲进而不得，故象乘墉。然义不可攻，止而不攻，是以吉也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四志欲同人，然义不可攻，能止其欲而不行，是以吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>乘其墉者，有攻之势也；弗克攻者，义不可也。知义而止，故吉。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人，先号啕而后笑。大师克，相遇。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人之先，以中直也。大师相遇，言相克也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>先号啕而后笑</strong> ： 号啕，大声哭叫。这里比喻一开始遭遇隔阂、不合，难以同人。最后能和同，心志融洽而喜乐。</li>
+<li><strong>大师克，相遇</strong> ： 大师，大军。克，克服、攻克。克服同人得障碍，实现同人。</li>
+<li><strong>同人之先，以中直也</strong> ： “号啕” 的根源是 “中直”，九五坚守中正刚直，直率不曲，所以容易先有冲突，后才化解</li>
+</ul>
+<p>九五阳爻居尊位（君位），而且居中，正是“中直”的位置。它与六二正应（阴柔中正），上下呼应，构成同人之象。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五以中正居尊，志直不曲，故与人同，先相克而后相亲。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>刚直之人，未易相合，初多乖戾；然志在道同，终必相合</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>先号啕而后笑，谓其初虽有相克之难，然终于相遇而合也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于郊，无悔。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于郊，志未得也。</span><br></pre></td></tr></table></figure>
+
+<p>“郊” 在 “野”（旷野，“同人” 理想之境）与 “城”（核心区域）之间，意味着上九已突破私域局限，能在更广阔的范围聚合同道，但尚未完全进入 “通天下之志” 的终极理想（同人于野）</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上九处同人之终，志在大同，而位极孤危，不能尽合，故同人于郊，无悔而已。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人当以天下为公，上九虽同人于郊，已出门户，不为私比，然犹未达于大同，故无悔而志未得。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>同人于郊，犹未尽天下之同也。然已不私比，故无悔</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之天雷无妄</title>
+    <url>/20251016103340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
+<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
+<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
+<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
+<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
+</li>
+<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
+
+<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
+</li>
+<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
+</li>
+<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
+</ul>
+<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
+</li>
+<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
+</li>
+<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
+<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
+</ul>
+<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
+</li>
+<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
+</li>
+<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
+</li>
+<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
+</li>
+<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
+</li>
+<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
+</li>
+<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
+
+<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
+</li>
+<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
+</li>
+<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之天山遁</title>
+    <url>/20251122162040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
+<p>天山遁，下（内）艮（山、止）上乾（天、健），遁者，退也。是阳消阴息的十二消息卦之一，处于柔爻长而刚爻退的过程中。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁，亨，小利贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：遁亨，遁而亨也。刚当位而应，与时行也。小利贞，浸而长也。遁之时义大矣哉！</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下有山，遁。君子以远小人，不恶而严。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>遁亨，遁而亨也</strong> ： 遁卦从乾卦一阴生得天风姤，再生一阴至天山遁，为阴长阳消的过程。天地自然都是在阴阳消息中不停运动，不论阴长阳消还是阴消阳长都是自然之道，都是亨通。在阴长阳消的自然大势中，阴来阳往、刚屈柔伸，对刚爻（阳）来说，遁（退）就是亨。刚爻为大，柔爻为小，刚往柔来，小利贞。</li>
+<li><strong>刚当位而应，与时行也</strong> ： 指九五刚爻正应六二。六二为全卦主爻，代表柔爻的上涨势头。全卦阳爻多于阴爻，刚爻势大，九五刚爻尊位得正，是为当位，但阴长阳退为大势所趋，九五正应六二，能主动退让，是能顺应大势，即与时行也。</li>
+<li><strong>君子以远小人，不恶而严</strong> ： 恶，惹、招惹、惹怒。严，划清界限、界限分明。小人势长，远离小人，不招惹小人，但要和其划清界限，不同流合污。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">遁尾，厉。勿用有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：遁尾之厉，不往何灾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>遁尾，厉。勿用有攸往</strong> ： 遁尾，退避之际落在最后，喻“当遁而迟疑，落在人后”。</li>
+</ul>
+<p>初六处全卦最下，阴柔才弱，又居最外（艮下），本当最先见几而退；却迟钝观望，反成“尾”，故危。这一爻不宜行动，安分自首可保无灾。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处遁之始而不能遁，至于尾，故厉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>尾者，遁之晚也。晚而遁，危厉之道也。</code></p>
+</li>
+<li><p><code>遁之时宜速，今至尾而后遁，是以危厉。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">执之用黄牛之革，莫之胜说。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：执用黄牛，固志也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>执之用黄牛之革，莫之胜说</strong> ： 执，捆住、扎住、抓住。革，皮革、坚韧的牛皮绳、革带。说，通脱，挣脱、脱开、解开。黄牛，黄为中央之色，牛性顺而皮韧，象征中德柔顺而坚定，与六二之正位相合。</li>
+</ul>
+<p>六二阴爻居阴位，柔得中得正，在下卦艮（山、止）中位，坚守中道，不为小人所动摇、不为外物所诱惑</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>以阴居中，志能自固，故莫之得动。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>能固其志，守遁之正，不为外物所夺。</code></p>
+</li>
+<li><p><code>黄牛之革，坚韧而不裂。六二止退得宜，故莫之胜说。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系遁，有疾厉，畜臣妾吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系遁之厉，有疾惫也；畜臣妾吉，不可大事也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>系遁，有疾厉，畜臣妾吉</strong> ： 系，被牵绊、羁绊、有所牵挂。疾厉，有疾病缠身得风险。臣妾，泛指从属、附属的人或事，也象征小事、内务。</li>
+</ul>
+<p>九三处内卦之极，刚居阳位，上临九四之“敌刚”，下比六二之“系私”，进退两难；欲遁而被私情、家事或旧部所牵，故成“系遁”。就像疾病缠身，不仅痛苦，而且消耗精力（象曰：有疾惫也），最终招致危险（“厉”）。在大环境不利、需要退避（遁）时，九三虽无法彻底脱身，但如果能将精力放在管理内务、巩固自身根基、处理身边的小事上，则是吉祥的。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>系遁者，不能得遁也。处动之极，欲进不得，欲退不能，有疾惫之象。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九三刚而不中，欲遁不得，宜于小事，而不可以大事也。</code></p>
+</li>
+<li><p><code>刚中处遁，心急志动，而遁不得，故有疾厉。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">好遁。君子吉，小人否。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子好遁，小人否也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>好遁。君子吉，小人否</strong> ： 好，乐于、喜欢、善于。君子识时务乐于退避，小人则不然（不乐于退避）。</li>
+</ul>
+<p>君子知道何时进、何时退，在小人壮大、时势不利时，能洞察先机，主动退避以保全自身，符合遁卦的卦义，故为吉祥。小人贪恋权力、地位和物质，即使面对危险，也不愿意放弃自己的所得。因此，在需要退避时，他们不乐于、不肯退避（“否”），最终会因时机错过而遭受灾祸。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处遁之时，得以退避，故好遁也。君子以退为吉，小人不能遁也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>遁之道在九四而得其正。能遁者，君子也；不能遁者，小人也。</code></p>
+</li>
+<li><p><code>九四虽刚，而处柔位，能好遁者，故吉。小人不能遁，故否。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">嘉遁，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：嘉遁贞吉，以正志也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>嘉遁贞吉，以正志也</strong> ： 嘉，美、善、值得赞颂、值得称颂。美好的退避、高尚的抽身、君子之退。</li>
+</ul>
+<p>九五刚尊得中而应六二，以刚健中正之德，主动让贤、让功，既契合时势规律，又坚守自身正道，故美其退曰“嘉遁”。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处尊而能遁，嘉之至也。志正故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>能遁于君位之尊，非迫也，自得也。其遁之美，在于是也。</code></p>
+</li>
+<li><p><code>九五居尊，能自遁避，不与小人争。其志正也，故贞吉。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">肥遁，无不利</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：肥遁无不利，无所疑也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>肥遁，无不利</strong> ： 肥，这里不是指肥胖，而是指丰裕、富足、安逸、从容。从容而退，满载而退，毫无顾虑、迟疑。</li>
+</ul>
+<p>上九阳爻居阴位，处卦之极、刚柔相济</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>肥者，大也。退避无害，得其全也，无不利也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>退而无所累，德全而去，谓之肥遁。</code></p>
+</li>
+<li><p><code>上九处遁之终，遁既得其全，故无不利也。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>iptables 服务使用说明</title>
+    <url>/202210241051/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，<code>netfilter</code> 的架构是在整个网络流程(TCP&#x2F;IP 协议栈)的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
+<p>IP 层的 5 个钩子点的位置，对应就是 <code>iptables</code> 的 5 条内置链，分别是</p>
+<ul>
+<li><code>PREROUTING</code></li>
+<li><code>FORWARD</code></li>
+<li><code>INPUT</code></li>
+<li><code>OUTPUT</code></li>
+<li><code>POSTROUTING</code></li>
+</ul>
+<p><img src="https://i.0920811.xyz/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 <code>netfilter</code> 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过 <strong>查询本地路由表</strong> 决定这个数据包的流向</p>
+<ul>
+<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
+<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 <code>netfilter</code> 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
+</ul>
+<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
+<p>除了 5 条内置的链，<code>iptables</code> 还有 5 张表，这 5 张表主要是用来给 <code>iptables</code> 中的规则（rule）分类，系统中所有的 <code>iptables</code> 规则都被划分到不同的表集合中。5 张表分别为</p>
+<ul>
+<li><code>raw</code> - <code>iptables</code> 是有状态的，即 <code>iptables</code> 对数据包有连接追踪 (<code>connection trackong</code>) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
+<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
+<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
+<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(<code>drop</code>)、或拒绝(<code>reject</code>)</li>
+<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
+</ul>
+<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，<code>iptables</code> 不支持自定义表。不是每个链上都能挂表，<code>iptables</code> 表与链的对应关系如下图</p>
+<table>
+<thead>
+<tr>
+<th>-</th>
+<th>PREROUTING</th>
+<th>FORWARD</th>
+<th>INPUT</th>
+<th>OUTPUT</th>
+<th>POSTROUTING</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>raw</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>mangle</code></td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (SNAT)</code></td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (DNAT)</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>filter</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>security</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+</tbody></table>
+<p><code>iptables</code> 表和链的工作流程图如下</p>
+<p><img src="https://i.0920811.xyz/img_134.png"></p>
+<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-F ,--flush</code></td>
+<td>清除所有规则，默认规则除外</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-P ,--policy</code></td>
+<td>设置默认规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-t ,--table</code></td>
+<td>指定要操作的表，默认为 <code>filter</code> 表</td>
+<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--list ,-L [chain [rulenum]]</code></td>
+<td>列出（指定的链或所有链）的规则</td>
+<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
+</tr>
+<tr>
+<td><code>--verbose	,-v</code></td>
+<td>verbose mode</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--numeric	,-n</code></td>
+<td>不解析协议和端口号，以数字的形式显示</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--line-numbers</code></td>
+<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--jump	,-j</code></td>
+<td>匹配的规则的处理 target</td>
+<td><code>iptables -A INPUT  -j LOG</code></td>
+</tr>
+<tr>
+<td><code>--append  ,-A chain</code></td>
+<td>像指定的链中追加规则</td>
+<td><code>-A INPUT -i lo -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--insert  ,-I chain [rulenum]</code></td>
+<td>向指定的链中指定的位置插入规则</td>
+<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--delete  ,-D chain rulenum</code></td>
+<td>删除指定链中的指定位置的规则</td>
+<td><code>iptables -D INPUT 10 </code></td>
+</tr>
+<tr>
+<td><code>--replace ,-R chain rulenum</code></td>
+<td>更新指定链中的指定位置的规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-S, --list-rules [chain]</code></td>
+<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
+<td></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>删除指定行号的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
+
+<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
+<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
+<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
+<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
+<p>重启 <code>rsyslog</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
+<li><p><code>journalctl -k</code> 命令查看</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
+</ul>
+<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
+<p>iptables 中日志相关的选项：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--log-prefix</code></td>
+<td>记录的日志的内容前缀</td>
+<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
+</tr>
+<tr>
+<td><code>--log-level</code></td>
+<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
+<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
+</tr>
+</tbody></table>
+<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
+<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
+
+<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
+
+<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
+
+<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
+
+<h2 id="iptables-配合-ipset-实现批量-IP-控制"><a href="#iptables-配合-ipset-实现批量-IP-控制" class="headerlink" title="iptables 配合 ipset 实现批量 IP 控制"></a>iptables 配合 ipset 实现批量 IP 控制</h2><p><code>ipset</code> 是 Linux 内核中的一个工具，根据创建 ipset 时指定的类型，它可以存储多个 IP 地址、IP 网络（network）、TCP&#x2F;UDP 端口、MAC 地址等，并且支持动态更新其中的内容。<strong>比如配合 <code>iptables</code> 使用时，可以将多个目标 IP 地址或者网络存储于其中并可以动态更新 <code>iptables</code> 规则（更新 <code>ipset</code> 后无需重启 <code>iptables</code> 即可生效）</strong></p>
+<ol>
+<li><p>创建 <code>ipset</code> 并指定 <code>ipset</code> 类型为 <code>hash:ip</code>，更多支持的类型可以通过 <code>ipset -h</code> 查看</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p>添加目标 IP 到 <code>ipset</code>，可以多次添加</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在 <code>iptables</code> 中使用 <code>ipset</code></p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ipset 作为源 IP 允许访问</span></span><br><span class="line">iptables -A INPUT -m set --match-set allowed_ips src -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">源 IP 不在 ipset 中则不允许访问</span></span><br><span class="line">iptables -A INPUT -m set ! --match-set allowed_ips src -j DROP</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><strong>默认情况下，<code>ipset</code> 属于临时配置，没有持久化，系统重启后内容会丢失</strong>。要配置 <code>ipset</code> 持久化，可以参考以下步骤</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保存 ipset 配置</span></span><br><span class="line">ipset save &gt; /etc/ipset.conf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">恢复 ipset 配置</span></span><br><span class="line">ipset restore &lt; /etc/ipset.conf</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="docker-compose-场景下使用-iptables-进行白名单限制"><a href="#docker-compose-场景下使用-iptables-进行白名单限制" class="headerlink" title="docker compose 场景下使用 iptables 进行白名单限制"></a>docker compose 场景下使用 iptables 进行白名单限制</h2><p>假设有以下 <code>docker-compose.yml</code> 文件</p>
+<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  nextcloud_aio_mastercontainer:</span><br><span class="line">    image: nextcloud/all-in-one:latest</span><br><span class="line">    container_name: nextcloud-aio-mastercontainer</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;8000:80&quot;</span><br><span class="line">      - &quot;8080:8080&quot;</span><br><span class="line">      - &quot;8443:8443&quot;</span><br><span class="line">    volumes:</span><br><span class="line">      - aio_mastercontainer:/mnt/docker-aio-config</span><br><span class="line">      - /var/run/docker.sock:/var/run/docker.sock:ro</span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  aio_mastercontainer:</span><br><span class="line">    driver: local</span><br><span class="line">    driver_opts:</span><br><span class="line">      type: none</span><br><span class="line">      o: bind</span><br><span class="line">      device: ./data/</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>docker compose up</code> 正常启动后， Docker 会根据 <code>docker-compose.yml</code> 中的定义配置 <code>iptables</code> 防火墙规则，以下为上面 <code>docker-compose.yml</code> 定义的数据端口在 <code>iptables</code> 规则中的数据流向分析</p>
+<ol>
+<li>数据报文首先经过 <code>iptables</code> 的 <code>PREROUTING</code> 链，在 <code>PREROUTING</code> 链中会进行 <code>DNAT</code>，位于 <code>nat</code> 表中，查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -t nat -L -v -n</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 4376 packets, 255K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">80051 4690K DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 3891 packets, 233K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 12629 packets, 1082K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 12637 packets, 1083K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    3   200 MASQUERADE  all  --  *      !br-43e659324492  172.21.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8443</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8080</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 RETURN     all  --  br-43e659324492 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8080 to:172.21.0.2:8080</span><br><span class="line">    2   100 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 to:172.21.0.2:80</span><br></pre></td></tr></table></figure>
+<blockquote>
+<ol>
+<li><code>DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</code> : 所有的报文会被跳转到 <code>DOCKER</code> 链进行处理</li>
+<li><code>DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</code> : 只要不是从 <code>br-43e659324492</code> 网卡（本示例中的 <code>docker-compose.yml</code> 使用的网络）进入的数据包，不论目标网卡&#x2F;源 IP&#x2F;目标 IP 为何，只有其目标端口为 <code>8443</code>，则对其进行 DNAT，将其目标 IP 和端口修改为 <code>172.21.0.2:8443</code>（本示例中的容器）。其他 2 条 DNAT 同理。</li>
+</ol>
+</blockquote>
+</li>
+<li><em><strong>在 <code>iptables</code> 的 <code>PREROUTING</code> 链处理完成后，数据流入 <code>iptables</code> 的 <code>FORWARD</code> 链</strong></em>。规则定义位于 <code>filter</code> 表中。查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -L -v -n --line-numbers</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     605K  585M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0       </span><br><span class="line">...    </span><br><span class="line">9      461 33197 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">10     178  4984 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">11   10055  481K REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2      259  186K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      128  179K ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        8   356 DOCKER     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5      123  7065 ACCEPT     all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  br-43e659324492 br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7        0     0 ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">8        0     0 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">9        0     0 ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">10       0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">11       0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 42129 packets, 7533K bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8443</span><br><span class="line">2        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8080</span><br><span class="line">3        2   100 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      123  7065 DOCKER-ISOLATION-STAGE-2  all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      123  7065 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<ol>
+<li>数据流进入 <code>iptables</code> 的 <code>FORWARD</code> 链。</li>
+<li><code>DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 首先会被全部跳转到 <code>DOCKER-USER</code> 链进行处理。</li>
+<li><code>RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 默认情况下，<code>DOCKER-USER</code> 链未作任何处理，数据流跳转回 <code>FORWARD</code> 链中的原位置，继续进入下一个链 <code>DOCKER-ISOLATION-STAGE-1</code></li>
+<li><code>ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0</code> : 数据流到了此处，表示目标网络为本示例中的容器的网络，对数据全部放行接收。数据进入容器。</li>
+</ol>
+</blockquote>
+</li>
+</ol>
+<p>根据以上对数据流向的分析，如果要对进入容器的数据进行源 IP 限制，建议将其放置在 <code>DOCKER-USER</code> 链中。具体实现参考如下：</p>
+<ol>
+<li><p>配置 <code>ipset</code>，用于对多个源 IP 设置白名单</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>配置 <code>iptables</code>，如果源 IP 不在白名单中，则禁止访问特定的端口</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">iptables -t filter -I DOCKER-USER 1 -m set ! --match-set allowed_ips src -m multiport -p tcp --dports 8000,8080,8443 -j DROP -m comment --comment &quot;for Nextcloud&quot;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="docker-场景下的自定义-iptables-规则的持久化问题"><a href="#docker-场景下的自定义-iptables-规则的持久化问题" class="headerlink" title="docker 场景下的自定义 iptables 规则的持久化问题"></a>docker 场景下的自定义 iptables 规则的持久化问题</h2><p>在使用 Docker 或者 Docker Compose 部署应用的场景下，假如需要在 Docker 的基础上对 <code>iptables</code> 防火墙做自定义配置，如示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，此种情况下，要对自定义的防火墙规则做 <strong>持久化</strong> （ <strong><code>iptables</code> 或者 <code>docker</code> 重启后规则自动加载</strong>），可以参考以下几种方法：</p>
+<ol>
+<li><p>将配置写入 <code>iptables</code> 默认配置文件，<code>iptables</code> 重启后自动加载自定义规则，针对 示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，可以在 <code>iptables</code> 配置中写入配置</p>
+  <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT ACCEPT [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [0:0]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 提前定义链 &#x27;DOCKER-USER&#x27;，否则加载配置会报错： iptables-restore: line 24 failed</span></span></span><br><span class="line">:DOCKER-USER - [0:0]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">... 其他规则</span></span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 添加 Docker 自定义规则</span></span></span><br><span class="line">-A DOCKER-USER -m set ! --match-set allowed_ips src -m multiport  -p tcp --dports 3000,8080  -j REJECT</span><br><span class="line"></span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
+<li><p>以 Docker Compose 场景为例。可以创建一个容器，专门用来运行配置 <code>iptables</code> 命令。</p>
+<ol>
+<li><p>创建一个自定义 <code>iptables</code> 容器，此容器主要执行修改 <code>iptables</code> 自定义规则</p>
+ <figure class="highlight shell"><figcaption><span>Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM alpine:latest</span><br><span class="line">RUN apk --no-cache add iptables</span><br><span class="line">COPY setup-iptables.sh /usr/local/bin/</span><br><span class="line">RUN chmod +x /usr/local/bin/setup-iptables.sh</span><br><span class="line">ENTRYPOINT [&quot;setup-iptables.sh&quot;]</span><br></pre></td></tr></table></figure></li>
+<li><p>编写 <code>setup-iptables.sh</code> 脚本:</p>
+ <figure class="highlight shell"><figcaption><span>setup-iptables.sh</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line">iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>配置 <code>docker-compose.yml</code>，在 <code>docker-compose.yml</code> 中添加上面配置的容器</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  iptables:</span><br><span class="line">    build: .</span><br><span class="line">    network_mode: &quot;host&quot;</span><br><span class="line">    restart: &quot;no&quot;</span><br><span class="line">    deploy:</span><br><span class="line">      restart_policy:</span><br><span class="line">        condition: none</span><br><span class="line">  your_service:</span><br><span class="line">    image: your_image</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    # Other configuration options for your service</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p> <strong>当运行 <code>docker-compose up</code> 时，<code>iptables</code> 服务(容器)会启动并执行 <code>setup-iptables.sh</code> 脚本，将自定义规则添加到 <code>DOCKER-USER</code> 链中。</strong></p>
+<blockquote>
+<p>根据实际需求谨慎编写 <code>setup-iptables.sh</code> 脚本内容，防止 <code>iptables</code> 规则混乱</p>
+</blockquote>
+</li>
+</ol>
+</li>
+<li><p>要在 Docker Compose 中自定义防火墙规则，可以使用 Docker Compose 的 <code>post-up</code> 脚本功能。</p>
+<ol>
+<li><p>创建 <code>docker-compose.yml</code> 文件</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建 <code>docker-compose.override.yml</code> 文件</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.override.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    entrypoint: [&quot;sh&quot;, &quot;-c&quot;, &quot;iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT &amp;&amp; exec myservice&quot;]</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>启动 Docker Compose。  这样， 每次启动服务时，都会在 <code>DOCKER-USER</code> 链中添加指定的防火墙规则。确保 <code>myservice</code> 的入口点脚本正确无误，以防止启动失败。</p>
+<blockquote>
+<p><code>docker-compose up</code> 会时同时加载 <code>docker-compose.yml</code> 和 <code>docker-compose.override.yml</code>。</p>
+<p>Docker Compose 会将 <code>docker-compose.override.yml</code> 中的配置与 <code>docker-compose.yml</code> 中的配置合并。<strong>覆盖相同配置项，新增不同配置项</strong>。</p>
+</blockquote>
+</li>
+</ol>
+<p> 以上 2 个 <code>compose</code> 配置文件也可以合并成一个 <code>docker-compose.yml</code>：<br> <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line">    entrypoint: /path/to/setup-firewall.sh myservice-command</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></p>
+<blockquote>
+<p>这样，<strong>每次启动服务时，都会先执行防火墙规则，然后启动实际服务。</strong></p>
+</blockquote>
+</li>
+</ol>
+<h1 id="Ubuntu-22-04-安装-iptables"><a href="#Ubuntu-22-04-安装-iptables" class="headerlink" title="Ubuntu 22.04 安装 iptables"></a>Ubuntu 22.04 安装 iptables</h1><p>Ubuntu 22.04 (Jammy Jellyfish) 默认使用 <code>UFW (Uncomplicated Firewall)</code> 作为防火墙管理工具。UFW 是一个用户友好的前端工具，旨在简化 <code>iptables</code> 的配置。它默认是未激活的，但安装在系统中，用户可以根据需要启用和配置它。</p>
+<p>检查 UFW 状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status ufw</span></span><br><span class="line">● ufw.service - Uncomplicated firewall</span><br><span class="line">     Loaded: loaded (/lib/systemd/system/ufw.service; enabled; vendor preset: enabled)</span><br><span class="line">     Active: active (exited) since Wed 2024-08-14 10:14:19 CST; 2 weeks 3 days ago</span><br><span class="line">       Docs: man:ufw(8)</span><br><span class="line">   Main PID: 389 (code=exited, status=0/SUCCESS)</span><br><span class="line">        CPU: 4ms</span><br><span class="line"></span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Starting Uncomplicated firewall...</span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Finished Uncomplicated firewall.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>卸载 UFW 软件包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl stop ufw</span><br><span class="line"></span><br><span class="line">sudo apt purge ufw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">清理未使用的依赖项</span></span><br><span class="line">sudo apt autoremove</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 iptables</span></span><br><span class="line">sudo apt install iptables</span><br></pre></td></tr></table></figure>
+
+<p><strong>在 Ubuntu 22.04 (Jammy Jellyfish) 中，<code>iptables</code> 仍然是管理防火墙规则的重要工具，不过 Ubuntu 22.04 默认使用 <code>nftables</code> 作为防火墙框架，<code>iptables</code> 已经被 <code>nftables</code> 取代。在这种情况下，<code>iptables</code> 实际上是通过 <code>nftables</code> 的兼容层 (<code>iptables-nft</code>) 实现的</strong>。这意味着你在使用 <code>iptables</code> 命令时，实际上是在通过 <code>nftables</code> 管理规则。</p>
+<blockquote>
+<p><code>nftables</code> 防火墙框架的默认客户端工具是 <code>nft</code>.</p>
+</blockquote>
+<p>检查 <code>iptables</code> 可执行文件路径会发现 <code>iptables</code> 实际上是 <code>iptables-nft</code> 命令的软链接</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">which</span> iptables</span></span><br><span class="line">/usr/sbin/iptables</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /usr/sbin/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 26 Oct  4  2023 /usr/sbin/iptables -&gt; /etc/alternatives/iptables*</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /etc/alternatives/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 22 Oct  4  2023 /etc/alternatives/iptables -&gt; /usr/sbin/iptables-nft*</span><br></pre></td></tr></table></figure>
+
+<p>安装 <code>iptables</code> 后可以使用 <code>iptables</code> 命令管理防火墙规则，但是没有 <code>iptables</code> 服务存在。为了方便 <code>iptables</code> 服务的管理，可以参考以下配置将  <code>iptables</code> 添加为系统服务</p>
+<figure class="highlight shell"><figcaption><span>/etc/systemd/system/iptables.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=IPv4 firewall with iptables</span><br><span class="line">Before=network-pre.target</span><br><span class="line">Wants=network-pre.target</span><br><span class="line">Before=ip6tables.service</span><br><span class="line">After=syslog.target</span><br><span class="line">AssertPathExists=/etc/sysconfig/iptables</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=oneshot</span><br><span class="line">RemainAfterExit=yes</span><br><span class="line">ExecStart=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecReload=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecStop=/usr/sbin/iptables -F</span><br><span class="line">Environment=BOOTUP=serial</span><br><span class="line">Environment=CONSOLETYPE=serial</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=basic.target</span><br></pre></td></tr></table></figure>
+
+<p>防火墙规则配置文件 <code>/etc/sysconfig/iptables</code>(可以自定义路径)</p>
+<blockquote>
+<p><strong>使用以上方式的 <code>iptables</code> 服务，其本质上（底层框架）还是使用的 <code>nftables</code> 防火墙，此方式只是对还不熟悉 <code>nft</code> 而熟悉 <code>iptables</code> 的管理员提供了一种熟悉的管理防火墙（<code>nftables</code>）的方式(通过 <code>iptables-nft</code> 实现)</strong></p>
+</blockquote>
+<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
+<p>ssh 连接失败后查看日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
+<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
+<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
+<p>将其默认规则改为 <code>ACCEPT</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
+<p>重新使用 ssh 登陆，连接正常。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>iptables</tag>
       </tags>
   </entry>
 </search>
