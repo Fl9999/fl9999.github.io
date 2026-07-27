@@ -25974,6 +25974,219 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 常见错误</title>
+    <url>/22072111/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息说明"><a href="#环境信息说明" class="headerlink" title="环境信息说明"></a>环境信息说明</h1><ul>
+<li>mysql 5.7</li>
+<li>Centos 7</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="错误集锦"><a href="#错误集锦" class="headerlink" title="错误集锦"></a>错误集锦</h1><h2 id="MySQL-主从不同步，尝试跳过执行错误的事务"><a href="#MySQL-主从不同步，尝试跳过执行错误的事务" class="headerlink" title="MySQL 主从不同步，尝试跳过执行错误的事务"></a>MySQL 主从不同步，尝试跳过执行错误的事务</h2><p>执行以下命令，可跳过对应的 slave 事务</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">SET GLOBAL SQL_SLAVE_SKIP_COUNTER = 1;</span><br><span class="line">start slave;</span><br></pre></td></tr></table></figure>
+<p>可以通过分析主库日志中的事务，来确定 <code>SQL_SLAVE_SKIP_COUNTER</code> 的合适值。<br>具体步骤如下：<br>在 slave 库中执行 <code>show slave status\G</code> ，确认以下两个参数:</p>
+<ul>
+<li><code>Relay_Master_Log_File</code></li>
+<li><code>Exec_Master_Log_Pos</code></li>
+</ul>
+<p>或者以下2个参数：</p>
+<ul>
+<li><code>Master_Log_File</code></li>
+<li><code>Read_Master_Log_Pos</code><br><img src="https://i.0920811.xyz/img_11.png"><blockquote>
+<p>通过以上 2 个值，可以知道当前 slave 执行到了 master 对应的哪个 binlog 文件 ( <code>Relay_Master_Log_File</code>) 以及文件中的对应位置 (<code>Exec_Master_Log_Pos</code> )</p>
+</blockquote>
+</li>
+</ul>
+<p>根据上述两个参数的值，在 master 中可以查看当前阻碍从库复制的事务以及之后的事务。可以执行以下命令查看</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW BINLOG EVENTS in &#x27;mysql-bin.001015&#x27; from 366269088;</span><br></pre></td></tr></table></figure>
+<p>这个可以查看到对应日志文件 <code>mysql-bin.001015</code> 中，事务 ID 为 <code>366269088</code> 之后的所有事务，</p>
+<p>以下命令可以限制查询条数</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW BINLOG EVENTS in &#x27;mysql-bin.001015&#x27; from 366269088 limit 10;</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="主从具有相同的-server-uuid"><a href="#主从具有相同的-server-uuid" class="headerlink" title="主从具有相同的 server-uuid"></a>主从具有相同的 server-uuid</h2><p><strong>报错信息</strong>：</p>
+<blockquote>
+<p>Fatal error: The slave I&#x2F;O thread stops because master and slave have equal MySQL server UUIDs; these UUIDs must be different for replication to work</p>
+</blockquote>
+<p><strong>问题原因</strong>： 主从数据目录(默认<code>/var/lib/mysql/</code>)都有一个 <code>auto.cnf</code> 文件，里面记录的 <code>server-uuid</code> 是相同的，在云主机 clone 的场景可能会出现此问题。</p>
+<p><strong>解决方法</strong>： 修改 <code>auto.cnf</code> 文件中 <code>uuid</code> 的值，重启 Mysql 服务即可</p>
+<p>查询 uuid 的方式，登录 mysql，执行以下命令查看</p>
+<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">select uuid();</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_12.png"></p>
+<hr>
+<h2 id="主从具有相同的-server-id"><a href="#主从具有相同的-server-id" class="headerlink" title="主从具有相同的 server-id"></a>主从具有相同的 server-id</h2><p><strong>报错信息</strong>：</p>
+<blockquote>
+<p>Fatal error: The slave I&#x2F;O thread stops because master and slave have equal MySQL server ids; </p>
+</blockquote>
+<p><strong>问题原因</strong>： 主从配置文件中配置了同样的 <code>server-id</code></p>
+<p><strong>解决方法</strong>： 修改 <code>my.cnf</code>， 主从配置不同的<code>server-id</code></p>
+<hr>
+<h2 id="主从同步错误-1032"><a href="#主从同步错误-1032" class="headerlink" title="主从同步错误 1032"></a>主从同步错误 1032</h2><p><strong>报错信息</strong>：</p>
+<blockquote>
+<p>Could not execute Update_rows event on table ceshi.bbs_online; Can’t find record in ‘bbs_online’, Error_code: 1032; handler error HA_ERR_KEY_NOT_FOUND; the event’s master log mysql-bin.001423, end_log_pos 866646715</p>
+</blockquote>
+<p><strong>问题原因</strong>： 主从不同步，从数据库中记录被删除或者未同步到从库，主数据库中存在记录，主DB更新后，从无法同步</p>
+<p><strong>解决方法1</strong>： 重新备份 master DB，恢复到 slave，重新 <a href="/94ee2c23/" title="恢复主从">恢复主从</a></p>
+<p><strong>解决方法2</strong>： 找出丢失的数据在 slave 上插入。可以通过 <a href="#MySQL%E4%B8%BB%E4%BB%8E%E4%B8%8D%E5%90%8C%E6%AD%A5%EF%BC%8C%E5%B0%9D%E8%AF%95%E8%B7%B3%E8%BF%87%E6%89%A7%E8%A1%8C%E9%94%99%E8%AF%AF%E7%9A%84%E4%BA%8B%E5%8A%A1">分析出错的 binlog 找出丢失的记录</a></p>
+<hr>
+<h2 id="主从同步错误-1396"><a href="#主从同步错误-1396" class="headerlink" title="主从同步错误 1396"></a>主从同步错误 1396</h2><p><strong>报错信息</strong>：</p>
+<blockquote>
+<p>ERROR 1396 (HY000): Operation CREATE USER failed for ‘XXXX‘@’XXXX’</p>
+</blockquote>
+<p><strong>问题原因</strong>： slave 同步时，从数据库中已存在用户</p>
+<p><strong>解决方法</strong>： slave 上删除已存在的用户</p>
+<hr>
+<h2 id="主从同步错误-1062"><a href="#主从同步错误-1062" class="headerlink" title="主从同步错误 1062"></a>主从同步错误 1062</h2><p><strong>报错信息</strong>：</p>
+<blockquote>
+<p>Last_SQL_Error: Could not execute Write_rows event on table *;<br>    Duplicate entry ‘2’ for key ‘PRIMARY’,<br>Error_code: 1062;<br>handler error HA_ERR_FOUND_DUPP_KEY; the event’s master log mysql-bin.000006, end_log_pos 924</p>
+</blockquote>
+<p><strong>问题原因</strong>： slave 上已有该记录，master 上又插入，可能存在主从数据不一致</p>
+<p><strong>解决方法</strong>： 删除 slave 上重复的主键记录</p>
+<hr>
+<h2 id="主从同步错误-1042"><a href="#主从同步错误-1042" class="headerlink" title="主从同步错误 1042"></a>主从同步错误 1042</h2><p><strong>报错信息</strong>：</p>
+<blockquote>
+<p>error code 1042 (ER_BAD_HOST_ERROR): Can’t get hostname for your address</p>
+</blockquote>
+<p><strong>问题原因</strong>： 解析主机名失败</p>
+<p><strong>解决方法</strong>： mysql 配置（<code>my.cnf</code>）中设置 <code>skip-name-resolve</code></p>
+<p>使用以下命令解析 mysql 错误码</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">perror 1042</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_13.png"></p>
+<hr>
+<h2 id="导出导入数据错误-1290"><a href="#导出导入数据错误-1290" class="headerlink" title="导出导入数据错误 1290"></a>导出导入数据错误 1290</h2><p><strong>报错场景</strong>： 使用 <code>select/insert</code> 导出&#x2F;导入 时报错</p>
+<p><strong>报错信息</strong>：</p>
+<blockquote>
+<p>ERROR 1290 (HY000): The MySQL server is running with the –secure-file-priv option so it cannot execute this statement</p>
+</blockquote>
+<p><strong>问题原因</strong>： <code>secure_file_priv</code> 参数用于限制 <code>LOAD DATA</code>, <code>SELECT …OUTFILE</code>, <code>LOAD_FILE()</code> 传到哪个指定目录。  </p>
+<ul>
+<li><code>secure_file_priv</code> 为 <code>NULL</code> 时，表示限制 mysqld 不允许导入或导出。</li>
+<li><code>secure_file_priv</code> 为 <code>/tmp</code> 时，表示限制 mysqld 只能在 <code>/tmp</code> 目录中执行导入导出，其他目录不能执行。</li>
+<li><code>secure_file_priv</code> 没有值时，表示不限制 mysqld 在任意目录的导入导出。</li>
+</ul>
+<p>可以通过以下命令，查看当前的配置  </p>
+<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> &quot;%secure_file_priv%&quot;;</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://i.0920811.xyz/img_18.png"></p>
+<p><strong>解决方法</strong>： 因为 <code>secure_file_priv</code> 参数是只读参数，不能使用 <code>set global</code> 命令修改。<br><img src="https://i.0920811.xyz/img_19.png"></p>
+<p>需要修改配置文件，添加以下内容</p>
+<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">secure_file_priv = &#x27;&#x27;</span><br></pre></td></tr></table></figure>
+
+<p>修改配置后，重启 mysql 服务生效</p>
+<h2 id="xtrbackup-备份时被阻塞，一直显示-log-scanned-up-to"><a href="#xtrbackup-备份时被阻塞，一直显示-log-scanned-up-to" class="headerlink" title="xtrbackup 备份时被阻塞，一直显示 log scanned up to"></a>xtrbackup 备份时被阻塞，一直显示 <code>log scanned up to</code></h2><p><strong>报错场景</strong>: xtrbackup 备份时间过长，一直输出 <code>log scanned up to</code><br><img src="https://i.0920811.xyz/img_20.png"></p>
+<p><strong>可能原因</strong>： 备份在等待锁<br><img src="https://i.0920811.xyz/img_21.png"></p>
+<p><strong>解决方法</strong>： 如果对业务无影响，可以重启 mysql 服务后重新备份，或者根据 ID kill 掉对应的线程</p>
+<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">show processlist;</span><br><span class="line">kill ID;</span><br></pre></td></tr></table></figure>
+
+<hr>
+<h2 id="Cannot-add-or-update-a-child-row-a-foreign-key-constraint-fails"><a href="#Cannot-add-or-update-a-child-row-a-foreign-key-constraint-fails" class="headerlink" title="Cannot add or update a child row: a foreign key constraint fails"></a>Cannot add or update a child row: a foreign key constraint fails</h2><p>修改表字段，添加外键时报错，sql 语句及报错信息如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ALTER TABLE `my_table1` ADD COLUMN `usage_id` BIGINT DEFAULT 1 NOT NULL , ADD CONSTRAINT `usage_id_43803979_fk_domains_c` FOREIGN KEY (`usage_id`) REFERENCES `domainusage`(`<span class="built_in">id</span>`);</span></span><br><span class="line"></span><br><span class="line">错误代码： 1452</span><br><span class="line">Cannot add or update a child row: a foreign key constraint fails (`test`.`#sql-648_bce`, CONSTRAINT `usage_id_43803979_fk_domains_c` FOREIGN KEY (`usage_id`) REFERENCES `domainusage` (`id`))</span><br></pre></td></tr></table></figure>
+<p>这个错误通常发生在尝试添加外键约束时，存在不一致的数据。在这种情况下，它指示 <code>my_table1</code> 表中的 <code>usage_id</code> 列的默认值与 <code>domainusage</code> 表的外键约束不匹配。</p>
+<p>可能的原因和解决方法包括：</p>
+<ol>
+<li><p><code>domainusage</code> 表中没有 id 为 1 的记录：如果你将 <code>my_table1</code> 表的 <code>usage_id</code> 列设置为引用 <code>domainusage</code> 表的 id 列作为外键约束，那么确保在 <code>domainusage</code> 表中存在一个 id 为 1 的记录。如果没有，请先添加一条记录，并确保它的 id 值为 1。</p>
+</li>
+<li><p><code>domainusage</code> 表的 id 为 1 的记录与 <code>my_table1</code> 表的数据不匹配：检查 <code>domainusage</code> 表中 id 为 1 的记录与 <code>my_table1</code> 表中的数据是否一致。确保 <code>my_table1</code> 表中的每一行都具有在 <code>domainusage</code> 表中存在的有效的 id 值。</p>
+</li>
+<li><p>数据库中已经存在不一致的数据：如果你已经尝试了上述步骤并且仍然遇到问题，可能是由于数据库中存在不一致的数据导致的。在这种情况下，你需要检查并修复 <code>my_table1</code> 表和 <code>domainusage</code> 表之间的数据一致性问题。可以通过更新或删除相关行来解决不一致的数据。</p>
+</li>
+</ol>
+<p>本示例中遇到的问题为第 1 个原因导致，解决办法为： 先在表 <code>domainusage</code> 中添加 id 为 1 的数据，然后再更新表 <code>my_table1</code></p>
+]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Mysql 常用 SQL</title>
+    <url>/2207221611/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h1 id="常用-sql"><a href="#常用-sql" class="headerlink" title="常用 sql"></a>常用 sql</h1><h2 id="导出数据"><a href="#导出数据" class="headerlink" title="导出数据"></a>导出数据</h2><h3 id="导出到文件"><a href="#导出到文件" class="headerlink" title="导出到文件"></a>导出到文件</h3><figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">SELECT</span> <span class="operator">*</span> <span class="keyword">FROM</span> [<span class="keyword">TABLE</span>] </span><br><span class="line">    <span class="keyword">INTO</span> OUTFILE <span class="string">&#x27;[FILE]&#x27;</span> </span><br><span class="line">    FIELDS TERMINATED <span class="keyword">BY</span> <span class="string">&#x27;,&#x27;</span> </span><br><span class="line">    OPTIONALLY ENCLOSED <span class="keyword">BY</span> <span class="string">&#x27;&quot;&#x27;</span> </span><br><span class="line">    LINES TERMINATED <span class="keyword">BY</span> <span class="string">&#x27;\n&#x27;</span>；</span><br></pre></td></tr></table></figure>
+<p>参数说明：</p>
+<ul>
+<li><code>into outfile ‘导出的目录和文件名’ </code>  </li>
+<li><code>fields terminated by ‘字段间分隔符’ </code> </li>
+<li><code>optionally enclosed by ‘字段包围符’  </code> </li>
+<li><blockquote>
+<blockquote>
+<p><code>optionally enclosed by</code> 对数值型字段无效</p>
+</blockquote>
+</blockquote>
+</li>
+<li><code>lines terminated by ‘行间分隔符’ </code></li>
+</ul>
+<p>产生报错可参考 <a href="https://0920811.xyz/22072111/#导出导入数据错误-1290">Mysql 常见错误</a></p>
+<h2 id="插入数据"><a href="#插入数据" class="headerlink" title="插入数据"></a>插入数据</h2><h3 id="批量插入"><a href="#批量插入" class="headerlink" title="批量插入"></a>批量插入</h3><figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">insert</span> <span class="keyword">into</span> tb(c1,c2) <span class="keyword">values</span>(<span class="number">1</span>,<span class="number">2</span>),(<span class="number">3</span>,<span class="number">4</span>),(<span class="number">5</span>,<span class="number">6</span>);</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+<h2 id="备份数据"><a href="#备份数据" class="headerlink" title="备份数据"></a>备份数据</h2><h3 id="mysqldump-常见用法"><a href="#mysqldump-常见用法" class="headerlink" title="mysqldump 常见用法"></a>mysqldump 常见用法</h3><a href="/94ee2c23/" title="MySQL 备份及主从恢复">MySQL 备份及主从恢复</a>
+<h4 id="mysqldump-备份时排除某些表"><a href="#mysqldump-备份时排除某些表" class="headerlink" title="mysqldump 备份时排除某些表"></a>mysqldump 备份时排除某些表</h4><ul>
+<li><code>--ignore-table=database.table</code> 导出时排除指定的表</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p database --ignore-table=database.table1 --ignore-table=database.table2 &gt; backup.sql</span><br></pre></td></tr></table></figure>
+
+<h4 id="mysqldump-导出表结构"><a href="#mysqldump-导出表结构" class="headerlink" title="mysqldump 导出表结构"></a>mysqldump 导出表结构</h4><ul>
+<li><code>-d</code> 选项，只导出表结构，不导出数据</li>
+</ul>
+<p>导出整个数据库表结构（不包含数据）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p -d DB &gt; db.sql</span><br></pre></td></tr></table></figure>
+
+<p>导出单个数据表结构（不包含数据）</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p -d DB TABLE &gt; table.sql</span><br></pre></td></tr></table></figure>
+
+<h2 id="触发器"><a href="#触发器" class="headerlink" title="触发器"></a>触发器</h2><p>为了创建一个新的触发器，可以使用 <code>CREATE TRIGGER</code> 语句。 下面说明了 <code>CREATE TRIGGER</code> 语句的语法： <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[MySQL触发器创建](https://www.yiibai.com/mysql/create-the-first-trigger-in-mysql.html)">[1]</span></a></sup></p>
+<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">CREATE</span> <span class="keyword">TRIGGER</span> [trigger_name] [trigger_time] [trigger_event]</span><br><span class="line"> <span class="keyword">ON</span> [table_name]</span><br><span class="line"> <span class="keyword">FOR</span> <span class="keyword">EACH</span> <span class="type">ROW</span></span><br><span class="line"> <span class="keyword">BEGIN</span></span><br><span class="line"> ...</span><br><span class="line"> <span class="keyword">END</span>;</span><br></pre></td></tr></table></figure>
+<p>参数说明：</p>
+<ul>
+<li><code>trigger_name</code> : 触发器名称, 一般遵循命名约定 <code>[trigger time]_[table name]_[trigger event]</code>，例如 <code>before_employees_update</code></li>
+<li><code>trigger_time</code> : 触发激活时间，必须指定定义触发器的激活时间。如果要在更改之前处理操作，则使用 <code>BEFORE</code> 关键字，如果在更改后需要处理操作，则使用 <code>AFTER</code> 关键字</li>
+<li><code>trigger_event</code> : 触发事件，可以是 <code>INSERT</code>，<code>UPDATE</code> 或 <code>DELETE</code>。此事件导致触发器被调用。 触发器只能由一个事件调用。要定义由多个事件调用的触发器，必须定义多个触发器，每个事件一个触发器。</li>
+<li><code>table_name</code> : 触发器管理的表。触发器必须与特定表关联。没有表触发器将不存在，所以必须在 <code>ON</code> 关键字之后指定表名</li>
+<li><code>BEGIN</code> … <code>END</code> : 将 SQL 语句放在 <code>BEGIN</code> 和 <code>END</code> 块之间。这是定义触发器逻辑的位置。</li>
+</ul>
+<p>以下示例定义一个触发器，在表中的字段被更改后，改回旧的之，实现禁止更改表的效果</p>
+<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line">DELIMITER <span class="operator">/</span><span class="operator">/</span> </span><br><span class="line"></span><br><span class="line"><span class="keyword">CREATE</span> <span class="keyword">TRIGGER</span> `before_update_images` </span><br><span class="line">    BEFORE <span class="keyword">UPDATE</span> <span class="keyword">ON</span> `images` </span><br><span class="line">    <span class="keyword">FOR</span> <span class="keyword">EACH</span> <span class="type">ROW</span></span><br><span class="line"><span class="keyword">BEGIN</span></span><br><span class="line">    <span class="keyword">set</span> new.name<span class="operator">=</span>old.name;</span><br><span class="line">    <span class="keyword">set</span> new.url<span class="operator">=</span>old.url;</span><br><span class="line"><span class="keyword">END</span> <span class="operator">/</span><span class="operator">/</span></span><br><span class="line">DELIMITER;</span><br></pre></td></tr></table></figure>
+
+
+
+<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="mysql-命令提示符下翻页查看输出"><a href="#mysql-命令提示符下翻页查看输出" class="headerlink" title="mysql 命令提示符下翻页查看输出"></a>mysql 命令提示符下翻页查看输出</h2><figure class="highlight sql"><table><tr><td class="code"><pre><span class="line">pager less <span class="operator">-</span>S</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>之后的输出可以使用和less命令一样的参数</p>
+</blockquote>
+<h2 id="gegeral-log-开启"><a href="#gegeral-log-开启" class="headerlink" title="gegeral_log 开启"></a>gegeral_log 开启</h2><p>查询 <code>general_log</code> 配置，并启用</p>
+<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> <span class="string">&#x27;%general%&#x27;</span>;</span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------------------------------------+</span></span><br><span class="line"><span class="operator">|</span> Variable_name    <span class="operator">|</span> <span class="keyword">Value</span>                                              <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------------------------------------+</span></span><br><span class="line"><span class="operator">|</span> general_log      <span class="operator">|</span> OFF                                                <span class="operator">|</span></span><br><span class="line"><span class="operator">|</span> general_log_file <span class="operator">|</span> <span class="operator">/</span>var<span class="operator">/</span>lib<span class="operator">/</span>mysql<span class="operator">/</span>data<span class="operator">/</span>localhost.log                  <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------------------------------------+</span></span><br><span class="line"></span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">set</span> <span class="keyword">global</span> general_log_file<span class="operator">=</span><span class="string">&#x27;/tmp/mysql.log&#x27;</span>;</span><br><span class="line"></span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">set</span> <span class="keyword">global</span> general_log<span class="operator">=</span><span class="keyword">on</span>;</span><br><span class="line">    </span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> <span class="string">&#x27;%general%&#x27;</span>;</span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> Variable_name    <span class="operator">|</span> <span class="keyword">Value</span>                <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> general_log      <span class="operator">|</span> <span class="keyword">ON</span>                   <span class="operator">|</span></span><br><span class="line"><span class="operator">|</span> general_log_file <span class="operator">|</span> <span class="operator">/</span>tmp<span class="operator">/</span>mysql.log       <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="number">2</span> <span class="keyword">rows</span> <span class="keyword">in</span> <span class="keyword">set</span> (<span class="number">0.00</span> sec)</span><br><span class="line"></span><br><span class="line">    </span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">set</span> <span class="keyword">global</span> general_log<span class="operator">=</span>off;</span><br><span class="line">Query OK, <span class="number">0</span> <span class="keyword">rows</span> affected (<span class="number">0.00</span> sec)</span><br><span class="line"></span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> <span class="string">&#x27;%general%&#x27;</span>;</span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> Variable_name    <span class="operator">|</span> <span class="keyword">Value</span>                <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> general_log      <span class="operator">|</span> OFF                  <span class="operator">|</span></span><br><span class="line"><span class="operator">|</span> general_log_file <span class="operator">|</span> <span class="operator">/</span>tmp<span class="operator">/</span>mysql.log       <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="number">2</span> <span class="keyword">rows</span> <span class="keyword">in</span> <span class="keyword">set</span> (<span class="number">0.00</span> sec)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>在 <code>general_log</code> 中可用通过搜索 <code>event id</code> 来查看登陆连接对数据库的所有 SQL 。</p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.yiibai.com/mysql/create-the-first-trigger-in-mysql.html">MySQL触发器创建</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>MySQL 常用配置说明</title>
+    <url>/22721459/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>mysql 5.7</li>
+</ul>
+<p>默认配置文件路径: <code>/etc/my.cnf</code></p>
+<span id="more"></span>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">##############通用配置##############</span><br><span class="line">user = mysql</span><br><span class="line">port = 3306</span><br><span class="line">default_storage_engine = InnoDB</span><br><span class="line">## 只读</span><br><span class="line">read_only=1  </span><br><span class="line">             </span><br><span class="line">## 跳过域名解析参数，禁止MySQL对外部连接进行DNS解析，使用这一选项可以消除MySQL进行DNS解析的时间。</span><br><span class="line">## 但需要注意，如果开启该选项，则所有远程主机连接授权都要使用IP地址方式，否则MySQL将无法正常处理连接请求！</span><br><span class="line">skip-name-resolve  </span><br><span class="line"></span><br><span class="line">## 跳过授权，重置密码时需要</span><br><span class="line">## 重置密码：update mysql.user set authentication_string=password(&#x27;Password@123&#x27;) where user=&#x27;root&#x27;;          </span><br><span class="line">skip-grant-tables   </span><br><span class="line">          </span><br><span class="line">datadir=/var/lib/mysql</span><br><span class="line">socket=/var/lib/mysql/mysql.sock</span><br><span class="line"></span><br><span class="line">## 解决日志中因wait-timeout的报错：</span><br><span class="line">## Aborted connection 40476 to db: &#x27;&#x27; user: &#x27;&#x27; host: &#x27;&#x27; (Got an error reading communication packets)</span><br><span class="line">log_warnings=1  </span><br><span class="line">                 </span><br><span class="line">### 连接错误超过此值，客户端无法连接，即拉黑</span><br><span class="line">max_connect_errors = 1000      </span><br><span class="line"></span><br><span class="line">###########主从配置选项###########</span><br><span class="line">server-id = 1</span><br><span class="line"># 主库要生成的二进制日志文件名称</span><br><span class="line">log-bin = mysql-bin    </span><br><span class="line">    </span><br><span class="line">## 从库中继日志名称</span><br><span class="line">relay-log = mysql-relay-bin    </span><br><span class="line"></span><br><span class="line">################</span><br><span class="line">## sync_binlog = 0    表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。</span><br><span class="line">## 这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span><br><span class="line">## sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。</span><br><span class="line">## 最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。 </span><br><span class="line">## 但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。</span><br><span class="line">## 对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span><br><span class="line">## 只适用于主库的二进制日志，不适用中继日志</span><br><span class="line">################</span><br><span class="line">sync_binlog=0</span><br><span class="line"></span><br><span class="line">## 要同步的库.应该在从库上尽可能的使用replicate_wild_*，不建议在主库上使用</span><br><span class="line">binlog-do-db = rtzc_pnc_base       </span><br><span class="line"></span><br><span class="line"># 不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span><br><span class="line">binlog-ignore-db = mysql</span><br><span class="line"></span><br><span class="line">### 应该在从库上尽可能的使用replicate_wild_*              </span><br><span class="line">#replicate-wild-ignore-table=db.*               </span><br><span class="line">#replicate-wild-ignore-table=mysql.*</span><br><span class="line">#replicate-wild-ignore-table=information_schema.*</span><br><span class="line">#replicate-wild-ignore-table=performance_schema.*</span><br><span class="line">#replicate-wild-ignore-table=sys.*</span><br><span class="line">#replicate_wild_do_table=DB_NAME.%</span><br><span class="line">#replicate_ignore_db=test</span><br><span class="line"></span><br><span class="line">###复制实现模式/级别</span><br><span class="line">binlog_format=statement/row/mixed   </span><br><span class="line"></span><br><span class="line"># binlog日志大于此值是重新生成新的日志，默认(最大)1G，若使用大事务，日志可能会超过此值     </span><br><span class="line">max_binlog_size = 100M        </span><br><span class="line"></span><br><span class="line"># bilog日志保存天数，过期后清除</span><br><span class="line">expire_logs_days = 7   </span><br><span class="line"></span><br><span class="line"># 跳过某些同步错误号</span><br><span class="line">slave-skip-errors = 1032,1062  </span><br><span class="line"></span><br><span class="line">### 从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span><br><span class="line">log-slave-updates=1          </span><br><span class="line"></span><br><span class="line"># 阻止slave自动启动复制</span><br><span class="line">skip_slave_start     </span><br><span class="line"></span><br><span class="line"># 从库发现和主库连接失败后，重连等待的时间，默认1小时       </span><br><span class="line">slave_net_timeout = 1        </span><br><span class="line"></span><br><span class="line"># 在从库上同步状态文件到磁盘，默认10000，表示在10000个事务执行完成后，将信息同步到磁盘</span><br><span class="line"># 打开后，可能会降低IO性能，设置为1最安全，但是IO性能最差；设置为0，由OS控制刷新</span><br><span class="line">sync_master_info | sync_relay_log | sync_relay_log_info  = 1      </span><br><span class="line"></span><br><span class="line"># SQL线程重放完一个中继日志后尽快将其删除</span><br><span class="line">relay_log_purge = 1         </span><br><span class="line"></span><br><span class="line"># 所有中继日志大小和的最大值。可防止主从延迟很大时，IO线程写relay log，导致磁盘空间不足。中继日志总和超过此值，IO线程会停止，等待SQL线程释放空间；</span><br><span class="line"># 风险是从库未从主库读取所有relaylog，这些日志可能在主库崩溃时丢失，磁盘空间足够的情况下，不推荐配置  </span><br><span class="line">relay_log_space_limit = 1G       </span><br><span class="line"></span><br><span class="line"></span><br><span class="line">#########日志选项###########</span><br><span class="line">slow_query_log =1   </span><br><span class="line">long_query_time=2     </span><br><span class="line">slow_query_log_file=/var/lib/mysql/slow.log</span><br><span class="line"></span><br><span class="line">log-error=/var/log/mysqld.log</span><br><span class="line"></span><br><span class="line">##########编码选项######</span><br><span class="line">character-set-server = utf8</span><br><span class="line">collation-server=utf8_general_ci </span><br><span class="line"></span><br><span class="line">#############连接选项#############</span><br><span class="line"></span><br><span class="line"># 客户端的连接闲置的最大时间，默认8小时，设置非交互模式(jdbc)时的超时时间</span><br><span class="line">wait-timeout = 60      </span><br><span class="line"></span><br><span class="line"># 交互模式超时时间      </span><br><span class="line">interactive_timeout = 60    </span><br><span class="line"></span><br><span class="line"># 并发连接数,最终值由open_files_limit共同决定</span><br><span class="line">max_connections=65535    </span><br><span class="line"></span><br><span class="line"># 一个账号最大可发起多少并发连接                </span><br><span class="line">max_user_connections=65535            </span><br><span class="line"></span><br><span class="line"></span><br><span class="line">#############性能选项#############</span><br><span class="line"></span><br><span class="line"># 缓存的表个数，可以观察Opened_tables状态变量值，若很大(若经常需要创建/删除临时表，该计数器也会不停增长)，建议增加此配置值，由OS rlimit共同决定</span><br><span class="line">table_open_cache = 65535  </span><br><span class="line"></span><br><span class="line"># 缓存的线程个数，具体配置值可以观察Threads_created状态变量，如果此值较大，可加大thread_cache_size,建议此值保持足够大    </span><br><span class="line">thread_cache_size = 5000   </span><br><span class="line"></span><br><span class="line"># 查询缓存使用的内存大小，启动时，一次性分配</span><br><span class="line">query_cache_size = 1024M      </span><br><span class="line"></span><br><span class="line"># 查询需排序时分配内存，立即分配指定的全部内存，无论是否需要这么多</span><br><span class="line">sort_buffer_size = 10k            </span><br><span class="line"></span><br><span class="line"># 需要在服务启动程序(/usr/lib/systemd/system/mysqld.service)中配置：LimitNOFILE = 65535</span><br><span class="line">open_files_limit = 65535</span><br><span class="line">     </span><br><span class="line">max_allowed_packet = 200M</span><br><span class="line">innodb_open_files = 65535      </span><br><span class="line"></span><br><span class="line"># 默认值一般都太小，此值建议配置为os和其他应用消耗的内存除外的内存大小</span><br><span class="line"># 配置太大也会导致预热和关闭花费较多时间</span><br><span class="line">innodb_buffer_pool_size = 20G       </span><br><span class="line"></span><br><span class="line"># 事务日志的文件大小，太小，InnoDB必须做更多检查点，导致更多日志写，不利于IO。日志缓存满，事务提交或每秒，会刷新缓存到磁盘;</span><br><span class="line"># 可以观察show innodb status中log部分，Innodb_os_log_written查看写入了多少数据</span><br><span class="line">innodb_log_file_size = (32-128)M</span><br><span class="line"></span><br><span class="line">     </span><br><span class="line">innodb_flush_log_at_trx_commit = N</span><br><span class="line">########## innodb特有参数，事务日志用于在mysql崩溃后的恢复</span><br><span class="line"># N=0   每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；</span><br><span class="line"># 在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span><br><span class="line"></span><br><span class="line"># N=1   每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，log buffer 会被写入到日志文件并刷写到磁盘。 </span><br><span class="line"># 这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span><br><span class="line"></span><br><span class="line"># N=2    当取值为2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。</span><br><span class="line"># 这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。</span><br><span class="line"># 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span><br><span class="line">##########</span><br><span class="line"></span><br><span class="line"># 限制一次性可以有多少线程进入内核，建议值：cpu数量* 磁盘数量* 2,进入内核的线程超过此值，新线程无法进入。</span><br><span class="line"># 为使线程高效进入内核，线程第一次休眠innodb_thread_sleep_delay(默认10000)微秒，然后重试，若依然不能进入内核，则放入一个等待线程队列，由OS内核处理。</span><br><span class="line"># 在高并发环境或大量小查询时，可减小此值。</span><br><span class="line">innodb_thread_concurrency = 64</span><br><span class="line"></span><br><span class="line"># 一旦线程进入内核，可以有指定数量的tickents，再次进入内核时，可不在做并发检查，按照查询授权，而非事务            </span><br><span class="line">innodb_concurrency_tickets = 10</span><br><span class="line"></span><br><span class="line"># 多少个线程可以在同一时间提交事务，太小会有线程冲突      </span><br><span class="line">innodb_commit_concurrency = 100   </span><br><span class="line"></span><br><span class="line"># 指定磁盘IO能力，默认为100，使用SSD或IO性能好的磁盘时，建议提高此值</span><br><span class="line">innodb_io_capacity = 1000     </span><br><span class="line"></span><br><span class="line"># 控制后台由多少线程负责IO操作，默认为4</span><br><span class="line">innodb_read_io_threads | innodb_write_io_threads = 10             </span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>MySQL 备份及主从恢复</title>
     <url>/94ee2c23/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -39022,194 +39235,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之山水蒙</title>
-    <url>/20250826163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山水蒙"><a href="#山水蒙" class="headerlink" title="山水蒙"></a>山水蒙</h1><p><img src="https://i.0920811.xyz/img_340.png"></p>
-<p>《序卦》 : <code>物生必蒙，故受之以蒙。蒙者，蒙也，物之稚也。</code></p>
-<p>《杂卦》 : <code>屯而不失其居，蒙杂而著</code></p>
-<p><strong>蒙 是蒙昧、万物得幼稚状态。屯是万物刚刚出现，蒙是杂乱蒙茸的显现出来</strong> 。 “有万物乃立君、师，屯寓君道，蒙寓师道”。 <strong>蒙卦 是蒙昧、幼稚下的启蒙、启发，象征蒙昧初开、启蒙育人，进行启蒙教育，为师之道</strong></p>
-<p><strong>六十四卦，两两相偶，非覆即变</strong> 。六十四卦的排列方式都是两卦组成一对。两卦的关系，要么是互为覆卦，要么是挂图的变象。比如 <strong>屯卦和蒙卦，需卦与讼卦，师卦与比卦，是互为覆卦。变像是覆卦为其本身，正看（从上往下）、倒看（从下往上）卦象相同，比如 乾卦与坤卦、坎卦与离卦、大过卦与颐卦、中孚卦与小过卦</strong></p>
-<p><strong>蒙卦，坎下艮上，坎为水为险（陷）、艮为山为止，象征 险中求止、以静制动</strong> 。</p>
-<p>九二为卦主（主爻）</p>
-<p>蒙昧如同 <code>险陷</code>（人因无知而犯错），需用 <code>止</code> （规则约束）来避险。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙。亨。匪我求童蒙，童蒙求我。初筮告，再三渎，渎则不告。利贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙，山下有险，险而止，蒙。蒙亨，以亨行时中也。匪我求童蒙，童蒙求我，志应也。初筮告，以刚中也。再三渎，渎则不告，渎蒙也。蒙以养正，圣功也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山下出泉，蒙。君子以果行育德。</span><br></pre></td></tr></table></figure>
-
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">发蒙，利用刑人，用说桎梏。以往吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用刑人，以正法也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>发蒙</strong> ，开启蒙昧、启发蒙昧无知的人</li>
-<li><strong>刑人</strong> ，对有过错的人施以刑法，意思是通过惩戒，来教育、警醒蒙昧之人，并使之知晓规范、规矩。</li>
-<li><strong>说</strong> ，通 <code>脱</code>， 解脱、解除</li>
-<li><strong>桎梏</strong> ，脚镣和手铐、喻指约束、拘束。禁锢手部为枷，禁锢足部为校，桎梏为禁锢手（桎）脚（梏）</li>
-</ul>
-<p><strong>利用刑人，以正法也。</strong> 强调刑罚的目的在于 <strong>正法，即纠正过错，引导归正（树立规范、示范惩戒），而非单纯惩治</strong> 。</p>
-<p><strong>正法</strong> 是启蒙的核心前提，蒙卦的 启蒙 不是盲目灌输，而是 <strong>以正导蒙</strong> —— 先明确 何为正（法则），再引导 向于正（行为）。<strong>刑人</strong> 的手段（如校规、家规、法律案例），本质是将 抽象的法则 具象化，让蒙昧者直观理解 <strong>正</strong> 的标准，避免因无知而 <strong>失正</strong> 。</p>
-<p><strong>以说桎梏</strong> ，通过树立规则和示范，避免蒙童因无知导致违规或者犯罪行为</p>
-<p><strong>以往，吝</strong> ： <code>往</code> 为 <code>冒进、急于推进</code>； <code>吝</code> 为 <code>遗憾、困难</code> 。若在启蒙刚起步、规矩未立之时就冒进求成，必遭遗憾或阻碍。</p>
-<p><strong>初六在蒙卦最下位，阴爻居阳位， <code>阴柔之质</code> 却处 <code>阳刚之位</code>，位不当（正），象征 <code>蒙昧者本无自律能力，却易躁动妄为（如孩童无知却爱打闹、新人入职不懂规则却急于表现），此时若无规则约束，易陷入 险（犯错），故需 刑人 立规</code> 。  且处 <em>蒙昧之始</em> ，柔弱无知</strong> 。人的行为易偏离正道（阴爻居阳位，本有 <em>躁动失序</em> 之性），此时 <code>启蒙</code> 的第一步不是灌输知识，而是 <strong>立规矩</strong></p>
-<ul>
-<li><code>刑人</code> 是 <code>立规的手段</code> —— 通过明确的 <em>禁止性规范（如 不可说谎 、不可越界）</em>，让蒙昧者感知 <code>边界</code>，如同用 <code>桎梏</code> 的象征意义警示 <em>违规的代价</em></li>
-<li><code>说桎梏</code> 是 <code>立规的目的</code> —— 不是用规则囚禁人，而是通过规则去除 <em>无知带来的错误行为（如孩童因无知破坏物品，立规矩后可避免）</em> ，让人从 <code>蒙昧的束缚</code> 中解脱，走向有序。</li>
-</ul>
-<p>蒙昧的本质是 <strong>无序（行为无边界、思维无逻辑），启蒙的第一步是 建立秩序</strong> 。</p>
-<p><strong>以往，吝</strong> 强调启蒙的 <em>渐进性</em>。蒙昧的破除是一个过程，需遵循 <code>先立规→再启智→后成德</code> 的顺序：初六是 <strong>立规(知礼)</strong> 的阶段，若跳过此阶段直接 启智（如教孩童复杂知识却不教礼貌），或冒进 求成（如要求新人立刻独立完成复杂任务），只会因基础不牢而失败。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>发蒙之时，必以刑为先，使畏而后可教也</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>刑以发蒙，正法而已，若过责而不解，则为吝矣</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>刑人者，戒惧使知也。脱桎梏者，刑即行而释之也。发蒙之道，当如此。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包蒙，吉。纳妇，吉。子克家。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：子克家，刚柔接也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>包蒙</strong> - 包，包容、接纳，不排斥、不苛责；蒙，蒙昧、无知，需启蒙的蒙昧者</li>
-<li><strong>纳妇</strong> - 娶妻，喻指接受柔顺（阴，妇，象征 阴柔之物）的辅助者，表明刚健者与柔顺者结合，互补而吉。</li>
-<li><strong>子克家</strong> - 子，儿子、继承人，也指 <em>君子、主事者</em> 。 克 为胜任、承担。 <em>克家</em> ，能治理家庭（齐家）。君子若能包容、善教，并能刚柔相济，就能治理家庭 → 吉。</li>
-<li><strong>子克家，刚柔接也</strong> - 因为 <strong>阳刚（九二）与阴柔（六五）相接应，刚柔相合，内外调和</strong> 。</li>
-</ul>
-<p><strong>九二 爻是下卦 坎 卦的核心爻，九二 阳爻居阴位，得中而位不当，但居中承上、下应群阴（乘初六之柔（蒙童），上应六五之柔（君师）），成为蒙卦 以柔济刚、包容启蒙 的关键，其爻辞与象辞通过 包蒙、纳妇、子克家 三个意象，揭示了启蒙教育的核心法则 —— 以包容接纳为基，以刚柔相济为法，最终实现 教而有成</strong></p>
-<ul>
-<li><strong>包蒙</strong> 是启蒙的前提：不筛选、不放弃任何蒙昧者（如老师不歧视基础差的学生，管理者不排斥新人的笨拙），以宽广胸怀接纳差异，为启蒙奠定基础；</li>
-<li><strong>纳妇</strong> 是启蒙的方法：以 柔 待 蒙 —— 不用单一刚硬的方式（如仅靠惩罚、说教），而是接纳蒙昧者的柔顺本性（如孩童需耐心引导，而非强制灌输），用适配的方式启发；</li>
-<li><strong>子克家</strong> 是启蒙的成果：要么主导者圆满完成教化责任（如家长培养出能担当的子女），要么蒙昧者成长为 “能克家” 的可用之才（如新人成长为能独当一面的骨干），实现 “蒙开而有成”。</li>
-</ul>
-<p>九二在蒙卦中的核心地位，源于其 <strong>得中（不偏不倚、态度平和、不极端）、应上（上应六五之柔）、承下（乘初六之柔）</strong> 的三重优势</p>
-<ul>
-<li><strong>得中</strong> ： 九二居下卦坎的中位，<strong>中</strong> 象征 <strong>不偏不倚，不过刚亦不过柔</strong> ，不无原则的溺爱（如放任蒙昧者犯错），又防止无规的（避免初六 <em>刑人</em> 的）刚硬过苛</li>
-<li><strong>应上</strong> ： 九二阳爻与上卦六五阴爻 <strong>阴阳正应（二爻对应五爻）</strong> ，六五为蒙卦 <strong>君位</strong> （象征启蒙的目标与资源），九二的 <strong>包蒙</strong> 行为能获得上位的认可与支持（如老师的教学理念获学校认同，管理者的培育计划获公司支持），为 <strong>子克家</strong> 提供保障。</li>
-<li><strong>承下</strong> ： 九二是下卦唯一阳爻（主爻），初六、六三、六四阴爻均围绕其展开（象征蒙昧者需依赖启蒙者引导），九二以阳刚的智慧主导启蒙，却以阴位的柔顺包容差异（ <strong>纳妇</strong> ），形成 <em>刚为主、柔为用</em> 的格局，让蒙昧者愿被引导，故 吉。</li>
-</ul>
-<p><strong>刚柔接也</strong> 是蒙卦启蒙的核心法则： <strong>阳刚（智慧、原则）是 骨</strong> ，确保启蒙不偏离 <em>启蒙</em> 的目标； <strong>阴柔（包容、适配）是 肉</strong> ，确保启蒙能落地、被接受。二者缺一不可 —— 无刚则无方向，无柔则无温度，唯有刚柔相济，才能实现 <strong>教而有成（子克家）</strong> 。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>包蒙者，以宽容之道养之也。纳妇者，能接柔顺之应也。刚柔接应，则子能克家矣。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九二阳刚中正而应于五，能包容蒙昧，接纳柔顺，故能治家而吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>包蒙，容受而教之也。纳妇，取其柔顺之助也。子克家，谓能和内外而治也。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">勿用娶女，见金夫，不有躬。无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：勿用娶女，行不顺也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>勿用</strong> ： 不宜、不可。</li>
-<li><strong>金夫</strong> ： 手持（金银）钱财得男子。此处指 <strong>九二</strong> ，六三正应上九，理当从上九，但六三近比九二，九二是众望所归，势众富有，为金夫。</li>
-<li><strong>不有躬</strong> ： 躬，自身、立场。 <strong>不有躬</strong> 即 <strong>失去自我立场、无法自主</strong> 。一旦被外在功利诱惑吸引，就会丧失自身的原则与自主性。</li>
-<li><strong>无攸利</strong> ： <strong>攸</strong> 为 <strong>所</strong> ，意为 <strong>没有任何益处</strong> ，强调这种 <strong>失正逐利</strong> 的行为终将导致负面结果（没有好处）。</li>
-<li><strong>勿用娶女，行不顺也</strong> : 六三承刚，柔乘刚，不顺。</li>
-</ul>
-<p><strong>六三爻 阴爻居阳位，位不当，处险终，乘刚，上下犹豫不定，贪慕财势，见利忘义，取悦九二，苟且失身</strong> 。</p>
-<ul>
-<li><strong>位不当</strong> ： <strong>阴爻居阳位，阴柔之质 却处 阳刚之位，不中不正，乘九二之刚（九二为 金夫），阴柔凌驾阳刚，失正不顺</strong> <blockquote>
-<p>六三阴爻居阳位，位不当，意味着其行为易躁动、行事失正。其本与上九有正应，却受邻近的九二吸引。九二是下卦唯一阳爻，为诸多蒙昧者归依之处，势头正盛，六三便将其认作 “金夫”，舍正应关系而攀附九二，进而失去自我原则，出现 “不有躬” 的状况。</p>
-</blockquote>
-</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>女志在金夫，不有躬也。失其正而行不顺，故无攸利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>女见金夫而失贞，不守其身，志在财利，不可与成夫妇，故勿用娶女也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>女子志在金夫，不自有其躬。若娶此女，则必无所利。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">困蒙，吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：困蒙之吝，独远实也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>困蒙</strong> ： 困于蒙昧，不得启发，难以摆脱。</li>
-<li><strong>吝</strong> ： 困难、遗憾、不顺。六四以阴爻处于上下两阴爻之间，远离九二阳爻这个 <strong>蒙师</strong>，无法得到有效的启蒙和引导，就像独自被困在蒙昧的困境中，所以会有遗憾和困难。</li>
-<li><strong>独</strong> ： 独自、孤立</li>
-<li><strong>远实</strong> ： 远离真正的贤师、正道。 <strong>是说六四独自远离了充实的阳爻，在蒙卦中，阳爻代表启蒙者、有真才实学的人，六四远离了九二和上九两个阳爻，处于蒙昧的环境中，没有人能够启发它，所以才会陷入困蒙的境地而有遗憾。</strong></li>
-</ul>
-<p>六四爻阴爻居阴位，虽然得位（位正），但所处的位置并不理想。它上下都是阴爻，周围都是蒙昧之人，缺乏阳刚之气的引领和启发。这就好比一个人处于一个缺乏知识和智慧的环境中，又没有遇到良师益友来指导自己，所以只能被困在蒙昧之中，难以获得进步和发展。这种情况虽然不会带来凶险（位正），但长期下去，会因为得不到及时的启蒙而错过很多机会，给自己带来遗憾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六四以阴柔处险，又远于刚中之应，独处而无所辅，故困蒙而吝。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>困于蒙者，不得师也。六四无应，远于五之刚中，不能得师之益，故吝。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>困蒙者，孤立无援，不得师益之象；然位正，故但为吝耳。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童蒙，吉</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：童蒙之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
-<ul>
-<li><strong>顺</strong> ： 柔顺。 六五在上互卦坤中，坤为顺。</li>
-<li><strong>巽</strong> ： 蒙卦六五是从观卦六二上升而来，在观卦中，上卦为巽，在蒙卦中，上互卦为坤。</li>
-</ul>
-<p><strong>六五以柔德（阴）居尊位（五位为天子位），位不当 却 得中，与下卦 <em>九二之师（求九二之刚明）</em> 相正应，形成 柔得中而应刚，既有君位之尊，又怀童子之虚心，象征君主尊师重道、礼贤下士，故能化民成俗，蒙以养正。故吉。</strong></p>
-<p><strong>六五与下卦九二阳爻为 正应，九二是蒙卦唯一的 <em>启蒙核心</em> （阳刚智慧、包容引导），如同 良师、贤臣。六五以 童蒙 之态接纳九二的引导，相当于 君得贤臣辅、上得良师启，启蒙有明确的 正源，不会被错误信息误导，故 吉。</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>童蒙者，质朴而未开，虚心受教，顺以从正，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六五居尊位，以阴柔为主，而能下应九二之刚中，是以顺从谦巽，得童蒙之吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>以柔居尊位，不自是，而能下应于二，谦虚顺巽，乃所以为吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">击蒙。不利为寇，利御寇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用御寇，上下顺也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>击蒙</strong> ： 击，攻击、惩治。击蒙，以刚硬手段纠正偏差（非暴力摧残）。<strong>蒙</strong> 此处特指 <em>顽固不化、向恶发展的蒙昧</em>（区别于初六 <em>待启之蒙</em> 、六五 <em>谦逊之蒙</em> ），如孩童屡教不改的恶习、成人因无知陷入的错误执念。合意为：对向恶的蒙昧采取强硬惩戒，以遏制其偏离正道。</li>
-<li><strong>寇</strong> ： 敌寇、盗贼，指作乱之人。</li>
-<li><strong>御寇</strong> ： 防御、抵御寇乱。</li>
-</ul>
-<p>上九是蒙卦的最末一爻（终爻），阳爻居阴位，位不当，亢极，却处 <strong>蒙卦终极</strong> ，承担着 <strong>以刚正纠偏、防范蒙昧恶变</strong> 的关键角色。</p>
-<p><strong>不利为寇</strong> ，上九正应六三，六三 <strong>见金夫，不有躬</strong> 不应上九。 <strong>六三在坎中，坎为盗寇，故不利为寇</strong> </p>
-<p><strong>利御寇，上下顺也</strong> ，御 为 “防御、守护”， <strong>上九下有互坤，坤为众，为顺，有众顺从，故利御寇</strong> </p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上九以刚居上，非所以为教也。然蒙不可不击，故曰击蒙。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>击蒙者，谓冥顽不化，不可教以义理者，当用刑罚以击之。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>不利为寇，言不可恃强而横行；利御寇，言可以御恶以为正也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>八卦之阴阳属性</title>
     <url>/20250807163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于八卦（单卦）得阴阳属性，目前有很多种说法，本篇为常见得说法总结。</p>
@@ -39819,216 +39844,191 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 常见错误</title>
-    <url>/22072111/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息说明"><a href="#环境信息说明" class="headerlink" title="环境信息说明"></a>环境信息说明</h1><ul>
-<li>mysql 5.7</li>
-<li>Centos 7</li>
-</ul>
-<span id="more"></span>
+    <title>六十四卦之山水蒙</title>
+    <url>/20250826163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山水蒙"><a href="#山水蒙" class="headerlink" title="山水蒙"></a>山水蒙</h1><p><img src="https://i.0920811.xyz/img_340.png"></p>
+<p>《序卦》 : <code>物生必蒙，故受之以蒙。蒙者，蒙也，物之稚也。</code></p>
+<p>《杂卦》 : <code>屯而不失其居，蒙杂而著</code></p>
+<p><strong>蒙 是蒙昧、万物得幼稚状态。屯是万物刚刚出现，蒙是杂乱蒙茸的显现出来</strong> 。 “有万物乃立君、师，屯寓君道，蒙寓师道”。 <strong>蒙卦 是蒙昧、幼稚下的启蒙、启发，象征蒙昧初开、启蒙育人，进行启蒙教育，为师之道</strong></p>
+<p><strong>六十四卦，两两相偶，非覆即变</strong> 。六十四卦的排列方式都是两卦组成一对。两卦的关系，要么是互为覆卦，要么是挂图的变象。比如 <strong>屯卦和蒙卦，需卦与讼卦，师卦与比卦，是互为覆卦。变像是覆卦为其本身，正看（从上往下）、倒看（从下往上）卦象相同，比如 乾卦与坤卦、坎卦与离卦、大过卦与颐卦、中孚卦与小过卦</strong></p>
+<p><strong>蒙卦，坎下艮上，坎为水为险（陷）、艮为山为止，象征 险中求止、以静制动</strong> 。</p>
+<p>九二为卦主（主爻）</p>
+<p>蒙昧如同 <code>险陷</code>（人因无知而犯错），需用 <code>止</code> （规则约束）来避险。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙。亨。匪我求童蒙，童蒙求我。初筮告，再三渎，渎则不告。利贞。</span><br></pre></td></tr></table></figure>
 
-<h1 id="错误集锦"><a href="#错误集锦" class="headerlink" title="错误集锦"></a>错误集锦</h1><h2 id="MySQL-主从不同步，尝试跳过执行错误的事务"><a href="#MySQL-主从不同步，尝试跳过执行错误的事务" class="headerlink" title="MySQL 主从不同步，尝试跳过执行错误的事务"></a>MySQL 主从不同步，尝试跳过执行错误的事务</h2><p>执行以下命令，可跳过对应的 slave 事务</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">SET GLOBAL SQL_SLAVE_SKIP_COUNTER = 1;</span><br><span class="line">start slave;</span><br></pre></td></tr></table></figure>
-<p>可以通过分析主库日志中的事务，来确定 <code>SQL_SLAVE_SKIP_COUNTER</code> 的合适值。<br>具体步骤如下：<br>在 slave 库中执行 <code>show slave status\G</code> ，确认以下两个参数:</p>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">蒙，山下有险，险而止，蒙。蒙亨，以亨行时中也。匪我求童蒙，童蒙求我，志应也。初筮告，以刚中也。再三渎，渎则不告，渎蒙也。蒙以养正，圣功也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山下出泉，蒙。君子以果行育德。</span><br></pre></td></tr></table></figure>
+
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">发蒙，利用刑人，用说桎梏。以往吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用刑人，以正法也。</span><br></pre></td></tr></table></figure>
+
 <ul>
-<li><code>Relay_Master_Log_File</code></li>
-<li><code>Exec_Master_Log_Pos</code></li>
+<li><strong>发蒙</strong> ，开启蒙昧、启发蒙昧无知的人</li>
+<li><strong>刑人</strong> ，对有过错的人施以刑法，意思是通过惩戒，来教育、警醒蒙昧之人，并使之知晓规范、规矩。</li>
+<li><strong>说</strong> ，通 <code>脱</code>， 解脱、解除</li>
+<li><strong>桎梏</strong> ，脚镣和手铐、喻指约束、拘束。禁锢手部为枷，禁锢足部为校，桎梏为禁锢手（桎）脚（梏）</li>
 </ul>
-<p>或者以下2个参数：</p>
+<p><strong>利用刑人，以正法也。</strong> 强调刑罚的目的在于 <strong>正法，即纠正过错，引导归正（树立规范、示范惩戒），而非单纯惩治</strong> 。</p>
+<p><strong>正法</strong> 是启蒙的核心前提，蒙卦的 启蒙 不是盲目灌输，而是 <strong>以正导蒙</strong> —— 先明确 何为正（法则），再引导 向于正（行为）。<strong>刑人</strong> 的手段（如校规、家规、法律案例），本质是将 抽象的法则 具象化，让蒙昧者直观理解 <strong>正</strong> 的标准，避免因无知而 <strong>失正</strong> 。</p>
+<p><strong>以说桎梏</strong> ，通过树立规则和示范，避免蒙童因无知导致违规或者犯罪行为</p>
+<p><strong>以往，吝</strong> ： <code>往</code> 为 <code>冒进、急于推进</code>； <code>吝</code> 为 <code>遗憾、困难</code> 。若在启蒙刚起步、规矩未立之时就冒进求成，必遭遗憾或阻碍。</p>
+<p><strong>初六在蒙卦最下位，阴爻居阳位， <code>阴柔之质</code> 却处 <code>阳刚之位</code>，位不当（正），象征 <code>蒙昧者本无自律能力，却易躁动妄为（如孩童无知却爱打闹、新人入职不懂规则却急于表现），此时若无规则约束，易陷入 险（犯错），故需 刑人 立规</code> 。  且处 <em>蒙昧之始</em> ，柔弱无知</strong> 。人的行为易偏离正道（阴爻居阳位，本有 <em>躁动失序</em> 之性），此时 <code>启蒙</code> 的第一步不是灌输知识，而是 <strong>立规矩</strong></p>
 <ul>
-<li><code>Master_Log_File</code></li>
-<li><code>Read_Master_Log_Pos</code><br><img src="https://i.0920811.xyz/img_11.png"><blockquote>
-<p>通过以上 2 个值，可以知道当前 slave 执行到了 master 对应的哪个 binlog 文件 ( <code>Relay_Master_Log_File</code>) 以及文件中的对应位置 (<code>Exec_Master_Log_Pos</code> )</p>
-</blockquote>
-</li>
+<li><code>刑人</code> 是 <code>立规的手段</code> —— 通过明确的 <em>禁止性规范（如 不可说谎 、不可越界）</em>，让蒙昧者感知 <code>边界</code>，如同用 <code>桎梏</code> 的象征意义警示 <em>违规的代价</em></li>
+<li><code>说桎梏</code> 是 <code>立规的目的</code> —— 不是用规则囚禁人，而是通过规则去除 <em>无知带来的错误行为（如孩童因无知破坏物品，立规矩后可避免）</em> ，让人从 <code>蒙昧的束缚</code> 中解脱，走向有序。</li>
 </ul>
-<p>根据上述两个参数的值，在 master 中可以查看当前阻碍从库复制的事务以及之后的事务。可以执行以下命令查看</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW BINLOG EVENTS in &#x27;mysql-bin.001015&#x27; from 366269088;</span><br></pre></td></tr></table></figure>
-<p>这个可以查看到对应日志文件 <code>mysql-bin.001015</code> 中，事务 ID 为 <code>366269088</code> 之后的所有事务，</p>
-<p>以下命令可以限制查询条数</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW BINLOG EVENTS in &#x27;mysql-bin.001015&#x27; from 366269088 limit 10;</span><br></pre></td></tr></table></figure>
-
-<hr>
-<h2 id="主从具有相同的-server-uuid"><a href="#主从具有相同的-server-uuid" class="headerlink" title="主从具有相同的 server-uuid"></a>主从具有相同的 server-uuid</h2><p><strong>报错信息</strong>：</p>
-<blockquote>
-<p>Fatal error: The slave I&#x2F;O thread stops because master and slave have equal MySQL server UUIDs; these UUIDs must be different for replication to work</p>
-</blockquote>
-<p><strong>问题原因</strong>： 主从数据目录(默认<code>/var/lib/mysql/</code>)都有一个 <code>auto.cnf</code> 文件，里面记录的 <code>server-uuid</code> 是相同的，在云主机 clone 的场景可能会出现此问题。</p>
-<p><strong>解决方法</strong>： 修改 <code>auto.cnf</code> 文件中 <code>uuid</code> 的值，重启 Mysql 服务即可</p>
-<p>查询 uuid 的方式，登录 mysql，执行以下命令查看</p>
-<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">select uuid();</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_12.png"></p>
-<hr>
-<h2 id="主从具有相同的-server-id"><a href="#主从具有相同的-server-id" class="headerlink" title="主从具有相同的 server-id"></a>主从具有相同的 server-id</h2><p><strong>报错信息</strong>：</p>
-<blockquote>
-<p>Fatal error: The slave I&#x2F;O thread stops because master and slave have equal MySQL server ids; </p>
-</blockquote>
-<p><strong>问题原因</strong>： 主从配置文件中配置了同样的 <code>server-id</code></p>
-<p><strong>解决方法</strong>： 修改 <code>my.cnf</code>， 主从配置不同的<code>server-id</code></p>
-<hr>
-<h2 id="主从同步错误-1032"><a href="#主从同步错误-1032" class="headerlink" title="主从同步错误 1032"></a>主从同步错误 1032</h2><p><strong>报错信息</strong>：</p>
-<blockquote>
-<p>Could not execute Update_rows event on table ceshi.bbs_online; Can’t find record in ‘bbs_online’, Error_code: 1032; handler error HA_ERR_KEY_NOT_FOUND; the event’s master log mysql-bin.001423, end_log_pos 866646715</p>
-</blockquote>
-<p><strong>问题原因</strong>： 主从不同步，从数据库中记录被删除或者未同步到从库，主数据库中存在记录，主DB更新后，从无法同步</p>
-<p><strong>解决方法1</strong>： 重新备份 master DB，恢复到 slave，重新 <a href="/94ee2c23/" title="恢复主从">恢复主从</a></p>
-<p><strong>解决方法2</strong>： 找出丢失的数据在 slave 上插入。可以通过 <a href="#MySQL%E4%B8%BB%E4%BB%8E%E4%B8%8D%E5%90%8C%E6%AD%A5%EF%BC%8C%E5%B0%9D%E8%AF%95%E8%B7%B3%E8%BF%87%E6%89%A7%E8%A1%8C%E9%94%99%E8%AF%AF%E7%9A%84%E4%BA%8B%E5%8A%A1">分析出错的 binlog 找出丢失的记录</a></p>
-<hr>
-<h2 id="主从同步错误-1396"><a href="#主从同步错误-1396" class="headerlink" title="主从同步错误 1396"></a>主从同步错误 1396</h2><p><strong>报错信息</strong>：</p>
-<blockquote>
-<p>ERROR 1396 (HY000): Operation CREATE USER failed for ‘XXXX‘@’XXXX’</p>
-</blockquote>
-<p><strong>问题原因</strong>： slave 同步时，从数据库中已存在用户</p>
-<p><strong>解决方法</strong>： slave 上删除已存在的用户</p>
-<hr>
-<h2 id="主从同步错误-1062"><a href="#主从同步错误-1062" class="headerlink" title="主从同步错误 1062"></a>主从同步错误 1062</h2><p><strong>报错信息</strong>：</p>
-<blockquote>
-<p>Last_SQL_Error: Could not execute Write_rows event on table *;<br>    Duplicate entry ‘2’ for key ‘PRIMARY’,<br>Error_code: 1062;<br>handler error HA_ERR_FOUND_DUPP_KEY; the event’s master log mysql-bin.000006, end_log_pos 924</p>
-</blockquote>
-<p><strong>问题原因</strong>： slave 上已有该记录，master 上又插入，可能存在主从数据不一致</p>
-<p><strong>解决方法</strong>： 删除 slave 上重复的主键记录</p>
-<hr>
-<h2 id="主从同步错误-1042"><a href="#主从同步错误-1042" class="headerlink" title="主从同步错误 1042"></a>主从同步错误 1042</h2><p><strong>报错信息</strong>：</p>
-<blockquote>
-<p>error code 1042 (ER_BAD_HOST_ERROR): Can’t get hostname for your address</p>
-</blockquote>
-<p><strong>问题原因</strong>： 解析主机名失败</p>
-<p><strong>解决方法</strong>： mysql 配置（<code>my.cnf</code>）中设置 <code>skip-name-resolve</code></p>
-<p>使用以下命令解析 mysql 错误码</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">perror 1042</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_13.png"></p>
-<hr>
-<h2 id="导出导入数据错误-1290"><a href="#导出导入数据错误-1290" class="headerlink" title="导出导入数据错误 1290"></a>导出导入数据错误 1290</h2><p><strong>报错场景</strong>： 使用 <code>select/insert</code> 导出&#x2F;导入 时报错</p>
-<p><strong>报错信息</strong>：</p>
-<blockquote>
-<p>ERROR 1290 (HY000): The MySQL server is running with the –secure-file-priv option so it cannot execute this statement</p>
-</blockquote>
-<p><strong>问题原因</strong>： <code>secure_file_priv</code> 参数用于限制 <code>LOAD DATA</code>, <code>SELECT …OUTFILE</code>, <code>LOAD_FILE()</code> 传到哪个指定目录。  </p>
+<p>蒙昧的本质是 <strong>无序（行为无边界、思维无逻辑），启蒙的第一步是 建立秩序</strong> 。</p>
+<p><strong>以往，吝</strong> 强调启蒙的 <em>渐进性</em>。蒙昧的破除是一个过程，需遵循 <code>先立规→再启智→后成德</code> 的顺序：初六是 <strong>立规(知礼)</strong> 的阶段，若跳过此阶段直接 启智（如教孩童复杂知识却不教礼貌），或冒进 求成（如要求新人立刻独立完成复杂任务），只会因基础不牢而失败。</p>
+<p><strong>古人注解</strong> ：</p>
 <ul>
-<li><code>secure_file_priv</code> 为 <code>NULL</code> 时，表示限制 mysqld 不允许导入或导出。</li>
-<li><code>secure_file_priv</code> 为 <code>/tmp</code> 时，表示限制 mysqld 只能在 <code>/tmp</code> 目录中执行导入导出，其他目录不能执行。</li>
-<li><code>secure_file_priv</code> 没有值时，表示不限制 mysqld 在任意目录的导入导出。</li>
+<li><p>王弼</p>
+<p><code>发蒙之时，必以刑为先，使畏而后可教也</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>刑以发蒙，正法而已，若过责而不解，则为吝矣</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>刑人者，戒惧使知也。脱桎梏者，刑即行而释之也。发蒙之道，当如此。</code></p>
+</li>
 </ul>
-<p>可以通过以下命令，查看当前的配置  </p>
-<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> &quot;%secure_file_priv%&quot;;</span><br></pre></td></tr></table></figure>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包蒙，吉。纳妇，吉。子克家。</span><br></pre></td></tr></table></figure>
 
-<p><img src="https://i.0920811.xyz/img_18.png"></p>
-<p><strong>解决方法</strong>： 因为 <code>secure_file_priv</code> 参数是只读参数，不能使用 <code>set global</code> 命令修改。<br><img src="https://i.0920811.xyz/img_19.png"></p>
-<p>需要修改配置文件，添加以下内容</p>
-<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">secure_file_priv = &#x27;&#x27;</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：子克家，刚柔接也。</span><br></pre></td></tr></table></figure>
 
-<p>修改配置后，重启 mysql 服务生效</p>
-<h2 id="xtrbackup-备份时被阻塞，一直显示-log-scanned-up-to"><a href="#xtrbackup-备份时被阻塞，一直显示-log-scanned-up-to" class="headerlink" title="xtrbackup 备份时被阻塞，一直显示 log scanned up to"></a>xtrbackup 备份时被阻塞，一直显示 <code>log scanned up to</code></h2><p><strong>报错场景</strong>: xtrbackup 备份时间过长，一直输出 <code>log scanned up to</code><br><img src="https://i.0920811.xyz/img_20.png"></p>
-<p><strong>可能原因</strong>： 备份在等待锁<br><img src="https://i.0920811.xyz/img_21.png"></p>
-<p><strong>解决方法</strong>： 如果对业务无影响，可以重启 mysql 服务后重新备份，或者根据 ID kill 掉对应的线程</p>
-<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">show processlist;</span><br><span class="line">kill ID;</span><br></pre></td></tr></table></figure>
+<ul>
+<li><strong>包蒙</strong> - 包，包容、接纳，不排斥、不苛责；蒙，蒙昧、无知，需启蒙的蒙昧者</li>
+<li><strong>纳妇</strong> - 娶妻，喻指接受柔顺（阴，妇，象征 阴柔之物）的辅助者，表明刚健者与柔顺者结合，互补而吉。</li>
+<li><strong>子克家</strong> - 子，儿子、继承人，也指 <em>君子、主事者</em> 。 克 为胜任、承担。 <em>克家</em> ，能治理家庭（齐家）。君子若能包容、善教，并能刚柔相济，就能治理家庭 → 吉。</li>
+<li><strong>子克家，刚柔接也</strong> - 因为 <strong>阳刚（九二）与阴柔（六五）相接应，刚柔相合，内外调和</strong> 。</li>
+</ul>
+<p><strong>九二 爻是下卦 坎 卦的核心爻，九二 阳爻居阴位，得中而位不当，但居中承上、下应群阴（乘初六之柔（蒙童），上应六五之柔（君师）），成为蒙卦 以柔济刚、包容启蒙 的关键，其爻辞与象辞通过 包蒙、纳妇、子克家 三个意象，揭示了启蒙教育的核心法则 —— 以包容接纳为基，以刚柔相济为法，最终实现 教而有成</strong></p>
+<ul>
+<li><strong>包蒙</strong> 是启蒙的前提：不筛选、不放弃任何蒙昧者（如老师不歧视基础差的学生，管理者不排斥新人的笨拙），以宽广胸怀接纳差异，为启蒙奠定基础；</li>
+<li><strong>纳妇</strong> 是启蒙的方法：以 柔 待 蒙 —— 不用单一刚硬的方式（如仅靠惩罚、说教），而是接纳蒙昧者的柔顺本性（如孩童需耐心引导，而非强制灌输），用适配的方式启发；</li>
+<li><strong>子克家</strong> 是启蒙的成果：要么主导者圆满完成教化责任（如家长培养出能担当的子女），要么蒙昧者成长为 “能克家” 的可用之才（如新人成长为能独当一面的骨干），实现 “蒙开而有成”。</li>
+</ul>
+<p>九二在蒙卦中的核心地位，源于其 <strong>得中（不偏不倚、态度平和、不极端）、应上（上应六五之柔）、承下（乘初六之柔）</strong> 的三重优势</p>
+<ul>
+<li><strong>得中</strong> ： 九二居下卦坎的中位，<strong>中</strong> 象征 <strong>不偏不倚，不过刚亦不过柔</strong> ，不无原则的溺爱（如放任蒙昧者犯错），又防止无规的（避免初六 <em>刑人</em> 的）刚硬过苛</li>
+<li><strong>应上</strong> ： 九二阳爻与上卦六五阴爻 <strong>阴阳正应（二爻对应五爻）</strong> ，六五为蒙卦 <strong>君位</strong> （象征启蒙的目标与资源），九二的 <strong>包蒙</strong> 行为能获得上位的认可与支持（如老师的教学理念获学校认同，管理者的培育计划获公司支持），为 <strong>子克家</strong> 提供保障。</li>
+<li><strong>承下</strong> ： 九二是下卦唯一阳爻（主爻），初六、六三、六四阴爻均围绕其展开（象征蒙昧者需依赖启蒙者引导），九二以阳刚的智慧主导启蒙，却以阴位的柔顺包容差异（ <strong>纳妇</strong> ），形成 <em>刚为主、柔为用</em> 的格局，让蒙昧者愿被引导，故 吉。</li>
+</ul>
+<p><strong>刚柔接也</strong> 是蒙卦启蒙的核心法则： <strong>阳刚（智慧、原则）是 骨</strong> ，确保启蒙不偏离 <em>启蒙</em> 的目标； <strong>阴柔（包容、适配）是 肉</strong> ，确保启蒙能落地、被接受。二者缺一不可 —— 无刚则无方向，无柔则无温度，唯有刚柔相济，才能实现 <strong>教而有成（子克家）</strong> 。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>包蒙者，以宽容之道养之也。纳妇者，能接柔顺之应也。刚柔接应，则子能克家矣。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九二阳刚中正而应于五，能包容蒙昧，接纳柔顺，故能治家而吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>包蒙，容受而教之也。纳妇，取其柔顺之助也。子克家，谓能和内外而治也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">勿用娶女，见金夫，不有躬。无攸利。</span><br></pre></td></tr></table></figure>
 
-<hr>
-<h2 id="Cannot-add-or-update-a-child-row-a-foreign-key-constraint-fails"><a href="#Cannot-add-or-update-a-child-row-a-foreign-key-constraint-fails" class="headerlink" title="Cannot add or update a child row: a foreign key constraint fails"></a>Cannot add or update a child row: a foreign key constraint fails</h2><p>修改表字段，添加外键时报错，sql 语句及报错信息如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ALTER TABLE `my_table1` ADD COLUMN `usage_id` BIGINT DEFAULT 1 NOT NULL , ADD CONSTRAINT `usage_id_43803979_fk_domains_c` FOREIGN KEY (`usage_id`) REFERENCES `domainusage`(`<span class="built_in">id</span>`);</span></span><br><span class="line"></span><br><span class="line">错误代码： 1452</span><br><span class="line">Cannot add or update a child row: a foreign key constraint fails (`test`.`#sql-648_bce`, CONSTRAINT `usage_id_43803979_fk_domains_c` FOREIGN KEY (`usage_id`) REFERENCES `domainusage` (`id`))</span><br></pre></td></tr></table></figure>
-<p>这个错误通常发生在尝试添加外键约束时，存在不一致的数据。在这种情况下，它指示 <code>my_table1</code> 表中的 <code>usage_id</code> 列的默认值与 <code>domainusage</code> 表的外键约束不匹配。</p>
-<p>可能的原因和解决方法包括：</p>
-<ol>
-<li><p><code>domainusage</code> 表中没有 id 为 1 的记录：如果你将 <code>my_table1</code> 表的 <code>usage_id</code> 列设置为引用 <code>domainusage</code> 表的 id 列作为外键约束，那么确保在 <code>domainusage</code> 表中存在一个 id 为 1 的记录。如果没有，请先添加一条记录，并确保它的 id 值为 1。</p>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：勿用娶女，行不顺也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>勿用</strong> ： 不宜、不可。</li>
+<li><strong>金夫</strong> ： 手持（金银）钱财得男子。此处指 <strong>九二</strong> ，六三正应上九，理当从上九，但六三近比九二，九二是众望所归，势众富有，为金夫。</li>
+<li><strong>不有躬</strong> ： 躬，自身、立场。 <strong>不有躬</strong> 即 <strong>失去自我立场、无法自主</strong> 。一旦被外在功利诱惑吸引，就会丧失自身的原则与自主性。</li>
+<li><strong>无攸利</strong> ： <strong>攸</strong> 为 <strong>所</strong> ，意为 <strong>没有任何益处</strong> ，强调这种 <strong>失正逐利</strong> 的行为终将导致负面结果（没有好处）。</li>
+<li><strong>勿用娶女，行不顺也</strong> : 六三承刚，柔乘刚，不顺。</li>
+</ul>
+<p><strong>六三爻 阴爻居阳位，位不当，处险终，乘刚，上下犹豫不定，贪慕财势，见利忘义，取悦九二，苟且失身</strong> 。</p>
+<ul>
+<li><strong>位不当</strong> ： <strong>阴爻居阳位，阴柔之质 却处 阳刚之位，不中不正，乘九二之刚（九二为 金夫），阴柔凌驾阳刚，失正不顺</strong> <blockquote>
+<p>六三阴爻居阳位，位不当，意味着其行为易躁动、行事失正。其本与上九有正应，却受邻近的九二吸引。九二是下卦唯一阳爻，为诸多蒙昧者归依之处，势头正盛，六三便将其认作 “金夫”，舍正应关系而攀附九二，进而失去自我原则，出现 “不有躬” 的状况。</p>
+</blockquote>
 </li>
-<li><p><code>domainusage</code> 表的 id 为 1 的记录与 <code>my_table1</code> 表的数据不匹配：检查 <code>domainusage</code> 表中 id 为 1 的记录与 <code>my_table1</code> 表中的数据是否一致。确保 <code>my_table1</code> 表中的每一行都具有在 <code>domainusage</code> 表中存在的有效的 id 值。</p>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>女志在金夫，不有躬也。失其正而行不顺，故无攸利。</code></p>
 </li>
-<li><p>数据库中已经存在不一致的数据：如果你已经尝试了上述步骤并且仍然遇到问题，可能是由于数据库中存在不一致的数据导致的。在这种情况下，你需要检查并修复 <code>my_table1</code> 表和 <code>domainusage</code> 表之间的数据一致性问题。可以通过更新或删除相关行来解决不一致的数据。</p>
+<li><p>程颐</p>
+<p>  <code>女见金夫而失贞，不守其身，志在财利，不可与成夫妇，故勿用娶女也。</code></p>
 </li>
-</ol>
-<p>本示例中遇到的问题为第 1 个原因导致，解决办法为： 先在表 <code>domainusage</code> 中添加 id 为 1 的数据，然后再更新表 <code>my_table1</code></p>
+<li><p>朱熹</p>
+<p>  <code>女子志在金夫，不自有其躬。若娶此女，则必无所利。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">困蒙，吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：困蒙之吝，独远实也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>困蒙</strong> ： 困于蒙昧，不得启发，难以摆脱。</li>
+<li><strong>吝</strong> ： 困难、遗憾、不顺。六四以阴爻处于上下两阴爻之间，远离九二阳爻这个 <strong>蒙师</strong>，无法得到有效的启蒙和引导，就像独自被困在蒙昧的困境中，所以会有遗憾和困难。</li>
+<li><strong>独</strong> ： 独自、孤立</li>
+<li><strong>远实</strong> ： 远离真正的贤师、正道。 <strong>是说六四独自远离了充实的阳爻，在蒙卦中，阳爻代表启蒙者、有真才实学的人，六四远离了九二和上九两个阳爻，处于蒙昧的环境中，没有人能够启发它，所以才会陷入困蒙的境地而有遗憾。</strong></li>
+</ul>
+<p>六四爻阴爻居阴位，虽然得位（位正），但所处的位置并不理想。它上下都是阴爻，周围都是蒙昧之人，缺乏阳刚之气的引领和启发。这就好比一个人处于一个缺乏知识和智慧的环境中，又没有遇到良师益友来指导自己，所以只能被困在蒙昧之中，难以获得进步和发展。这种情况虽然不会带来凶险（位正），但长期下去，会因为得不到及时的启蒙而错过很多机会，给自己带来遗憾。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六四以阴柔处险，又远于刚中之应，独处而无所辅，故困蒙而吝。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>困于蒙者，不得师也。六四无应，远于五之刚中，不能得师之益，故吝。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>困蒙者，孤立无援，不得师益之象；然位正，故但为吝耳。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童蒙，吉</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：童蒙之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
+<ul>
+<li><strong>顺</strong> ： 柔顺。 六五在上互卦坤中，坤为顺。</li>
+<li><strong>巽</strong> ： 蒙卦六五是从观卦六二上升而来，在观卦中，上卦为巽，在蒙卦中，上互卦为坤。</li>
+</ul>
+<p><strong>六五以柔德（阴）居尊位（五位为天子位），位不当 却 得中，与下卦 <em>九二之师（求九二之刚明）</em> 相正应，形成 柔得中而应刚，既有君位之尊，又怀童子之虚心，象征君主尊师重道、礼贤下士，故能化民成俗，蒙以养正。故吉。</strong></p>
+<p><strong>六五与下卦九二阳爻为 正应，九二是蒙卦唯一的 <em>启蒙核心</em> （阳刚智慧、包容引导），如同 良师、贤臣。六五以 童蒙 之态接纳九二的引导，相当于 君得贤臣辅、上得良师启，启蒙有明确的 正源，不会被错误信息误导，故 吉。</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>童蒙者，质朴而未开，虚心受教，顺以从正，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六五居尊位，以阴柔为主，而能下应九二之刚中，是以顺从谦巽，得童蒙之吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>以柔居尊位，不自是，而能下应于二，谦虚顺巽，乃所以为吉。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">击蒙。不利为寇，利御寇。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用御寇，上下顺也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>击蒙</strong> ： 击，攻击、惩治。击蒙，以刚硬手段纠正偏差（非暴力摧残）。<strong>蒙</strong> 此处特指 <em>顽固不化、向恶发展的蒙昧</em>（区别于初六 <em>待启之蒙</em> 、六五 <em>谦逊之蒙</em> ），如孩童屡教不改的恶习、成人因无知陷入的错误执念。合意为：对向恶的蒙昧采取强硬惩戒，以遏制其偏离正道。</li>
+<li><strong>寇</strong> ： 敌寇、盗贼，指作乱之人。</li>
+<li><strong>御寇</strong> ： 防御、抵御寇乱。</li>
+</ul>
+<p>上九是蒙卦的最末一爻（终爻），阳爻居阴位，位不当，亢极，却处 <strong>蒙卦终极</strong> ，承担着 <strong>以刚正纠偏、防范蒙昧恶变</strong> 的关键角色。</p>
+<p><strong>不利为寇</strong> ，上九正应六三，六三 <strong>见金夫，不有躬</strong> 不应上九。 <strong>六三在坎中，坎为盗寇，故不利为寇</strong> </p>
+<p><strong>利御寇，上下顺也</strong> ，御 为 “防御、守护”， <strong>上九下有互坤，坤为众，为顺，有众顺从，故利御寇</strong> </p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上九以刚居上，非所以为教也。然蒙不可不击，故曰击蒙。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>击蒙者，谓冥顽不化，不可教以义理者，当用刑罚以击之。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>不利为寇，言不可恃强而横行；利御寇，言可以御恶以为正也。</code></p>
+</li>
+</ul>
 ]]></content>
       <categories>
-        <category>Mysql</category>
+        <category>易学</category>
       </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 常用 SQL</title>
-    <url>/2207221611/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h1 id="常用-sql"><a href="#常用-sql" class="headerlink" title="常用 sql"></a>常用 sql</h1><h2 id="导出数据"><a href="#导出数据" class="headerlink" title="导出数据"></a>导出数据</h2><h3 id="导出到文件"><a href="#导出到文件" class="headerlink" title="导出到文件"></a>导出到文件</h3><figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">SELECT</span> <span class="operator">*</span> <span class="keyword">FROM</span> [<span class="keyword">TABLE</span>] </span><br><span class="line">    <span class="keyword">INTO</span> OUTFILE <span class="string">&#x27;[FILE]&#x27;</span> </span><br><span class="line">    FIELDS TERMINATED <span class="keyword">BY</span> <span class="string">&#x27;,&#x27;</span> </span><br><span class="line">    OPTIONALLY ENCLOSED <span class="keyword">BY</span> <span class="string">&#x27;&quot;&#x27;</span> </span><br><span class="line">    LINES TERMINATED <span class="keyword">BY</span> <span class="string">&#x27;\n&#x27;</span>；</span><br></pre></td></tr></table></figure>
-<p>参数说明：</p>
-<ul>
-<li><code>into outfile ‘导出的目录和文件名’ </code>  </li>
-<li><code>fields terminated by ‘字段间分隔符’ </code> </li>
-<li><code>optionally enclosed by ‘字段包围符’  </code> </li>
-<li><blockquote>
-<blockquote>
-<p><code>optionally enclosed by</code> 对数值型字段无效</p>
-</blockquote>
-</blockquote>
-</li>
-<li><code>lines terminated by ‘行间分隔符’ </code></li>
-</ul>
-<p>产生报错可参考 <a href="https://0920811.xyz/22072111/#导出导入数据错误-1290">Mysql 常见错误</a></p>
-<h2 id="插入数据"><a href="#插入数据" class="headerlink" title="插入数据"></a>插入数据</h2><h3 id="批量插入"><a href="#批量插入" class="headerlink" title="批量插入"></a>批量插入</h3><figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">insert</span> <span class="keyword">into</span> tb(c1,c2) <span class="keyword">values</span>(<span class="number">1</span>,<span class="number">2</span>),(<span class="number">3</span>,<span class="number">4</span>),(<span class="number">5</span>,<span class="number">6</span>);</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-<h2 id="备份数据"><a href="#备份数据" class="headerlink" title="备份数据"></a>备份数据</h2><h3 id="mysqldump-常见用法"><a href="#mysqldump-常见用法" class="headerlink" title="mysqldump 常见用法"></a>mysqldump 常见用法</h3><a href="/94ee2c23/" title="MySQL 备份及主从恢复">MySQL 备份及主从恢复</a>
-<h4 id="mysqldump-备份时排除某些表"><a href="#mysqldump-备份时排除某些表" class="headerlink" title="mysqldump 备份时排除某些表"></a>mysqldump 备份时排除某些表</h4><ul>
-<li><code>--ignore-table=database.table</code> 导出时排除指定的表</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p database --ignore-table=database.table1 --ignore-table=database.table2 &gt; backup.sql</span><br></pre></td></tr></table></figure>
-
-<h4 id="mysqldump-导出表结构"><a href="#mysqldump-导出表结构" class="headerlink" title="mysqldump 导出表结构"></a>mysqldump 导出表结构</h4><ul>
-<li><code>-d</code> 选项，只导出表结构，不导出数据</li>
-</ul>
-<p>导出整个数据库表结构（不包含数据）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p -d DB &gt; db.sql</span><br></pre></td></tr></table></figure>
-
-<p>导出单个数据表结构（不包含数据）</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p -d DB TABLE &gt; table.sql</span><br></pre></td></tr></table></figure>
-
-<h2 id="触发器"><a href="#触发器" class="headerlink" title="触发器"></a>触发器</h2><p>为了创建一个新的触发器，可以使用 <code>CREATE TRIGGER</code> 语句。 下面说明了 <code>CREATE TRIGGER</code> 语句的语法： <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[MySQL触发器创建](https://www.yiibai.com/mysql/create-the-first-trigger-in-mysql.html)">[1]</span></a></sup></p>
-<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line"><span class="keyword">CREATE</span> <span class="keyword">TRIGGER</span> [trigger_name] [trigger_time] [trigger_event]</span><br><span class="line"> <span class="keyword">ON</span> [table_name]</span><br><span class="line"> <span class="keyword">FOR</span> <span class="keyword">EACH</span> <span class="type">ROW</span></span><br><span class="line"> <span class="keyword">BEGIN</span></span><br><span class="line"> ...</span><br><span class="line"> <span class="keyword">END</span>;</span><br></pre></td></tr></table></figure>
-<p>参数说明：</p>
-<ul>
-<li><code>trigger_name</code> : 触发器名称, 一般遵循命名约定 <code>[trigger time]_[table name]_[trigger event]</code>，例如 <code>before_employees_update</code></li>
-<li><code>trigger_time</code> : 触发激活时间，必须指定定义触发器的激活时间。如果要在更改之前处理操作，则使用 <code>BEFORE</code> 关键字，如果在更改后需要处理操作，则使用 <code>AFTER</code> 关键字</li>
-<li><code>trigger_event</code> : 触发事件，可以是 <code>INSERT</code>，<code>UPDATE</code> 或 <code>DELETE</code>。此事件导致触发器被调用。 触发器只能由一个事件调用。要定义由多个事件调用的触发器，必须定义多个触发器，每个事件一个触发器。</li>
-<li><code>table_name</code> : 触发器管理的表。触发器必须与特定表关联。没有表触发器将不存在，所以必须在 <code>ON</code> 关键字之后指定表名</li>
-<li><code>BEGIN</code> … <code>END</code> : 将 SQL 语句放在 <code>BEGIN</code> 和 <code>END</code> 块之间。这是定义触发器逻辑的位置。</li>
-</ul>
-<p>以下示例定义一个触发器，在表中的字段被更改后，改回旧的之，实现禁止更改表的效果</p>
-<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line">DELIMITER <span class="operator">/</span><span class="operator">/</span> </span><br><span class="line"></span><br><span class="line"><span class="keyword">CREATE</span> <span class="keyword">TRIGGER</span> `before_update_images` </span><br><span class="line">    BEFORE <span class="keyword">UPDATE</span> <span class="keyword">ON</span> `images` </span><br><span class="line">    <span class="keyword">FOR</span> <span class="keyword">EACH</span> <span class="type">ROW</span></span><br><span class="line"><span class="keyword">BEGIN</span></span><br><span class="line">    <span class="keyword">set</span> new.name<span class="operator">=</span>old.name;</span><br><span class="line">    <span class="keyword">set</span> new.url<span class="operator">=</span>old.url;</span><br><span class="line"><span class="keyword">END</span> <span class="operator">/</span><span class="operator">/</span></span><br><span class="line">DELIMITER;</span><br></pre></td></tr></table></figure>
-
-
-
-<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="mysql-命令提示符下翻页查看输出"><a href="#mysql-命令提示符下翻页查看输出" class="headerlink" title="mysql 命令提示符下翻页查看输出"></a>mysql 命令提示符下翻页查看输出</h2><figure class="highlight sql"><table><tr><td class="code"><pre><span class="line">pager less <span class="operator">-</span>S</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>之后的输出可以使用和less命令一样的参数</p>
-</blockquote>
-<h2 id="gegeral-log-开启"><a href="#gegeral-log-开启" class="headerlink" title="gegeral_log 开启"></a>gegeral_log 开启</h2><p>查询 <code>general_log</code> 配置，并启用</p>
-<figure class="highlight sql"><table><tr><td class="code"><pre><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> <span class="string">&#x27;%general%&#x27;</span>;</span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------------------------------------+</span></span><br><span class="line"><span class="operator">|</span> Variable_name    <span class="operator">|</span> <span class="keyword">Value</span>                                              <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------------------------------------+</span></span><br><span class="line"><span class="operator">|</span> general_log      <span class="operator">|</span> OFF                                                <span class="operator">|</span></span><br><span class="line"><span class="operator">|</span> general_log_file <span class="operator">|</span> <span class="operator">/</span>var<span class="operator">/</span>lib<span class="operator">/</span>mysql<span class="operator">/</span>data<span class="operator">/</span>localhost.log                  <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------------------------------------+</span></span><br><span class="line"></span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">set</span> <span class="keyword">global</span> general_log_file<span class="operator">=</span><span class="string">&#x27;/tmp/mysql.log&#x27;</span>;</span><br><span class="line"></span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">set</span> <span class="keyword">global</span> general_log<span class="operator">=</span><span class="keyword">on</span>;</span><br><span class="line">    </span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> <span class="string">&#x27;%general%&#x27;</span>;</span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> Variable_name    <span class="operator">|</span> <span class="keyword">Value</span>                <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> general_log      <span class="operator">|</span> <span class="keyword">ON</span>                   <span class="operator">|</span></span><br><span class="line"><span class="operator">|</span> general_log_file <span class="operator">|</span> <span class="operator">/</span>tmp<span class="operator">/</span>mysql.log       <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="number">2</span> <span class="keyword">rows</span> <span class="keyword">in</span> <span class="keyword">set</span> (<span class="number">0.00</span> sec)</span><br><span class="line"></span><br><span class="line">    </span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">set</span> <span class="keyword">global</span> general_log<span class="operator">=</span>off;</span><br><span class="line">Query OK, <span class="number">0</span> <span class="keyword">rows</span> affected (<span class="number">0.00</span> sec)</span><br><span class="line"></span><br><span class="line">mysql<span class="operator">&gt;</span> <span class="keyword">show</span> <span class="keyword">global</span> variables <span class="keyword">like</span> <span class="string">&#x27;%general%&#x27;</span>;</span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> Variable_name    <span class="operator">|</span> <span class="keyword">Value</span>                <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="operator">|</span> general_log      <span class="operator">|</span> OFF                  <span class="operator">|</span></span><br><span class="line"><span class="operator">|</span> general_log_file <span class="operator">|</span> <span class="operator">/</span>tmp<span class="operator">/</span>mysql.log       <span class="operator">|</span></span><br><span class="line"><span class="operator">+</span><span class="comment">------------------+----------------------+</span></span><br><span class="line"><span class="number">2</span> <span class="keyword">rows</span> <span class="keyword">in</span> <span class="keyword">set</span> (<span class="number">0.00</span> sec)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>在 <code>general_log</code> 中可用通过搜索 <code>event id</code> 来查看登陆连接对数据库的所有 SQL 。</p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.yiibai.com/mysql/create-the-first-trigger-in-mysql.html">MySQL触发器创建</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>MySQL 常用配置说明</title>
-    <url>/22721459/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>mysql 5.7</li>
-</ul>
-<p>默认配置文件路径: <code>/etc/my.cnf</code></p>
-<span id="more"></span>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">##############通用配置##############</span><br><span class="line">user = mysql</span><br><span class="line">port = 3306</span><br><span class="line">default_storage_engine = InnoDB</span><br><span class="line">## 只读</span><br><span class="line">read_only=1  </span><br><span class="line">             </span><br><span class="line">## 跳过域名解析参数，禁止MySQL对外部连接进行DNS解析，使用这一选项可以消除MySQL进行DNS解析的时间。</span><br><span class="line">## 但需要注意，如果开启该选项，则所有远程主机连接授权都要使用IP地址方式，否则MySQL将无法正常处理连接请求！</span><br><span class="line">skip-name-resolve  </span><br><span class="line"></span><br><span class="line">## 跳过授权，重置密码时需要</span><br><span class="line">## 重置密码：update mysql.user set authentication_string=password(&#x27;Password@123&#x27;) where user=&#x27;root&#x27;;          </span><br><span class="line">skip-grant-tables   </span><br><span class="line">          </span><br><span class="line">datadir=/var/lib/mysql</span><br><span class="line">socket=/var/lib/mysql/mysql.sock</span><br><span class="line"></span><br><span class="line">## 解决日志中因wait-timeout的报错：</span><br><span class="line">## Aborted connection 40476 to db: &#x27;&#x27; user: &#x27;&#x27; host: &#x27;&#x27; (Got an error reading communication packets)</span><br><span class="line">log_warnings=1  </span><br><span class="line">                 </span><br><span class="line">### 连接错误超过此值，客户端无法连接，即拉黑</span><br><span class="line">max_connect_errors = 1000      </span><br><span class="line"></span><br><span class="line">###########主从配置选项###########</span><br><span class="line">server-id = 1</span><br><span class="line"># 主库要生成的二进制日志文件名称</span><br><span class="line">log-bin = mysql-bin    </span><br><span class="line">    </span><br><span class="line">## 从库中继日志名称</span><br><span class="line">relay-log = mysql-relay-bin    </span><br><span class="line"></span><br><span class="line">################</span><br><span class="line">## sync_binlog = 0    表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。</span><br><span class="line">## 这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span><br><span class="line">## sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。</span><br><span class="line">## 最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。 </span><br><span class="line">## 但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。</span><br><span class="line">## 对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span><br><span class="line">## 只适用于主库的二进制日志，不适用中继日志</span><br><span class="line">################</span><br><span class="line">sync_binlog=0</span><br><span class="line"></span><br><span class="line">## 要同步的库.应该在从库上尽可能的使用replicate_wild_*，不建议在主库上使用</span><br><span class="line">binlog-do-db = rtzc_pnc_base       </span><br><span class="line"></span><br><span class="line"># 不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span><br><span class="line">binlog-ignore-db = mysql</span><br><span class="line"></span><br><span class="line">### 应该在从库上尽可能的使用replicate_wild_*              </span><br><span class="line">#replicate-wild-ignore-table=db.*               </span><br><span class="line">#replicate-wild-ignore-table=mysql.*</span><br><span class="line">#replicate-wild-ignore-table=information_schema.*</span><br><span class="line">#replicate-wild-ignore-table=performance_schema.*</span><br><span class="line">#replicate-wild-ignore-table=sys.*</span><br><span class="line">#replicate_wild_do_table=DB_NAME.%</span><br><span class="line">#replicate_ignore_db=test</span><br><span class="line"></span><br><span class="line">###复制实现模式/级别</span><br><span class="line">binlog_format=statement/row/mixed   </span><br><span class="line"></span><br><span class="line"># binlog日志大于此值是重新生成新的日志，默认(最大)1G，若使用大事务，日志可能会超过此值     </span><br><span class="line">max_binlog_size = 100M        </span><br><span class="line"></span><br><span class="line"># bilog日志保存天数，过期后清除</span><br><span class="line">expire_logs_days = 7   </span><br><span class="line"></span><br><span class="line"># 跳过某些同步错误号</span><br><span class="line">slave-skip-errors = 1032,1062  </span><br><span class="line"></span><br><span class="line">### 从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span><br><span class="line">log-slave-updates=1          </span><br><span class="line"></span><br><span class="line"># 阻止slave自动启动复制</span><br><span class="line">skip_slave_start     </span><br><span class="line"></span><br><span class="line"># 从库发现和主库连接失败后，重连等待的时间，默认1小时       </span><br><span class="line">slave_net_timeout = 1        </span><br><span class="line"></span><br><span class="line"># 在从库上同步状态文件到磁盘，默认10000，表示在10000个事务执行完成后，将信息同步到磁盘</span><br><span class="line"># 打开后，可能会降低IO性能，设置为1最安全，但是IO性能最差；设置为0，由OS控制刷新</span><br><span class="line">sync_master_info | sync_relay_log | sync_relay_log_info  = 1      </span><br><span class="line"></span><br><span class="line"># SQL线程重放完一个中继日志后尽快将其删除</span><br><span class="line">relay_log_purge = 1         </span><br><span class="line"></span><br><span class="line"># 所有中继日志大小和的最大值。可防止主从延迟很大时，IO线程写relay log，导致磁盘空间不足。中继日志总和超过此值，IO线程会停止，等待SQL线程释放空间；</span><br><span class="line"># 风险是从库未从主库读取所有relaylog，这些日志可能在主库崩溃时丢失，磁盘空间足够的情况下，不推荐配置  </span><br><span class="line">relay_log_space_limit = 1G       </span><br><span class="line"></span><br><span class="line"></span><br><span class="line">#########日志选项###########</span><br><span class="line">slow_query_log =1   </span><br><span class="line">long_query_time=2     </span><br><span class="line">slow_query_log_file=/var/lib/mysql/slow.log</span><br><span class="line"></span><br><span class="line">log-error=/var/log/mysqld.log</span><br><span class="line"></span><br><span class="line">##########编码选项######</span><br><span class="line">character-set-server = utf8</span><br><span class="line">collation-server=utf8_general_ci </span><br><span class="line"></span><br><span class="line">#############连接选项#############</span><br><span class="line"></span><br><span class="line"># 客户端的连接闲置的最大时间，默认8小时，设置非交互模式(jdbc)时的超时时间</span><br><span class="line">wait-timeout = 60      </span><br><span class="line"></span><br><span class="line"># 交互模式超时时间      </span><br><span class="line">interactive_timeout = 60    </span><br><span class="line"></span><br><span class="line"># 并发连接数,最终值由open_files_limit共同决定</span><br><span class="line">max_connections=65535    </span><br><span class="line"></span><br><span class="line"># 一个账号最大可发起多少并发连接                </span><br><span class="line">max_user_connections=65535            </span><br><span class="line"></span><br><span class="line"></span><br><span class="line">#############性能选项#############</span><br><span class="line"></span><br><span class="line"># 缓存的表个数，可以观察Opened_tables状态变量值，若很大(若经常需要创建/删除临时表，该计数器也会不停增长)，建议增加此配置值，由OS rlimit共同决定</span><br><span class="line">table_open_cache = 65535  </span><br><span class="line"></span><br><span class="line"># 缓存的线程个数，具体配置值可以观察Threads_created状态变量，如果此值较大，可加大thread_cache_size,建议此值保持足够大    </span><br><span class="line">thread_cache_size = 5000   </span><br><span class="line"></span><br><span class="line"># 查询缓存使用的内存大小，启动时，一次性分配</span><br><span class="line">query_cache_size = 1024M      </span><br><span class="line"></span><br><span class="line"># 查询需排序时分配内存，立即分配指定的全部内存，无论是否需要这么多</span><br><span class="line">sort_buffer_size = 10k            </span><br><span class="line"></span><br><span class="line"># 需要在服务启动程序(/usr/lib/systemd/system/mysqld.service)中配置：LimitNOFILE = 65535</span><br><span class="line">open_files_limit = 65535</span><br><span class="line">     </span><br><span class="line">max_allowed_packet = 200M</span><br><span class="line">innodb_open_files = 65535      </span><br><span class="line"></span><br><span class="line"># 默认值一般都太小，此值建议配置为os和其他应用消耗的内存除外的内存大小</span><br><span class="line"># 配置太大也会导致预热和关闭花费较多时间</span><br><span class="line">innodb_buffer_pool_size = 20G       </span><br><span class="line"></span><br><span class="line"># 事务日志的文件大小，太小，InnoDB必须做更多检查点，导致更多日志写，不利于IO。日志缓存满，事务提交或每秒，会刷新缓存到磁盘;</span><br><span class="line"># 可以观察show innodb status中log部分，Innodb_os_log_written查看写入了多少数据</span><br><span class="line">innodb_log_file_size = (32-128)M</span><br><span class="line"></span><br><span class="line">     </span><br><span class="line">innodb_flush_log_at_trx_commit = N</span><br><span class="line">########## innodb特有参数，事务日志用于在mysql崩溃后的恢复</span><br><span class="line"># N=0   每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；</span><br><span class="line"># 在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span><br><span class="line"></span><br><span class="line"># N=1   每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，log buffer 会被写入到日志文件并刷写到磁盘。 </span><br><span class="line"># 这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span><br><span class="line"></span><br><span class="line"># N=2    当取值为2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。</span><br><span class="line"># 这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。</span><br><span class="line"># 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span><br><span class="line">##########</span><br><span class="line"></span><br><span class="line"># 限制一次性可以有多少线程进入内核，建议值：cpu数量* 磁盘数量* 2,进入内核的线程超过此值，新线程无法进入。</span><br><span class="line"># 为使线程高效进入内核，线程第一次休眠innodb_thread_sleep_delay(默认10000)微秒，然后重试，若依然不能进入内核，则放入一个等待线程队列，由OS内核处理。</span><br><span class="line"># 在高并发环境或大量小查询时，可减小此值。</span><br><span class="line">innodb_thread_concurrency = 64</span><br><span class="line"></span><br><span class="line"># 一旦线程进入内核，可以有指定数量的tickents，再次进入内核时，可不在做并发检查，按照查询授权，而非事务            </span><br><span class="line">innodb_concurrency_tickets = 10</span><br><span class="line"></span><br><span class="line"># 多少个线程可以在同一时间提交事务，太小会有线程冲突      </span><br><span class="line">innodb_commit_concurrency = 100   </span><br><span class="line"></span><br><span class="line"># 指定磁盘IO能力，默认为100，使用SSD或IO性能好的磁盘时，建议提高此值</span><br><span class="line">innodb_io_capacity = 1000     </span><br><span class="line"></span><br><span class="line"># 控制后台由多少线程负责IO操作，默认为4</span><br><span class="line">innodb_read_io_threads | innodb_write_io_threads = 10             </span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
   </entry>
 </search>
