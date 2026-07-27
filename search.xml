@@ -1233,6 +1233,58 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_7.png">  </p>
+<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.0920811.xyz/img_8.png"></li>
+<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>更改mysql配置文件后，重启mysql生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+<p><img src="https://i.0920811.xyz/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1351,58 +1403,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>TCP</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了relay-log中的全部更新"><a href="#确保所有从库已经执行了relay-log中的全部更新" class="headerlink" title="确保所有从库已经执行了relay log中的全部更新"></a>确保所有从库已经执行了relay log中的全部更新</h4><p>登录mysql从库，在每个从库上，执行<code>stop slave io_thread</code>,停止IO线程, 通过以下2个命令之一检查从库relay log的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_7.png">  </p>
-<p>当输出中<code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code>，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看slave状态(<code>show slave status\G</code>), 每个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.0920811.xyz/img_8.png"></li>
-<li>如果，从库上面查看slave状态，各个从库读取的主库的<code>Master_Log_File</code>和<code>Read_Master_Log_Pos</code>不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择position最大的一个从库，作为新选定的主库。对其他从库，应该通过从binlog中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认<code>/etc/my.cnf</code>)中开启binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-<p>新选定的主库上，如果配置了readonly，在配置文件(默认<code>/etc/my.cnf</code>)中取消readonly配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<p>更改mysql配置文件后，重启mysql生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-<p>在新选定的主库上，执行以下命令，查看当前主库的master位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-<p><img src="https://i.0920811.xyz/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看master status，显示的<code>File</code>和<code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的<code>master_log_file</code>和<code>master_log_pos</code>从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -34900,137 +34900,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之风火家人</title>
-    <url>/20251203094620/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地火明夷"><a href="#地火明夷" class="headerlink" title="地火明夷"></a>地火明夷</h1><p><img src="https://i.0920811.xyz/img_382.png"></p>
-<p>风火家人，内（下）离（火、附丽、文明）外（上）巽（风、顺），家人，内也；（火泽）睽，外也。家人卦核心为正家。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人，利女贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：家人，女正位乎内，男正位乎外。男女正，天地之大义也。家人有严君焉，父母之谓也。父父、子子、兄兄、弟弟、夫夫、妇妇，而家道正，正家而天下定矣。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风自火出，家人。君子以言有物而行有恒。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>家人，女正位乎内，男正位乎外</strong> ： 六二阴柔中正于内，九五阳刚中正于外。</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">闲有家，悔亡</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：闲有家，志未变也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>闲有家</strong> ： 闲，本义是门口横亘一木，即木栏杆、栅栏，引申为防范、规范、约束、建立规矩。初九作为开始，强调管理必须先行于德教。必须先建立明确的界限和规范，才能保障家庭的正道。</li>
-</ul>
-<p>治理家庭（有家）之初，要先建立规范、防患未然（闲），因为此时人的心志未变，态度可控，因此设立规矩最为有效，趁此时机立规，易被接受、易于推行，故能消除悔恨。</p>
-<p>初九是家人卦的初始爻，阳爻居阳位，刚健得正、处家之始，内卦巽为 “顺、入、教化”，初爻为 “家道之基”，刚健有决断、能立规范、防患于未然。行动契合时位、合乎正道</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初为家道之始，宜及其时闲之也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>家之始，宜早正其风。</code></p>
-</li>
-<li><p><code>始而闲之，则悔亡也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无攸遂，在中馈。贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无攸遂，在中馈</strong> ： 遂，随心所欲、顺从自己的意愿去完成某事、独行其事。中馈，古代指掌管家中饮食（厨房）、财务等内务的职责，是古代家庭中女性的核心职责。</li>
-</ul>
-<p>六二以阴居内卦离之中，得位又得中，上应九五之阳，有“妻道”之象；其德柔顺附丽而逊（巽），以柔顺之德承接主内之责，不刚愎、不专断，故能安定家庭、得享吉祥。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>不遂其志，舍己以顺。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>二以柔中居内，克尽其职。</code></p>
-</li>
-<li><p><code>中馈者，内事也。顺则吉。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人嗃嗃，悔厉吉；妇子嘻嘻，终吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：家人嗃嗃，未失也；妇子嘻嘻，失家节也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>家人嗃嗃，悔厉吉</strong> ： 嗃嗃（hè hè），严厉、刚硬、威严。以刚硬态度推行规则、约束家人，缺乏适度的巽、顺，可能引发的家人抵触、情感隔阂，长期来看，严虽有弊，却能守正，弊在当下，利在长远</li>
-<li><strong>妇子嘻嘻，终吝</strong> ： 妇子，家庭成员。嘻嘻，嬉戏、懈怠、放纵无度。家庭规则松弛、成员不受约束，沉迷享乐、违背家风。丧失了家庭的节度与规范（失家节也），故终将招致困厄。</li>
-</ul>
-<p>九三阳居阳位，处下卦离的终位，刚健过盛、处家之极，可能过于严苛，有失柔顺，但位正，未失大节（正家），故悔厉吉，治家宁失之严、不失之纵。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>刚正之道，虽悔厉，终吉也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>家道贵严，严则无失。</code></p>
-</li>
-<li><p><code>家若无正声，则妇子当嬉笑而不肃。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">富家大吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：富家大吉，顺在位也。</span><br></pre></td></tr></table></figure>
-
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处家之位，以柔为主，故能富家。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>顺以得位，家道富也。</code></p>
-</li>
-<li><p><code>六四阴顺，相应于九三，得以富家。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">王假有家，勿恤，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：王假有家，交相爱也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>王假有家，勿恤，吉</strong> ： 假，至，到达、至诚。九五尊位得中得正，正应六二，为家人之主。</li>
-</ul>
-<p>九五为阳爻居阳位，处尊得位而正，下应六二，王者之德来主持家庭，治理有方。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>以阳居尊，正家之主也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>五为尊位，又得其中正，故可以正家。</code></p>
-</li>
-<li><p><code>以德理家，家乃吉也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚威如，终吉</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：威如之吉，反身之谓也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>威如之吉，反身之谓也</strong> ： 孚为诚信充于内，威为庄敬形于外；先以正道修己，己正而后家齐（反身之谓），家众见其内省自律，自然心生敬畏，故曰“威如之吉”</li>
-</ul>
-<p>上九处家人卦最上位，为最具影响力的人，代表家庭治理的最高境界，真正的威信，来自于“有孚”（真实可信），威来自自律，而不是压制他人，要以身作则。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>威而有孚，德之威也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>威之在己，则终吉。</code></p>
-</li>
-<li><p><code>非暴怒之威，乃自反正己之威也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之风天小畜</title>
     <url>/20250915160529/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="风天小畜"><a href="#风天小畜" class="headerlink" title="风天小畜"></a>风天小畜</h1><p><img src="https://i.0920811.xyz/img_349.png"></p>
@@ -35173,6 +35042,137 @@ width: 20%;
 </li>
 <li><p>朱熹</p>
 <p>  <code>小畜之终，施已及下。君子当以德承载天下。小人当位，虽守正，亦危。盛极必衰，君子此时若行动，则凶。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之风火家人</title>
+    <url>/20251203094620/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地火明夷"><a href="#地火明夷" class="headerlink" title="地火明夷"></a>地火明夷</h1><p><img src="https://i.0920811.xyz/img_382.png"></p>
+<p>风火家人，内（下）离（火、附丽、文明）外（上）巽（风、顺），家人，内也；（火泽）睽，外也。家人卦核心为正家。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人，利女贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：家人，女正位乎内，男正位乎外。男女正，天地之大义也。家人有严君焉，父母之谓也。父父、子子、兄兄、弟弟、夫夫、妇妇，而家道正，正家而天下定矣。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风自火出，家人。君子以言有物而行有恒。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>家人，女正位乎内，男正位乎外</strong> ： 六二阴柔中正于内，九五阳刚中正于外。</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">闲有家，悔亡</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：闲有家，志未变也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>闲有家</strong> ： 闲，本义是门口横亘一木，即木栏杆、栅栏，引申为防范、规范、约束、建立规矩。初九作为开始，强调管理必须先行于德教。必须先建立明确的界限和规范，才能保障家庭的正道。</li>
+</ul>
+<p>治理家庭（有家）之初，要先建立规范、防患未然（闲），因为此时人的心志未变，态度可控，因此设立规矩最为有效，趁此时机立规，易被接受、易于推行，故能消除悔恨。</p>
+<p>初九是家人卦的初始爻，阳爻居阳位，刚健得正、处家之始，内卦巽为 “顺、入、教化”，初爻为 “家道之基”，刚健有决断、能立规范、防患于未然。行动契合时位、合乎正道</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初为家道之始，宜及其时闲之也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>家之始，宜早正其风。</code></p>
+</li>
+<li><p><code>始而闲之，则悔亡也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无攸遂，在中馈。贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无攸遂，在中馈</strong> ： 遂，随心所欲、顺从自己的意愿去完成某事、独行其事。中馈，古代指掌管家中饮食（厨房）、财务等内务的职责，是古代家庭中女性的核心职责。</li>
+</ul>
+<p>六二以阴居内卦离之中，得位又得中，上应九五之阳，有“妻道”之象；其德柔顺附丽而逊（巽），以柔顺之德承接主内之责，不刚愎、不专断，故能安定家庭、得享吉祥。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>不遂其志，舍己以顺。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>二以柔中居内，克尽其职。</code></p>
+</li>
+<li><p><code>中馈者，内事也。顺则吉。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人嗃嗃，悔厉吉；妇子嘻嘻，终吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：家人嗃嗃，未失也；妇子嘻嘻，失家节也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>家人嗃嗃，悔厉吉</strong> ： 嗃嗃（hè hè），严厉、刚硬、威严。以刚硬态度推行规则、约束家人，缺乏适度的巽、顺，可能引发的家人抵触、情感隔阂，长期来看，严虽有弊，却能守正，弊在当下，利在长远</li>
+<li><strong>妇子嘻嘻，终吝</strong> ： 妇子，家庭成员。嘻嘻，嬉戏、懈怠、放纵无度。家庭规则松弛、成员不受约束，沉迷享乐、违背家风。丧失了家庭的节度与规范（失家节也），故终将招致困厄。</li>
+</ul>
+<p>九三阳居阳位，处下卦离的终位，刚健过盛、处家之极，可能过于严苛，有失柔顺，但位正，未失大节（正家），故悔厉吉，治家宁失之严、不失之纵。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>刚正之道，虽悔厉，终吉也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>家道贵严，严则无失。</code></p>
+</li>
+<li><p><code>家若无正声，则妇子当嬉笑而不肃。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">富家大吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：富家大吉，顺在位也。</span><br></pre></td></tr></table></figure>
+
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处家之位，以柔为主，故能富家。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>顺以得位，家道富也。</code></p>
+</li>
+<li><p><code>六四阴顺，相应于九三，得以富家。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">王假有家，勿恤，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：王假有家，交相爱也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>王假有家，勿恤，吉</strong> ： 假，至，到达、至诚。九五尊位得中得正，正应六二，为家人之主。</li>
+</ul>
+<p>九五为阳爻居阳位，处尊得位而正，下应六二，王者之德来主持家庭，治理有方。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>以阳居尊，正家之主也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>五为尊位，又得其中正，故可以正家。</code></p>
+</li>
+<li><p><code>以德理家，家乃吉也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚威如，终吉</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：威如之吉，反身之谓也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>威如之吉，反身之谓也</strong> ： 孚为诚信充于内，威为庄敬形于外；先以正道修己，己正而后家齐（反身之谓），家众见其内省自律，自然心生敬畏，故曰“威如之吉”</li>
+</ul>
+<p>上九处家人卦最上位，为最具影响力的人，代表家庭治理的最高境界，真正的威信，来自于“有孚”（真实可信），威来自自律，而不是压制他人，要以身作则。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>威而有孚，德之威也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>威之在己，则终吉。</code></p>
+</li>
+<li><p><code>非暴怒之威，乃自反正己之威也。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -37754,468 +37754,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之天地否</title>
-    <url>/20250922102639/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天地否"><a href="#天地否" class="headerlink" title="天地否"></a>天地否</h1><p><img src="https://i.0920811.xyz/img_352.png"></p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">否之匪人，不利君子贞，大往小来。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：否之匪人，不利君子贞。大往小来，则是天地不交，而万物不通也;上下不交，而天下无邦也。内阴而外阳，内柔而外刚，内小人而外君子。小人道长，君子道消也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天地不交，否;君子以俭德辟难，不可荣以禄。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>否之匪人</strong> ： 闭塞、不通、与“泰”相对。匪人，不正之人、小人、无德之人。正道被阻塞，不正之人得势。</li>
-<li><strong>不利君子贞</strong> ： 在这种闭塞的环境中，君子即使坚守正道，也难以取得好的结果。因为环境不利于正道的施展。</li>
-<li><strong>君子以俭德避难，不可荣以禄</strong> ： 俭，节制、收敛、不张扬。收敛锋芒，洁身自好，不要贪图爵禄荣华，等待时势转机。</li>
-</ul>
-<p>否卦和泰卦互为覆卦，泰卦阳爻上长，阴爻消退，君子（刚爻）道长，小人（柔爻）道消；否卦阴爻上长，阳爻消退，小人道长，君子道消。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>否者，闭塞之谓也。阴盛居内，阳隔居外，小人道长，君子道消，故曰否。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>君子当否世，宜退藏于密，保其正道，不与小人争权利，待时而出。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>否之世，小人道长，君子道消。君子当守其贞而避祸，不可图荣。</code></p>
-</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拔茅茹，以其汇，贞吉，亨。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拔茅贞吉，志在君也。</span><br></pre></td></tr></table></figure>
-
-
-<p>初六是否卦最下爻，处卦之始。否卦下三爻皆阴（坤），象征“小人道长”；但初六在下，仍有顺应而求通的可能。拔茅茹表示群体牵连之象：初六若动，则二、三随之，形成整体向上之势。若能守正（贞），则虽身处小人之位，也可志在君子、向往君主（九五阳爻）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初六以阴处下，虽小人位，能拔茅而动群，志在从君，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>否极之初，虽在小人之列，但志向君正，能拔动群类而求通，吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>拔茅之象，言其相引而动。能守正，则虽处否世之初，亦可亨通。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包承。小人吉，大人否，亨。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人否亨，不乱群也。</span><br></pre></td></tr></table></figure>
-
-<p>六二阴爻居阴位，得位，又在下卦中正（居中），正应 九五，虽然下卦都是阴（小人），但六二得中正之位，又与九五刚阳之君相应，所以君子守正不乱，反而能“否亨”。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二以阴居阴，中而得正，能自守也。小人以守承为吉；大人以守中为亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>小人能安于承顺，则得吉；大人当否之时，不可施为，但守正而不乱群，亦谓之亨。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六二以阴柔居中，能承顺也。小人能守承则吉；大人处否，能守中正，不乱于群，亦亨。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包羞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：包羞，位不当也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>包羞</strong> ： 羞，耻辱、羞耻、羞辱。包容（或蒙受）羞耻、羞辱（包羞）。</li>
-</ul>
-<p>六三爻阴爻居阳位，居位不当（位不当也）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六三以阴居阳，不当位也。知其不当，而包容其羞，不敢自显。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>三以阴柔居刚位，不中不正，自知其辱而包容之，不能正也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>包羞者，知其不当位而内自愧辱也。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有命无咎，畴离祉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：有命无咎，志行也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>有命无咎，畴离祉</strong> ： 有命，有天命、受命、奉命行事。畴，同类、同道者、群体。离，依附、共享、归向、接近。意即同类相亲，得蒙福佑。命指九五（君）之命。</li>
-</ul>
-<p>九四虽非正位，但因为奉天命、行正志，所以不会有过失。九四阳爻处乾，能与群体相合（畴），并归附于福祉（离祉）。说明在否运中，阳刚渐次发挥作用，能带来一定的吉利。它虽处于 “否” 境中期，却因属阳爻（代表刚健），能坚守正道、不被小人裹挟，因此 “承命而行”，自然无灾祸；</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四以阳居阴，不正也；然承九五之中正，得君命以行志，故有命无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四居否之时，得君命以行其志，则虽失位而无咎，且与同类相应，皆得其福。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>有命，得命也；畴离祉，同类皆得福也。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">休否，大人吉。其亡其亡，系于苞桑。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人之吉，位正当也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>休否</strong> ： 休，休息、停止、休止、终结。指否之闭塞之势发展到此处也该结束了。</li>
-<li><strong>其亡其亡，系于苞桑</strong> ： 苞桑，桑树的根。其亡其亡，时刻警惕将要灭亡，才能像将根基系在丛生的桑树上（系于苞桑）一样稳固。</li>
-</ul>
-<p>九五爻居位正当，兼具刚健之性（阳爻）与中正之德（中位），是打破 “天地不交、上下隔绝” （休否）的核心力量，它能推动 “小人道长” 的局面逆转，让闭塞的环境开始通达，标志着 “否” 的困境进入终结阶段。</p>
-<p> 九五虽终结 “否” 境，但 “小人道长” 的余波未散，正道根基尚未完全稳固，若因 “吉” 而放松警惕，可能让闭塞局面复现。因此需时刻警惕（其亡其亡），依托坚固的根本（系于苞桑、中正之道），才能免于祸患（否）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五中正居尊，否可休也。然否方休，危未远，故曰‘其亡其亡’，唯系于中正之道，如系苞桑，乃可免也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>否至此则有转机。九五以中正居尊，能休否而吉。但危机犹在，非深根固守不可。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五中正，能止否。然休否之初，危机尚存，故再言其亡。必系于至坚至固，如苞桑之不可拔，乃得安吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">倾否，先否后喜。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：否终则倾，何可长也。</span><br></pre></td></tr></table></figure>
-<p>上九，居卦之终，阳爻在乾上之极，阳气已充，已极盛。阴气在下卦，已不能上行；象征否运发展至极，自然转向，即否极泰来 。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>否至于上九而穷极，故必倾也。倾否则泰道生矣。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>否穷于上，则必倾；否不可长，极则反，故有喜。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>倾否，谓否极而反泰也。否不可长，终必有变。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天火同人</title>
-    <url>/20250923102639/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天火同人"><a href="#天火同人" class="headerlink" title="天火同人"></a>天火同人</h1><p><img src="https://i.0920811.xyz/img_353.png"></p>
-<p>天火同人，上（外）卦为乾（天），下（内）卦为离（火），天在上，火在下，火性向上，与天相合，象征着人与人之间的和谐相处。同人，与人同道，同心同德、聚合同道，讲合作与共济。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人：同人于野，亨。利涉大川，利君子贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：同人，柔得位得中，而应乎乾，曰同人。同人曰，同人于野，亨。利涉大川，乾行也。文明以健，中正而应，君子正也。唯君子为能通天下之志。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与火，同人;君子以类族辨物。</span><br></pre></td></tr></table></figure>
-
-<p>全卦只有六二为柔爻，柔顺中正，正应九五，上下应合，为全卦主爻，柔爻于其他刚爻同心同德，称同人。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>同人者，谓同其道也。非徒同人，必以道同，乃可亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人必以道合，不以利合。能公于天下，则亨。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于野，言无私也。利涉大川，言刚健有为。惟君子能持正，以通天下之志。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于门，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：出门同人，又谁咎也。</span><br></pre></td></tr></table></figure>
-
-<p>出门同人，这里的 <strong>出门</strong> 象征着起点或初始阶段，门更象征 <strong>亲疏、内外、私域与公域得边界</strong> 。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初九阳刚得正，志在同人，但力有限，始同于门，然亦无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人之道，必广而公。初在卑位，未能大同，先同于门，亦已善矣。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>初九刚正，欲同于人，始于门户之内，无咎也。能出门同人，则无咎之至也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于宗，吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于宗，吝道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>同人于宗</strong> ： 宗，本宗、宗族、家族内部、表示有血缘或亲近关系的小群体、亲信、小圈子。这种行为是一种狭隘、保守的方式。虽然有一定的亲和力，但过于局限，缺乏广泛性。</li>
-</ul>
-<p>阴爻居中（得中），柔顺中正，本有善德。只正应九五（阳刚中正之君），忽视了其他刚爻，故为取吝之道。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二柔中而得正，能与人同，然以宗为限，不能大通，故吝。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人贵在大公，不可偏私。二以柔居中，德本可同，但局于宗族，未免为吝。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于宗，谓偏于所亲而已，不广于天下也。吝道也。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">伏戎于莽，升其高陵，三岁不兴。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：伏戎于莽，敌刚也。三岁不兴，安行也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>伏戎于莽</strong> ： 伏，埋伏、隐藏。戎，军队、部队。莽，草莽、草丛、丛林之地。</li>
-<li><strong>升其高陵</strong> ： 登上高地（高丘）观察局势。高陵，象征占据有利地形、隐藏实力、谨慎观望。</li>
-<li><strong>三岁不兴，安行也</strong> ： 三年（多年）不会发动进攻，要确保安全稳定。象征谨慎行事，避免轻举妄动。</li>
-</ul>
-<p>九三爻是同人卦的第三爻，处于下卦的上位，代表积极主动、刚健、果断的品质，但处于下卦与上卦的交界，位置险要，自身力量尚未完全整合，也未与上卦的正道核心（九五）形成呼应。 <strong>伏戎于莽，升其高陵，三岁不兴</strong> 强调了在交往中遇到强大对手时，需要采取隐蔽和谨慎的策略。要占据有利地形，做好充分准备，但不要轻易发动攻击，以确保安全和稳定。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九三刚而不中，处势不利，故伏戎以待，不敢动也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九三处险，志在同人，但上有强刚，不得进。故伏兵草莽，登高以望，久而不举，以安其行。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九三刚正而不中，上应九六之刚，故为敌刚。潜兵不动，得以自安。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘其墉，弗克攻，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：乘其墉，义弗克也，其吉，则困而反则也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>乘其墉，弗克攻</strong> ： 墉，城墙、防御工事。登上城墙，象征着占据了有利位置，有了进攻的机会。但没有发动攻击。这表示在有机会发动攻击时，选择了克制和谨慎。</li>
-<li><strong>义弗克也</strong> ： 义，指道义、正义。登上城墙，但按道义不能发动攻击。</li>
-<li><strong>其吉，则困而反则也</strong> ： 这里的 困而反则 指在困境中回归正道，遵循正确的原则。</li>
-</ul>
-<p>九四为阳爻居阴位（位不正），处于上卦 “乾”（刚健）的初爻，紧邻下卦 “离”（文明）的九三（阳爻），既有阳刚进取的本能，又因 “位不正” 而有顾虑。 <strong>弗克攻</strong> 不是不能攻，而是不应攻（义弗克也）， <strong>同人 的本质是 以正道聚人，而非 以武力征服</strong> 。</p>
-<p>九四虽 “位不正”（阳爻居阴位），却能得 “吉”，核心在于 “困而反则” ：在 “进取与道义” 的困境（位不当，阳爻居阴位，易躁动失道）中回归正道（反则、义弗克也）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四以阳居阴，失位而不中，志欲进而不得，故象乘墉。然义不可攻，止而不攻，是以吉也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四志欲同人，然义不可攻，能止其欲而不行，是以吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>乘其墉者，有攻之势也；弗克攻者，义不可也。知义而止，故吉。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人，先号啕而后笑。大师克，相遇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人之先，以中直也。大师相遇，言相克也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>先号啕而后笑</strong> ： 号啕，大声哭叫。这里比喻一开始遭遇隔阂、不合，难以同人。最后能和同，心志融洽而喜乐。</li>
-<li><strong>大师克，相遇</strong> ： 大师，大军。克，克服、攻克。克服同人得障碍，实现同人。</li>
-<li><strong>同人之先，以中直也</strong> ： “号啕” 的根源是 “中直”，九五坚守中正刚直，直率不曲，所以容易先有冲突，后才化解</li>
-</ul>
-<p>九五阳爻居尊位（君位），而且居中，正是“中直”的位置。它与六二正应（阴柔中正），上下呼应，构成同人之象。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五以中正居尊，志直不曲，故与人同，先相克而后相亲。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>刚直之人，未易相合，初多乖戾；然志在道同，终必相合</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>先号啕而后笑，谓其初虽有相克之难，然终于相遇而合也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于郊，无悔。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于郊，志未得也。</span><br></pre></td></tr></table></figure>
-
-<p>“郊” 在 “野”（旷野，“同人” 理想之境）与 “城”（核心区域）之间，意味着上九已突破私域局限，能在更广阔的范围聚合同道，但尚未完全进入 “通天下之志” 的终极理想（同人于野）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上九处同人之终，志在大同，而位极孤危，不能尽合，故同人于郊，无悔而已。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人当以天下为公，上九虽同人于郊，已出门户，不为私比，然犹未达于大同，故无悔而志未得。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于郊，犹未尽天下之同也。然已不私比，故无悔</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天雷无妄</title>
-    <url>/20251016103340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
-<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
-<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
-<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
-<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
-</li>
-<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
-
-<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
-</li>
-<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
-</li>
-<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
-</ul>
-<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
-</li>
-<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
-</li>
-<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
-<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
-</ul>
-<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
-</li>
-<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
-</li>
-<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
-</li>
-<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
-</li>
-<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
-</li>
-<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
-</li>
-<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
-
-<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
-</li>
-<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
-</li>
-<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之天山遁</title>
     <url>/20251122162040/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
@@ -40030,5 +39568,467 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之天地否</title>
+    <url>/20250922102639/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天地否"><a href="#天地否" class="headerlink" title="天地否"></a>天地否</h1><p><img src="https://i.0920811.xyz/img_352.png"></p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">否之匪人，不利君子贞，大往小来。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：否之匪人，不利君子贞。大往小来，则是天地不交，而万物不通也;上下不交，而天下无邦也。内阴而外阳，内柔而外刚，内小人而外君子。小人道长，君子道消也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天地不交，否;君子以俭德辟难，不可荣以禄。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>否之匪人</strong> ： 闭塞、不通、与“泰”相对。匪人，不正之人、小人、无德之人。正道被阻塞，不正之人得势。</li>
+<li><strong>不利君子贞</strong> ： 在这种闭塞的环境中，君子即使坚守正道，也难以取得好的结果。因为环境不利于正道的施展。</li>
+<li><strong>君子以俭德避难，不可荣以禄</strong> ： 俭，节制、收敛、不张扬。收敛锋芒，洁身自好，不要贪图爵禄荣华，等待时势转机。</li>
+</ul>
+<p>否卦和泰卦互为覆卦，泰卦阳爻上长，阴爻消退，君子（刚爻）道长，小人（柔爻）道消；否卦阴爻上长，阳爻消退，小人道长，君子道消。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>否者，闭塞之谓也。阴盛居内，阳隔居外，小人道长，君子道消，故曰否。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>君子当否世，宜退藏于密，保其正道，不与小人争权利，待时而出。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>否之世，小人道长，君子道消。君子当守其贞而避祸，不可图荣。</code></p>
+</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拔茅茹，以其汇，贞吉，亨。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拔茅贞吉，志在君也。</span><br></pre></td></tr></table></figure>
+
+
+<p>初六是否卦最下爻，处卦之始。否卦下三爻皆阴（坤），象征“小人道长”；但初六在下，仍有顺应而求通的可能。拔茅茹表示群体牵连之象：初六若动，则二、三随之，形成整体向上之势。若能守正（贞），则虽身处小人之位，也可志在君子、向往君主（九五阳爻）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初六以阴处下，虽小人位，能拔茅而动群，志在从君，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>否极之初，虽在小人之列，但志向君正，能拔动群类而求通，吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>拔茅之象，言其相引而动。能守正，则虽处否世之初，亦可亨通。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包承。小人吉，大人否，亨。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人否亨，不乱群也。</span><br></pre></td></tr></table></figure>
+
+<p>六二阴爻居阴位，得位，又在下卦中正（居中），正应 九五，虽然下卦都是阴（小人），但六二得中正之位，又与九五刚阳之君相应，所以君子守正不乱，反而能“否亨”。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六二以阴居阴，中而得正，能自守也。小人以守承为吉；大人以守中为亨。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>小人能安于承顺，则得吉；大人当否之时，不可施为，但守正而不乱群，亦谓之亨。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六二以阴柔居中，能承顺也。小人能守承则吉；大人处否，能守中正，不乱于群，亦亨。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包羞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：包羞，位不当也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>包羞</strong> ： 羞，耻辱、羞耻、羞辱。包容（或蒙受）羞耻、羞辱（包羞）。</li>
+</ul>
+<p>六三爻阴爻居阳位，居位不当（位不当也）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六三以阴居阳，不当位也。知其不当，而包容其羞，不敢自显。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>三以阴柔居刚位，不中不正，自知其辱而包容之，不能正也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>包羞者，知其不当位而内自愧辱也。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有命无咎，畴离祉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：有命无咎，志行也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>有命无咎，畴离祉</strong> ： 有命，有天命、受命、奉命行事。畴，同类、同道者、群体。离，依附、共享、归向、接近。意即同类相亲，得蒙福佑。命指九五（君）之命。</li>
+</ul>
+<p>九四虽非正位，但因为奉天命、行正志，所以不会有过失。九四阳爻处乾，能与群体相合（畴），并归附于福祉（离祉）。说明在否运中，阳刚渐次发挥作用，能带来一定的吉利。它虽处于 “否” 境中期，却因属阳爻（代表刚健），能坚守正道、不被小人裹挟，因此 “承命而行”，自然无灾祸；</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四以阳居阴，不正也；然承九五之中正，得君命以行志，故有命无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四居否之时，得君命以行其志，则虽失位而无咎，且与同类相应，皆得其福。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>有命，得命也；畴离祉，同类皆得福也。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">休否，大人吉。其亡其亡，系于苞桑。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人之吉，位正当也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>休否</strong> ： 休，休息、停止、休止、终结。指否之闭塞之势发展到此处也该结束了。</li>
+<li><strong>其亡其亡，系于苞桑</strong> ： 苞桑，桑树的根。其亡其亡，时刻警惕将要灭亡，才能像将根基系在丛生的桑树上（系于苞桑）一样稳固。</li>
+</ul>
+<p>九五爻居位正当，兼具刚健之性（阳爻）与中正之德（中位），是打破 “天地不交、上下隔绝” （休否）的核心力量，它能推动 “小人道长” 的局面逆转，让闭塞的环境开始通达，标志着 “否” 的困境进入终结阶段。</p>
+<p> 九五虽终结 “否” 境，但 “小人道长” 的余波未散，正道根基尚未完全稳固，若因 “吉” 而放松警惕，可能让闭塞局面复现。因此需时刻警惕（其亡其亡），依托坚固的根本（系于苞桑、中正之道），才能免于祸患（否）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五中正居尊，否可休也。然否方休，危未远，故曰‘其亡其亡’，唯系于中正之道，如系苞桑，乃可免也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>否至此则有转机。九五以中正居尊，能休否而吉。但危机犹在，非深根固守不可。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五中正，能止否。然休否之初，危机尚存，故再言其亡。必系于至坚至固，如苞桑之不可拔，乃得安吉。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">倾否，先否后喜。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：否终则倾，何可长也。</span><br></pre></td></tr></table></figure>
+<p>上九，居卦之终，阳爻在乾上之极，阳气已充，已极盛。阴气在下卦，已不能上行；象征否运发展至极，自然转向，即否极泰来 。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>否至于上九而穷极，故必倾也。倾否则泰道生矣。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>否穷于上，则必倾；否不可长，极则反，故有喜。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>倾否，谓否极而反泰也。否不可长，终必有变。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之天雷无妄</title>
+    <url>/20251016103340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
+<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
+<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
+<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
+<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
+</li>
+<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
+
+<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
+</li>
+<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
+</li>
+<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
+</ul>
+<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
+</li>
+<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
+</li>
+<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
+<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
+</ul>
+<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
+</li>
+<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
+</li>
+<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
+</li>
+<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
+</li>
+<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
+</li>
+<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
+</li>
+<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
+
+<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
+</li>
+<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
+</li>
+<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之天火同人</title>
+    <url>/20250923102639/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天火同人"><a href="#天火同人" class="headerlink" title="天火同人"></a>天火同人</h1><p><img src="https://i.0920811.xyz/img_353.png"></p>
+<p>天火同人，上（外）卦为乾（天），下（内）卦为离（火），天在上，火在下，火性向上，与天相合，象征着人与人之间的和谐相处。同人，与人同道，同心同德、聚合同道，讲合作与共济。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人：同人于野，亨。利涉大川，利君子贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：同人，柔得位得中，而应乎乾，曰同人。同人曰，同人于野，亨。利涉大川，乾行也。文明以健，中正而应，君子正也。唯君子为能通天下之志。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与火，同人;君子以类族辨物。</span><br></pre></td></tr></table></figure>
+
+<p>全卦只有六二为柔爻，柔顺中正，正应九五，上下应合，为全卦主爻，柔爻于其他刚爻同心同德，称同人。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>同人者，谓同其道也。非徒同人，必以道同，乃可亨。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人必以道合，不以利合。能公于天下，则亨。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>同人于野，言无私也。利涉大川，言刚健有为。惟君子能持正，以通天下之志。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于门，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：出门同人，又谁咎也。</span><br></pre></td></tr></table></figure>
+
+<p>出门同人，这里的 <strong>出门</strong> 象征着起点或初始阶段，门更象征 <strong>亲疏、内外、私域与公域得边界</strong> 。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初九阳刚得正，志在同人，但力有限，始同于门，然亦无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人之道，必广而公。初在卑位，未能大同，先同于门，亦已善矣。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>初九刚正，欲同于人，始于门户之内，无咎也。能出门同人，则无咎之至也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于宗，吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于宗，吝道也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>同人于宗</strong> ： 宗，本宗、宗族、家族内部、表示有血缘或亲近关系的小群体、亲信、小圈子。这种行为是一种狭隘、保守的方式。虽然有一定的亲和力，但过于局限，缺乏广泛性。</li>
+</ul>
+<p>阴爻居中（得中），柔顺中正，本有善德。只正应九五（阳刚中正之君），忽视了其他刚爻，故为取吝之道。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六二柔中而得正，能与人同，然以宗为限，不能大通，故吝。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人贵在大公，不可偏私。二以柔居中，德本可同，但局于宗族，未免为吝。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>同人于宗，谓偏于所亲而已，不广于天下也。吝道也。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">伏戎于莽，升其高陵，三岁不兴。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：伏戎于莽，敌刚也。三岁不兴，安行也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>伏戎于莽</strong> ： 伏，埋伏、隐藏。戎，军队、部队。莽，草莽、草丛、丛林之地。</li>
+<li><strong>升其高陵</strong> ： 登上高地（高丘）观察局势。高陵，象征占据有利地形、隐藏实力、谨慎观望。</li>
+<li><strong>三岁不兴，安行也</strong> ： 三年（多年）不会发动进攻，要确保安全稳定。象征谨慎行事，避免轻举妄动。</li>
+</ul>
+<p>九三爻是同人卦的第三爻，处于下卦的上位，代表积极主动、刚健、果断的品质，但处于下卦与上卦的交界，位置险要，自身力量尚未完全整合，也未与上卦的正道核心（九五）形成呼应。 <strong>伏戎于莽，升其高陵，三岁不兴</strong> 强调了在交往中遇到强大对手时，需要采取隐蔽和谨慎的策略。要占据有利地形，做好充分准备，但不要轻易发动攻击，以确保安全和稳定。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九三刚而不中，处势不利，故伏戎以待，不敢动也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九三处险，志在同人，但上有强刚，不得进。故伏兵草莽，登高以望，久而不举，以安其行。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九三刚正而不中，上应九六之刚，故为敌刚。潜兵不动，得以自安。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘其墉，弗克攻，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：乘其墉，义弗克也，其吉，则困而反则也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>乘其墉，弗克攻</strong> ： 墉，城墙、防御工事。登上城墙，象征着占据了有利位置，有了进攻的机会。但没有发动攻击。这表示在有机会发动攻击时，选择了克制和谨慎。</li>
+<li><strong>义弗克也</strong> ： 义，指道义、正义。登上城墙，但按道义不能发动攻击。</li>
+<li><strong>其吉，则困而反则也</strong> ： 这里的 困而反则 指在困境中回归正道，遵循正确的原则。</li>
+</ul>
+<p>九四为阳爻居阴位（位不正），处于上卦 “乾”（刚健）的初爻，紧邻下卦 “离”（文明）的九三（阳爻），既有阳刚进取的本能，又因 “位不正” 而有顾虑。 <strong>弗克攻</strong> 不是不能攻，而是不应攻（义弗克也）， <strong>同人 的本质是 以正道聚人，而非 以武力征服</strong> 。</p>
+<p>九四虽 “位不正”（阳爻居阴位），却能得 “吉”，核心在于 “困而反则” ：在 “进取与道义” 的困境（位不当，阳爻居阴位，易躁动失道）中回归正道（反则、义弗克也）</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四以阳居阴，失位而不中，志欲进而不得，故象乘墉。然义不可攻，止而不攻，是以吉也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四志欲同人，然义不可攻，能止其欲而不行，是以吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>乘其墉者，有攻之势也；弗克攻者，义不可也。知义而止，故吉。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人，先号啕而后笑。大师克，相遇。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人之先，以中直也。大师相遇，言相克也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>先号啕而后笑</strong> ： 号啕，大声哭叫。这里比喻一开始遭遇隔阂、不合，难以同人。最后能和同，心志融洽而喜乐。</li>
+<li><strong>大师克，相遇</strong> ： 大师，大军。克，克服、攻克。克服同人得障碍，实现同人。</li>
+<li><strong>同人之先，以中直也</strong> ： “号啕” 的根源是 “中直”，九五坚守中正刚直，直率不曲，所以容易先有冲突，后才化解</li>
+</ul>
+<p>九五阳爻居尊位（君位），而且居中，正是“中直”的位置。它与六二正应（阴柔中正），上下呼应，构成同人之象。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五以中正居尊，志直不曲，故与人同，先相克而后相亲。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>刚直之人，未易相合，初多乖戾；然志在道同，终必相合</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>先号啕而后笑，谓其初虽有相克之难，然终于相遇而合也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于郊，无悔。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于郊，志未得也。</span><br></pre></td></tr></table></figure>
+
+<p>“郊” 在 “野”（旷野，“同人” 理想之境）与 “城”（核心区域）之间，意味着上九已突破私域局限，能在更广阔的范围聚合同道，但尚未完全进入 “通天下之志” 的终极理想（同人于野）</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上九处同人之终，志在大同，而位极孤危，不能尽合，故同人于郊，无悔而已。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>同人当以天下为公，上九虽同人于郊，已出门户，不为私比，然犹未达于大同，故无悔而志未得。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>同人于郊，犹未尽天下之同也。然已不私比，故无悔</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
   </entry>
 </search>
