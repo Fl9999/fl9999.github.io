@@ -25626,6 +25626,104 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Loki 部署使用</title>
+    <url>/20260416162300/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Loki 是 Grafana 体系里的日志聚合系统，设计思路和 Prometheus 很像，但处理对象是日志。它和传统全文检索型日志系统的最大区别是： <strong>默认只索引标签（labels），不索引整条日志正文</strong> ，所以存储成本通常更低，扩展性也更好，特别适合 Kubernetes、Docker、主机系统日志、应用日志统一汇聚场景。</p>
+<p>截至 2026-04-16，Promtail 已经 EOL，新的采集端优先建议使用 <strong>Grafana Alloy</strong> ；另外，Loki 本身不内置认证层，生产环境应放在 Nginx 等反向代理或网关之后。</p>
+<p>它的典型链路是：</p>
+<p><strong>日志源 → 采集器（Alloy）→ Loki → Grafana 查询与展示</strong></p>
+<p>其中：</p>
+<ul>
+<li><strong>Loki</strong> 负责接收、压缩、存储、查询日志。</li>
+<li><strong>Alloy</strong> 负责在主机或 K8s 节点上收集日志、打标签、做预处理，再推送到 Loki。</li>
+<li><strong>Grafana</strong> 负责可视化、检索、告警。</li>
+</ul>
+<p>Loki 核心架构逻辑上常见有这些组件：</p>
+<ul>
+<li><strong>Distributor</strong> ：接收写入请求</li>
+<li><strong>Ingester</strong> ：缓存并写入日志块</li>
+<li><strong>Querier</strong> ：执行查询</li>
+<li><strong>Query Frontend</strong> ：查询拆分与缓存</li>
+<li><strong>Compactor</strong> ：压缩、整理、保留策略</li>
+<li><strong>Index &#x2F; Storage</strong> ：索引和日志对象存储</li>
+</ul>
+<p><strong>标签设计建议</strong></p>
+<p>Loki 的性能很大程度取决于标签设计，因此标签设计非常关键。</p>
+<p><strong>建议保留低基数标签</strong> ：</p>
+<ul>
+<li><strong>job</strong></li>
+<li><strong>host</strong></li>
+<li><strong>env</strong></li>
+<li><strong>app</strong></li>
+<li><strong>namespace</strong></li>
+<li><strong>pod</strong></li>
+<li><strong>container</strong></li>
+</ul>
+<p><strong>不要把高基数内容做成标签</strong> ：</p>
+<ul>
+<li><strong>user_id</strong></li>
+<li><strong>request_id</strong></li>
+<li><strong>trace_id</strong></li>
+<li><strong>URL 全路径</strong></li>
+<li><strong>错误详情</strong></li>
+<li><strong>SQL 文本</strong></li>
+</ul>
+<p>官方文档强调 labels 是 Loki 的核心组织方式，但标签过多、基数过高会带来性能和成本问题。</p>
+<h1 id="Docker-Compose-部署示例"><a href="#Docker-Compose-部署示例" class="headerlink" title="Docker Compose 部署示例"></a>Docker Compose 部署示例</h1><ul>
+<li>Loki version 3.7.1</li>
+<li>alloy, version v1.15.1</li>
+</ul>
+<figure class="highlight yaml"><figcaption><span>docker-compose.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">loki:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/loki:latest</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&#x27;-config.file=/etc/loki/config.yaml&#x27;</span>    </span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3100:3100&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/loki/:/etc/loki/:ro&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/loki/:/data/loki&quot;</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">grafana:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/grafana</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3000:3000&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/grafana/:/etc/grafana/&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/grafana/:/var/lib/grafana/&quot;</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">  <span class="attr">alloy:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/alloy</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">alloy</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;12345:12345&quot;</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">run</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--server.http.listen-addr=0.0.0.0:12345</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--storage.path=/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/alloy/config.alloy</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/alloy/:/etc/alloy/:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./data/alloy/:/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/var/run/docker.sock:/var/run/docker.sock</span></span><br></pre></td></tr></table></figure>
+
+<p>主配置文件 <code>/etc/loki/config.yaml</code> 内容参考：</p>
+<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">ring:</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span></span><br><span class="line">  <span class="attr">filesystem:</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span></span><br></pre></td></tr></table></figure>
+
+<p>Alloy 配置文件参考：</p>
+<figure class="highlight yaml"><figcaption><span>config/alloy/config.alloy</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="string">logging</span> &#123;</span><br><span class="line">  <span class="string">level</span>  <span class="string">=</span> <span class="string">&quot;info&quot;</span></span><br><span class="line">  <span class="string">format</span> <span class="string">=</span> <span class="string">&quot;logfmt&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.relabel</span> <span class="string">&quot;docker_logs&quot;</span> &#123;</span><br><span class="line">  <span class="string">targets</span> <span class="string">=</span> <span class="string">discovery.docker.containers.targets</span></span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_name&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;container&quot;</span></span><br><span class="line">    <span class="string">regex</span>         <span class="string">=</span> <span class="string">&quot;/(.*)&quot;</span></span><br><span class="line">    <span class="string">replacement</span>   <span class="string">=</span> <span class="string">&quot;$1&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_log_stream&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;stream&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_label_com_docker_compose_service&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;service&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.source.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span>       <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">  <span class="string">targets</span>    <span class="string">=</span> <span class="string">discovery.relabel.docker_logs.output</span></span><br><span class="line">  <span class="string">forward_to</span> <span class="string">=</span> [<span class="string">loki.write.local.receiver</span>]</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.write</span> <span class="string">&quot;local&quot;</span> &#123;</span><br><span class="line">  <span class="string">endpoint</span> &#123;</span><br><span class="line">    <span class="string">url</span> <span class="string">=</span> <span class="string">&quot;http://loki:3100/loki/api/v1/push&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">external_labels</span> <span class="string">=</span> &#123;</span><br><span class="line">    <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;prometheus-jumpserver&quot;</span>,</span><br><span class="line">    <span class="string">env</span>  <span class="string">=</span> <span class="string">&quot;prod&quot;</span>,</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启动成功后，在 Grafana 中添加新的 Data Source。即可在 Grafana 中查看到日志。</p>
+<h1 id="配置文件详解"><a href="#配置文件详解" class="headerlink" title="配置文件详解"></a>配置文件详解</h1><h2 id="Loki-配置文件"><a href="#Loki-配置文件" class="headerlink" title="Loki 配置文件"></a>Loki 配置文件</h2><ul>
+<li>Loki version 3.7.1</li>
+</ul>
+<p>以下配置适用于单机、单副本、本地文件系统、保留 7 天数据的 Liki</p>
+<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span>      <span class="comment"># Loki 的 HTTP 服务监听端口。Grafana、Alloy 或自己用 curl 查询 Loki API 时，默认都会连这个端口。官方配置文档把 server 作为 Loki 进程网络与服务行为的基础配置入口。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span>                      <span class="comment"># Loki 多组件共用的基础参数（通用运行参数）。</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span>         <span class="comment"># Loki 的本地工作目录前缀。很多组件的临时文件、索引缓存、压缩过程中的文件、规则文件等，都可能基于这个路径展开。官方示例中常见把它设成 /loki。在 Docker 部署中需要持久化</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span>      <span class="comment"># 只保留 1 份副本。这适合单机或非高可用测试环境。官方示例中单机 / 简化部署也常用 1。想要高可用，通常需要 &gt;1，并配套 ring/多节点/对象存储</span></span><br><span class="line">  <span class="attr">ring:</span>                      <span class="comment"># ring 是分布式 Loki 用来协调实例状态、分片、接收写入等的关键机制。</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span>        <span class="comment"># 表示 Loki 的 ring 元数据存储在内存里。好处是简单，坏处是进程重启后状态不持久，也不适合多实例生产。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span>               <span class="comment"># 存储 schema 定义。这部分是 Loki 最关键的配置之一。schema 是按时间段生效的，Loki 会根据日志时间决定使用哪套 schema 来存储和查询数据。</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span>     <span class="comment"># 表示从 2024-01-01 开始写入的数据，使用下面这一整套 schema。from 是时间分界点；如果后面再新增一条新 schema，比如 from: &quot;2026-05-01&quot;，那么之后的数据就会按新 schema 存。</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span>            <span class="comment"># 使用 TSDB 索引。从 Loki 2.8 起，TSDB 是推荐的索引方式，更高效、更快、可扩展性更好。</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span>     <span class="comment"># 日志块和相关对象数据存到本地文件系统，而不是 S3、GCS、Azure Blob 之类的对象存储。正式环境应该优先使用 S3 / MinIO / GCS 等对象存储</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span>                  <span class="comment"># 这是 schema 版本。官方升级文档明确说，Structured Metadata 要求 active schema 同时使用 tsdb 和 v13；迁移文档也把 v13 作为推荐版本。</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span>             <span class="comment"># 索引前缀名。 Loki 会按自己的规则生成索引对象名或目录名，这个前缀就是命名的开头。</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span>                <span class="comment"># 这是非常关键的参数，表示索引按 24 小时切分。官方 retention 文档明确说明，retention 仅支持 24h index period。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span>                    <span class="comment"># 底层存储配置</span></span><br><span class="line">  <span class="attr">filesystem:</span>                      <span class="comment"># schema 配置了 object_store: filesystem，就需要给 filesystem 指定目录。</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span>        <span class="comment"># 这个目录用于保存 Loki 的日志块数据。简单说，日志正文压缩后的 chunk 文件会在这里。你容器删除或这个目录丢失，就会失去本地日志数据。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span>                     <span class="comment"># 限制与功能开关。控制 Loki 的一些行为限制和特性。官方升级文档、structured metadata 文档以及 retention 相关文档都涉及这里的配置项。</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span>  <span class="comment"># 允许 Loki 使用 Structured Metadata（某些字段可以作为结构化元数据随日志返回）。官方说明，Structured Metadata 在 Loki 3.0 默认已启用，但前提是你的 active schema 必须是 TSDB + v13；如果不是，就需要关闭或迁移。</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span>           <span class="comment"># 全局日志保留 168 小时，也就是 7 天。这个只是“希望保留多久”，真正执行删除还依赖 compactor 配置正确，并且索引周期满足要求</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span>                                 <span class="comment"># 压缩与保留删除执行者，Compactor 不只是做压缩，也负责 retention 相关处理。</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span>       <span class="comment"># compactor 的工作目录，用来存放压缩、保留、删除流程中的临时文件或处理中间状态。</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span>                  <span class="comment"># 表示打开 retention 机制。没有这个，即使你写了 retention_period，compactor 也只会做压缩，不会执行基于保留期的删除。</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span>         <span class="comment"># 若启用 retention，必须配置 delete_request_store；它决定删除请求存在哪种后端里。</span></span><br></pre></td></tr></table></figure>
+
+
+<h2 id="Alloy-配置文件详解"><a href="#Alloy-配置文件详解" class="headerlink" title="Alloy 配置文件详解"></a>Alloy 配置文件详解</h2><ul>
+<li>alloy, version v1.15.1</li>
+</ul>
+<p>Alloy 配置文件本质上是在描述一条 <strong>数据流水线</strong> </p>
+<ul>
+<li><strong>发现目标 → 读取数据 → 处理&#x2F;加标签 → 写到 Loki &#x2F; Prometheus &#x2F; OTLP 等后端</strong></li>
+</ul>
+<p>Alloy 的配置语法由两类基础元素组成：<strong>attributes（属性） 和 blocks（块）</strong> 。属性用 <code>key = value</code> 赋值，块用来定义组件实例和嵌套配置。</p>
+<p>Alloy 官方把一些顶层块称为 <strong>configuration blocks</strong> ，它们用于配置 Alloy 进程本身，不是在采集业务日志或者输出日志。比如：</p>
+<ul>
+<li><code>logging</code></li>
+<li><code>tracing</code></li>
+<li><code>http</code></li>
+<li><code>livedebugging</code></li>
+<li><code>import.*</code></li>
+</ul>
+<p>Linux 下 Alloy 默认配置文件路径是 <code>/etc/alloy/config.alloy</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logging &#123;                      # 配置 Alloy 自己的日志</span><br><span class="line">  level  = &quot;info&quot;              # Alloy 自己输出 info 级别日志</span><br><span class="line">  format = &quot;logfmt&quot;            # 输出为 logfmt 格式</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.docker &quot;containers&quot; &#123;             # 发现 Docker 容器，discovery.docker 会把每个容器映射成 target。</span><br><span class="line">  host = &quot;unix:///var/run/docker.sock&quot;      # 连接 Docker daemon、从 Docker 中发现容器目标、暴露出一组可供下游使用的 targets。要生效，你的容器通常要挂载 /var/run/docker.sock</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.relabel &quot;docker_logs&quot; &#123;                   # 重写或补充标签。把 Docker 自动发现到的元标签，转成在 Loki/Grafana 里更好用的业务标签。labels 是 Loki 的核心组织方式，必须谨慎设计，避免高基数标签。</span><br><span class="line">  targets = discovery.docker.containers.targets     # </span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_name&quot;]</span><br><span class="line">    target_label  = &quot;container&quot;</span><br><span class="line">    regex         = &quot;/(.*)&quot;</span><br><span class="line">    replacement   = &quot;$1&quot;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_label_com_docker_compose_service&quot;]</span><br><span class="line">    target_label  = &quot;service&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.source.docker &quot;containers&quot; &#123;                      # 读取 Docker 日志，这是日志采集核心。</span><br><span class="line">  host       = &quot;unix:///var/run/docker.sock&quot;           # 连接哪个 Docker daemon</span><br><span class="line">  targets    = discovery.docker.containers.targets     # 从哪里拿目标列表，从 discovery.docker &quot;containers&quot; 获取目标容器列表</span><br><span class="line">  forward_to = [loki.write.local.receiver]             # 日志下一步发给谁。把当前读到的日志，发给 loki.write &quot;local&quot; 这个组件的 receiver。</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.write &quot;local&quot; &#123;                                   # 接收来自其他 Loki 组件的日志，把日志发到 Loki，这是输出端。</span><br><span class="line">  endpoint &#123;                                           # 定义目标 Loki 地址</span><br><span class="line">    url = &quot;http://loki:3100/loki/api/v1/push&quot;</span><br><span class="line">  &#125;</span><br><span class="line">  external_labels = &#123;                                  # 给所有发出去的日志统一追加静态标签。</span><br><span class="line">    host = &quot;prometheus-jumpserver&quot;,                    # 所有日志自动打上 host=prometheus-jumpserver，env=prod 标签</span><br><span class="line">    env  = &quot;prod&quot;,</span><br><span class="line">  &#125;  </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>可以把 Alloy 理解成 <strong>组件图</strong> 。比如上面的配置链路：</p>
+<ul>
+<li><code>discovery.docker</code> (用于 Docker 目标发现)去发现 Docker 容器</li>
+<li><code>loki.source.docker</code> 读取这些容器的日志，并转发给其他 <code>loki.*</code> 组件</li>
+<li><code>loki.write</code> 把日志发给 Loki，用于接收日志并通过 Loki logproto 发往远端 Loki</li>
+</ul>
+<p>如果不是采集 Docker，而是采集文件日志，这时通常会用：</p>
+<ul>
+<li><code>loki.source.file</code></li>
+<li><code>local.file_match</code></li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">loki.source.file &quot;files&quot; &#123;</span><br><span class="line">  file_match &#123;</span><br><span class="line">    path_targets = [</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/*.log&quot;, &quot;job&quot; = &quot;system&quot;&#125;,</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/nginx/*.log&quot;, &quot;job&quot; = &quot;nginx&quot;&#125;,</span><br><span class="line">    ]</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  forward_to = [loki.write.local.receiver]</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
     <title>logstash 使用详解</title>
     <url>/202307211022/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -25793,104 +25891,6 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
-  </entry>
-  <entry>
-    <title>Loki 部署使用</title>
-    <url>/20260416162300/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Loki 是 Grafana 体系里的日志聚合系统，设计思路和 Prometheus 很像，但处理对象是日志。它和传统全文检索型日志系统的最大区别是： <strong>默认只索引标签（labels），不索引整条日志正文</strong> ，所以存储成本通常更低，扩展性也更好，特别适合 Kubernetes、Docker、主机系统日志、应用日志统一汇聚场景。</p>
-<p>截至 2026-04-16，Promtail 已经 EOL，新的采集端优先建议使用 <strong>Grafana Alloy</strong> ；另外，Loki 本身不内置认证层，生产环境应放在 Nginx 等反向代理或网关之后。</p>
-<p>它的典型链路是：</p>
-<p><strong>日志源 → 采集器（Alloy）→ Loki → Grafana 查询与展示</strong></p>
-<p>其中：</p>
-<ul>
-<li><strong>Loki</strong> 负责接收、压缩、存储、查询日志。</li>
-<li><strong>Alloy</strong> 负责在主机或 K8s 节点上收集日志、打标签、做预处理，再推送到 Loki。</li>
-<li><strong>Grafana</strong> 负责可视化、检索、告警。</li>
-</ul>
-<p>Loki 核心架构逻辑上常见有这些组件：</p>
-<ul>
-<li><strong>Distributor</strong> ：接收写入请求</li>
-<li><strong>Ingester</strong> ：缓存并写入日志块</li>
-<li><strong>Querier</strong> ：执行查询</li>
-<li><strong>Query Frontend</strong> ：查询拆分与缓存</li>
-<li><strong>Compactor</strong> ：压缩、整理、保留策略</li>
-<li><strong>Index &#x2F; Storage</strong> ：索引和日志对象存储</li>
-</ul>
-<p><strong>标签设计建议</strong></p>
-<p>Loki 的性能很大程度取决于标签设计，因此标签设计非常关键。</p>
-<p><strong>建议保留低基数标签</strong> ：</p>
-<ul>
-<li><strong>job</strong></li>
-<li><strong>host</strong></li>
-<li><strong>env</strong></li>
-<li><strong>app</strong></li>
-<li><strong>namespace</strong></li>
-<li><strong>pod</strong></li>
-<li><strong>container</strong></li>
-</ul>
-<p><strong>不要把高基数内容做成标签</strong> ：</p>
-<ul>
-<li><strong>user_id</strong></li>
-<li><strong>request_id</strong></li>
-<li><strong>trace_id</strong></li>
-<li><strong>URL 全路径</strong></li>
-<li><strong>错误详情</strong></li>
-<li><strong>SQL 文本</strong></li>
-</ul>
-<p>官方文档强调 labels 是 Loki 的核心组织方式，但标签过多、基数过高会带来性能和成本问题。</p>
-<h1 id="Docker-Compose-部署示例"><a href="#Docker-Compose-部署示例" class="headerlink" title="Docker Compose 部署示例"></a>Docker Compose 部署示例</h1><ul>
-<li>Loki version 3.7.1</li>
-<li>alloy, version v1.15.1</li>
-</ul>
-<figure class="highlight yaml"><figcaption><span>docker-compose.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">loki:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/loki:latest</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&#x27;-config.file=/etc/loki/config.yaml&#x27;</span>    </span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3100:3100&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/loki/:/etc/loki/:ro&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/loki/:/data/loki&quot;</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">grafana:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/grafana</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3000:3000&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/grafana/:/etc/grafana/&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/grafana/:/var/lib/grafana/&quot;</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">  <span class="attr">alloy:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/alloy</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">alloy</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;12345:12345&quot;</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">run</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--server.http.listen-addr=0.0.0.0:12345</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--storage.path=/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/alloy/config.alloy</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/alloy/:/etc/alloy/:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./data/alloy/:/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/var/run/docker.sock:/var/run/docker.sock</span></span><br></pre></td></tr></table></figure>
-
-<p>主配置文件 <code>/etc/loki/config.yaml</code> 内容参考：</p>
-<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">ring:</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span></span><br><span class="line">  <span class="attr">filesystem:</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span></span><br></pre></td></tr></table></figure>
-
-<p>Alloy 配置文件参考：</p>
-<figure class="highlight yaml"><figcaption><span>config/alloy/config.alloy</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="string">logging</span> &#123;</span><br><span class="line">  <span class="string">level</span>  <span class="string">=</span> <span class="string">&quot;info&quot;</span></span><br><span class="line">  <span class="string">format</span> <span class="string">=</span> <span class="string">&quot;logfmt&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.relabel</span> <span class="string">&quot;docker_logs&quot;</span> &#123;</span><br><span class="line">  <span class="string">targets</span> <span class="string">=</span> <span class="string">discovery.docker.containers.targets</span></span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_name&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;container&quot;</span></span><br><span class="line">    <span class="string">regex</span>         <span class="string">=</span> <span class="string">&quot;/(.*)&quot;</span></span><br><span class="line">    <span class="string">replacement</span>   <span class="string">=</span> <span class="string">&quot;$1&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_log_stream&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;stream&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_label_com_docker_compose_service&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;service&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.source.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span>       <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">  <span class="string">targets</span>    <span class="string">=</span> <span class="string">discovery.relabel.docker_logs.output</span></span><br><span class="line">  <span class="string">forward_to</span> <span class="string">=</span> [<span class="string">loki.write.local.receiver</span>]</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.write</span> <span class="string">&quot;local&quot;</span> &#123;</span><br><span class="line">  <span class="string">endpoint</span> &#123;</span><br><span class="line">    <span class="string">url</span> <span class="string">=</span> <span class="string">&quot;http://loki:3100/loki/api/v1/push&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">external_labels</span> <span class="string">=</span> &#123;</span><br><span class="line">    <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;prometheus-jumpserver&quot;</span>,</span><br><span class="line">    <span class="string">env</span>  <span class="string">=</span> <span class="string">&quot;prod&quot;</span>,</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启动成功后，在 Grafana 中添加新的 Data Source。即可在 Grafana 中查看到日志。</p>
-<h1 id="配置文件详解"><a href="#配置文件详解" class="headerlink" title="配置文件详解"></a>配置文件详解</h1><h2 id="Loki-配置文件"><a href="#Loki-配置文件" class="headerlink" title="Loki 配置文件"></a>Loki 配置文件</h2><ul>
-<li>Loki version 3.7.1</li>
-</ul>
-<p>以下配置适用于单机、单副本、本地文件系统、保留 7 天数据的 Liki</p>
-<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span>      <span class="comment"># Loki 的 HTTP 服务监听端口。Grafana、Alloy 或自己用 curl 查询 Loki API 时，默认都会连这个端口。官方配置文档把 server 作为 Loki 进程网络与服务行为的基础配置入口。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span>                      <span class="comment"># Loki 多组件共用的基础参数（通用运行参数）。</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span>         <span class="comment"># Loki 的本地工作目录前缀。很多组件的临时文件、索引缓存、压缩过程中的文件、规则文件等，都可能基于这个路径展开。官方示例中常见把它设成 /loki。在 Docker 部署中需要持久化</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span>      <span class="comment"># 只保留 1 份副本。这适合单机或非高可用测试环境。官方示例中单机 / 简化部署也常用 1。想要高可用，通常需要 &gt;1，并配套 ring/多节点/对象存储</span></span><br><span class="line">  <span class="attr">ring:</span>                      <span class="comment"># ring 是分布式 Loki 用来协调实例状态、分片、接收写入等的关键机制。</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span>        <span class="comment"># 表示 Loki 的 ring 元数据存储在内存里。好处是简单，坏处是进程重启后状态不持久，也不适合多实例生产。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span>               <span class="comment"># 存储 schema 定义。这部分是 Loki 最关键的配置之一。schema 是按时间段生效的，Loki 会根据日志时间决定使用哪套 schema 来存储和查询数据。</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span>     <span class="comment"># 表示从 2024-01-01 开始写入的数据，使用下面这一整套 schema。from 是时间分界点；如果后面再新增一条新 schema，比如 from: &quot;2026-05-01&quot;，那么之后的数据就会按新 schema 存。</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span>            <span class="comment"># 使用 TSDB 索引。从 Loki 2.8 起，TSDB 是推荐的索引方式，更高效、更快、可扩展性更好。</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span>     <span class="comment"># 日志块和相关对象数据存到本地文件系统，而不是 S3、GCS、Azure Blob 之类的对象存储。正式环境应该优先使用 S3 / MinIO / GCS 等对象存储</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span>                  <span class="comment"># 这是 schema 版本。官方升级文档明确说，Structured Metadata 要求 active schema 同时使用 tsdb 和 v13；迁移文档也把 v13 作为推荐版本。</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span>             <span class="comment"># 索引前缀名。 Loki 会按自己的规则生成索引对象名或目录名，这个前缀就是命名的开头。</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span>                <span class="comment"># 这是非常关键的参数，表示索引按 24 小时切分。官方 retention 文档明确说明，retention 仅支持 24h index period。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span>                    <span class="comment"># 底层存储配置</span></span><br><span class="line">  <span class="attr">filesystem:</span>                      <span class="comment"># schema 配置了 object_store: filesystem，就需要给 filesystem 指定目录。</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span>        <span class="comment"># 这个目录用于保存 Loki 的日志块数据。简单说，日志正文压缩后的 chunk 文件会在这里。你容器删除或这个目录丢失，就会失去本地日志数据。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span>                     <span class="comment"># 限制与功能开关。控制 Loki 的一些行为限制和特性。官方升级文档、structured metadata 文档以及 retention 相关文档都涉及这里的配置项。</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span>  <span class="comment"># 允许 Loki 使用 Structured Metadata（某些字段可以作为结构化元数据随日志返回）。官方说明，Structured Metadata 在 Loki 3.0 默认已启用，但前提是你的 active schema 必须是 TSDB + v13；如果不是，就需要关闭或迁移。</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span>           <span class="comment"># 全局日志保留 168 小时，也就是 7 天。这个只是“希望保留多久”，真正执行删除还依赖 compactor 配置正确，并且索引周期满足要求</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span>                                 <span class="comment"># 压缩与保留删除执行者，Compactor 不只是做压缩，也负责 retention 相关处理。</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span>       <span class="comment"># compactor 的工作目录，用来存放压缩、保留、删除流程中的临时文件或处理中间状态。</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span>                  <span class="comment"># 表示打开 retention 机制。没有这个，即使你写了 retention_period，compactor 也只会做压缩，不会执行基于保留期的删除。</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span>         <span class="comment"># 若启用 retention，必须配置 delete_request_store；它决定删除请求存在哪种后端里。</span></span><br></pre></td></tr></table></figure>
-
-
-<h2 id="Alloy-配置文件详解"><a href="#Alloy-配置文件详解" class="headerlink" title="Alloy 配置文件详解"></a>Alloy 配置文件详解</h2><ul>
-<li>alloy, version v1.15.1</li>
-</ul>
-<p>Alloy 配置文件本质上是在描述一条 <strong>数据流水线</strong> </p>
-<ul>
-<li><strong>发现目标 → 读取数据 → 处理&#x2F;加标签 → 写到 Loki &#x2F; Prometheus &#x2F; OTLP 等后端</strong></li>
-</ul>
-<p>Alloy 的配置语法由两类基础元素组成：<strong>attributes（属性） 和 blocks（块）</strong> 。属性用 <code>key = value</code> 赋值，块用来定义组件实例和嵌套配置。</p>
-<p>Alloy 官方把一些顶层块称为 <strong>configuration blocks</strong> ，它们用于配置 Alloy 进程本身，不是在采集业务日志或者输出日志。比如：</p>
-<ul>
-<li><code>logging</code></li>
-<li><code>tracing</code></li>
-<li><code>http</code></li>
-<li><code>livedebugging</code></li>
-<li><code>import.*</code></li>
-</ul>
-<p>Linux 下 Alloy 默认配置文件路径是 <code>/etc/alloy/config.alloy</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logging &#123;                      # 配置 Alloy 自己的日志</span><br><span class="line">  level  = &quot;info&quot;              # Alloy 自己输出 info 级别日志</span><br><span class="line">  format = &quot;logfmt&quot;            # 输出为 logfmt 格式</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.docker &quot;containers&quot; &#123;             # 发现 Docker 容器，discovery.docker 会把每个容器映射成 target。</span><br><span class="line">  host = &quot;unix:///var/run/docker.sock&quot;      # 连接 Docker daemon、从 Docker 中发现容器目标、暴露出一组可供下游使用的 targets。要生效，你的容器通常要挂载 /var/run/docker.sock</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.relabel &quot;docker_logs&quot; &#123;                   # 重写或补充标签。把 Docker 自动发现到的元标签，转成在 Loki/Grafana 里更好用的业务标签。labels 是 Loki 的核心组织方式，必须谨慎设计，避免高基数标签。</span><br><span class="line">  targets = discovery.docker.containers.targets     # </span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_name&quot;]</span><br><span class="line">    target_label  = &quot;container&quot;</span><br><span class="line">    regex         = &quot;/(.*)&quot;</span><br><span class="line">    replacement   = &quot;$1&quot;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_label_com_docker_compose_service&quot;]</span><br><span class="line">    target_label  = &quot;service&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.source.docker &quot;containers&quot; &#123;                      # 读取 Docker 日志，这是日志采集核心。</span><br><span class="line">  host       = &quot;unix:///var/run/docker.sock&quot;           # 连接哪个 Docker daemon</span><br><span class="line">  targets    = discovery.docker.containers.targets     # 从哪里拿目标列表，从 discovery.docker &quot;containers&quot; 获取目标容器列表</span><br><span class="line">  forward_to = [loki.write.local.receiver]             # 日志下一步发给谁。把当前读到的日志，发给 loki.write &quot;local&quot; 这个组件的 receiver。</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.write &quot;local&quot; &#123;                                   # 接收来自其他 Loki 组件的日志，把日志发到 Loki，这是输出端。</span><br><span class="line">  endpoint &#123;                                           # 定义目标 Loki 地址</span><br><span class="line">    url = &quot;http://loki:3100/loki/api/v1/push&quot;</span><br><span class="line">  &#125;</span><br><span class="line">  external_labels = &#123;                                  # 给所有发出去的日志统一追加静态标签。</span><br><span class="line">    host = &quot;prometheus-jumpserver&quot;,                    # 所有日志自动打上 host=prometheus-jumpserver，env=prod 标签</span><br><span class="line">    env  = &quot;prod&quot;,</span><br><span class="line">  &#125;  </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>可以把 Alloy 理解成 <strong>组件图</strong> 。比如上面的配置链路：</p>
-<ul>
-<li><code>discovery.docker</code> (用于 Docker 目标发现)去发现 Docker 容器</li>
-<li><code>loki.source.docker</code> 读取这些容器的日志，并转发给其他 <code>loki.*</code> 组件</li>
-<li><code>loki.write</code> 把日志发给 Loki，用于接收日志并通过 Loki logproto 发往远端 Loki</li>
-</ul>
-<p>如果不是采集 Docker，而是采集文件日志，这时通常会用：</p>
-<ul>
-<li><code>loki.source.file</code></li>
-<li><code>local.file_match</code></li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">loki.source.file &quot;files&quot; &#123;</span><br><span class="line">  file_match &#123;</span><br><span class="line">    path_targets = [</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/*.log&quot;, &quot;job&quot; = &quot;system&quot;&#125;,</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/nginx/*.log&quot;, &quot;job&quot; = &quot;nginx&quot;&#125;,</span><br><span class="line">    ]</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  forward_to = [loki.write.local.receiver]</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
   </entry>
   <entry>
     <title>LVM 逻辑卷管理</title>
@@ -34597,440 +34597,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之地泽临</title>
-    <url>/20251006102040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地泽临"><a href="#地泽临" class="headerlink" title="地泽临"></a>地泽临</h1><p><img src="https://i.0920811.xyz/img_359.png"></p>
-<p>临，上（外）坤（地、顺）下（内）兑（泽、悦），悦而能顺。临，大也。阳气始生为复卦，二阳长是临卦，三阳长是泰卦，四阳长是大壮卦，临是向大壮发展的，是阳生的过程。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">临，元，亨，利，贞。至于八月有凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：临，刚浸而长。说而顺，刚中而应，大亨以正，天之道也。至于八月有凶，消不久也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽上有地，临;君子以教思无穷，容保民无疆。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>至于八月有凶</strong> ： 八月为观卦、为酉月， <a href="https://0920811.xyz/20250504171818/">秋分之时</a> ，阴气始盛，阳气始衰。八月阴胜，故有凶。提示盛极则衰。</li>
-<li><strong>刚浸而长</strong> ： 阳气渐长（浸上），象征力量增长、地位上升。</li>
-<li><strong>刚中而应</strong> ： 九二居下卦中位、刚健而中正；六五居上卦中位、柔中能应。上下相应，政通人和。</li>
-<li><strong>容保民无疆</strong> : 容，宽容、包容; 无疆，没有边界。 指包容一切、保护所有人。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>临者，君临于民也。刚长而顺，能以德临，则亨通也。至于八月有凶，盛不可久也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>临，君临下之道也。喜而顺，则民服。惟持中正以守盛，方可无凶。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>临，元亨利贞，以德临民也。八月有凶，阳消阴长，盛极必衰。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸临，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸临贞吉，志行正也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸临</strong> ： 咸，古通感，感应、感化、真诚相感、心意相通。这里应为 都、皆之意，初九和九二阳爻一起（都）到来（临）</li>
-<li><strong>志行正也</strong> ： 阳长阴消为天地正道。天地之大德曰生。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初九刚正处下，以诚感上，是以咸临而吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>以刚正之德居下，而感人以诚，是咸临也。志正则行正，故吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>咸，感也。以诚感人，守正则吉。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸临，吉，无不利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸临，吉，无不利，未顺命也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>未顺命也</strong> ： 临卦二阳复生，虽在阳长阴消的转化过程中，但是此时仍是阴多阳少，刚爻的渐次生长还待继续。</li>
-</ul>
-<p>九二阳爻居下卦兑中位，守中不偏、行事有度，九二与六五相应，为全卦之主。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>二以刚居中，感而通上，下应初九，故无不利。然未顺天命，故戒之。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>咸临之道，以诚感人。九二居中得正，感通无碍。然时未尽顺，故曰未顺命。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>咸临与初同，而二位更中正，感之广也。未顺命，戒其时未尽也。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">甘临，无攸利。既忧之，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：甘临，位不当也。既忧之，咎不长也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>甘临</strong> ： 甘，甜、容易、甜美、安逸，引申为好乐、自得。</li>
-</ul>
-<p>六三阴爻居阳位（柔居刚位），处兑卦之终，上卦之下，位不当，象征着行为或态度不适当。若能清醒认知到自身所处大势，忧虑为计，无咎。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>甘临者，安于所临，不复忧惧；安乐之极，故无所利。能忧之，则咎可免。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>甘临者，以安逸而临人，不知戒惧。知忧则改，故无咎。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>甘临，以安逸自恣也。若能忧而知戒，则无咎。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">至临，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：至临无咎，位当也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>至临无咎</strong> ： 至，至诚、至善、至敬、极致之意。以至诚之心、至正之道来临人。</li>
-</ul>
-<p>六四爻是阴爻居阴位，位置得当，象征着行为或态度是适当的。和初九正应，在阳长阴消的大势中，位正又有刚爻应合，无咎。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>三失位以甘，四得位以至；得位则正，正则无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>以至诚而临人，得中正之道，故无咎。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>至临，至诚之临也。六四阴柔得位，以诚感下，无咎。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">知临，大君之宜，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大君之宜，行中之谓也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>知临，大君之宜</strong> ： 知，通智，智慧、明辨、明察、明智。坤为思，为睿智，故为 知临。这一爻中为君临、统治之意。六五为尊位、天子位，有君临之象，有全卦主爻九二为正应，上下都处中位，上下应合，能悦而顺，故为 大君之宜。</li>
-</ul>
-<p>六五阴爻居尊位（天子之位），柔中得正。与九二相应，九二刚中而正，辅佐六五柔中之君，君臣相感，政化通明。</p>
-<p>知临者，以智慧察下而化之也。居中得正，故曰大君之宜。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>五以柔中居尊位，知以临下，不失中道，故大君之宜而吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>知临者，以知而中，不为情蔽。大君之道，当如是而吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>知临，以明德中道临民也。大君之宜，谓居中行中之道。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">敦临，吉无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：敦临之吉，志在内也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>敦临之吉，志在内也</strong> ： 敦，敦实、厚重、笃实、诚恳、质朴。厚德无害，安于本心、敦厚自守、守柔而终吉。</li>
-</ul>
-<p>阴爻居最上位（终位），柔中有止，居临之极。阴柔厚重，能自守谦和，不以尊位为荣，反以诚恳为本。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上六处尊极而能厚下，志不外驰，故吉无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>临之极而不亢，厚以自守，志在内修，不求外饰，此其吉也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>敦，厚也。处上位而能敦厚以临下，志在内修，不为外名，吉而无咎。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之风地观</title>
-    <url>/20251007102040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="风地观"><a href="#风地观" class="headerlink" title="风地观"></a>风地观</h1><p><img src="https://i.0920811.xyz/img_360.png"></p>
-<p>观，上（外）巽（风、入、顺）下（内）坤（地，顺），风行地上，与 <a href="https://0920811.xyz">地泽临卦</a> 成覆卦卦， <strong>临 是上临下，观 是下观上</strong> 。观卦由否卦再长一柔爻而来。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观，盥而不荐，有孚颙若</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：大观在上，顺而巽，中正以观天下。观，盥而不荐，有孚颙若，下观而化也。观天之神道，而四时不忒，圣人以神道设教，而天下服矣。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风行地上，观;先王以省方，观民设教。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>盥而不荐</strong> ： 盥，盥礼（古人祭祀前会用清水洗手，以示 洁净身心、恭敬待神，是祭祀中 最核心的虔诚仪式）、洗手、净身。荐，进献祭品（如牛羊、酒食）、</li>
-<li><strong>有孚颙（yóng）若，下观而化也</strong> ： 孚，诚信、真诚。颙，严肃端正、庄重恭敬、庄严肃穆。上位者以诚敬为本，不尚虚礼，百姓因此观化而从。</li>
-<li><strong>先王以省方，观民设教</strong> ： 省，巡视、考察、观察。方，四方诸侯之地、百姓聚居之处。巡视四方，观察民情而设教化之法。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>临者上临下，观者下观上；观在下而仰上，故以诚敬为本。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>观者，示人以所当观也。君子以身作则，民观而化。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>盥而不荐，洁诚以观，不尚虚礼。有孚颙若，诚信充中而形于外。</code></p>
-</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童观，小人无咎，君子吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：初六童观，小人道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>童观，小人无咎，君子吝</strong> ： 以稚童般的方式（幼稚、肤浅、不全面）观察世界或看待事物，浅见而未有深察，对地位较低或职责有限的普通人来说，并无不妥（无需看清事物本质，只需应对眼前的现实需求）；对君子（有身份、有责任、需担当全局的人，需洞察本质、谋划长远、引领方向）而言，有缺憾、有隐患</li>
-<li><strong>初六童观，小人道也</strong> ： 符合普通人身份与需求的认知方式，君子需超越童观，君子若止于浅见、见而不察，则为吝</li>
-</ul>
-<p>初六阴爻居最下位，柔弱未进，象征处于观的起始阶段。小人浅见不足责，故无咎；君子识理而不察，则吝。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>童观者，浅见之谓也。处观之初，未能深察。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>童观者，未有定见。小人居下，浅见无害；君子不察则失德。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>童观，以浅识观事。小人无咎，君子可羞。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">窥观，利女贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：窥观女贞，亦可丑也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>窥观，利女贞</strong> ： 窥，从小孔、缝隙中窥视、窥探、偷看，喻视野局促、认识有限。位置低、视野窄，只能局部观察。对坚守被动、守内、安于本分角色的人（女贞）有利</li>
-<li><strong>窥观女贞，亦可丑也</strong> ： 丑，不美、羞耻、缺憾。窥观 虽对守本分者有利，但从 追求更高认知、更优角色的角度看，它仍是一种 有局限的、不应满足的观察方式</li>
-</ul>
-<p>六二阴爻居阴位，处下卦居中得位，虽有局限，却未偏离本分。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>窥观者，视有所限。利女贞言守柔顺之道尚可，然不足美。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>六二得中以柔，处下观上，所见不广，故曰窥观。守正则安，不守则丑。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居卑而观高，见局而识偏。阴柔守正可安，然非君子之道。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>窥观，小见也。利女贞，言妇人守其常也。君子若如此，则可羞也。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，进退。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，进退;未失道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>观我生，进退</strong> ： 观察自己的生活、行为和处境，即自我反省、内观己德，由外观而转内观。根据自我审视结果，决定前进或退守。</li>
-</ul>
-<p>六三阴爻居阳位（不当），是下卦（坤☷）的最后一爻，即将衔接上卦（巽☴），象征 从下位者被动观上（如初六童观、六二窥观），转向中位者主动观己。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>观我生者，反观己也。能观己则知进退，故未失道。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>由观人而反观己，是自省之道。知进退，则守道不失。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观我生，内省也。进退皆得其宜，故未失道。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观国之光，利用宾于王。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观国之光，尚宾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>观国之光，利用宾于王</strong> ： 国之光，即国家之文明、礼乐、政教之光辉；当以宾客之礼、谦敬之态亲近君上；</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>观国之光，以见君德也。能守礼以近上，则无咎，故利宾于王。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居近君之位，当以礼观政，知敬而不干，是宾于王之义。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观国之光，观礼乐教化之盛也。以谦敬近上，故利用宾于王。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，君子无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，观民也。</span><br></pre></td></tr></table></figure>
-<p>阳爻居尊位（天子之位），刚中而正，德位兼备，是君位之正，</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五居尊位而中正，以身为法。观己之生德，则民观而化，故无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居尊位，当自观己德，使下有所观。观己而民观，是以化成。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观我生者，君子以身为天下法。观民也者，民观君而化。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">上九：观其生，君子无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观其生，志未平也。</span><br></pre></td></tr></table></figure>
-
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>观其生者，观天道也。居观之极，明而未中，知而未化，故志未平。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五观我生者，人道也；上九观其生者，天道也。虽无咎，而犹未平。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观其生’，观天之生物之理也。处卦之极，明而不中，故志未平。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之风火家人</title>
-    <url>/20251203094620/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地火明夷"><a href="#地火明夷" class="headerlink" title="地火明夷"></a>地火明夷</h1><p><img src="https://i.0920811.xyz/img_382.png"></p>
-<p>风火家人，内（下）离（火、附丽、文明）外（上）巽（风、顺），家人，内也；（火泽）睽，外也。家人卦核心为正家。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人，利女贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：家人，女正位乎内，男正位乎外。男女正，天地之大义也。家人有严君焉，父母之谓也。父父、子子、兄兄、弟弟、夫夫、妇妇，而家道正，正家而天下定矣。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风自火出，家人。君子以言有物而行有恒。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>家人，女正位乎内，男正位乎外</strong> ： 六二阴柔中正于内，九五阳刚中正于外。</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">闲有家，悔亡</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：闲有家，志未变也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>闲有家</strong> ： 闲，本义是门口横亘一木，即木栏杆、栅栏，引申为防范、规范、约束、建立规矩。初九作为开始，强调管理必须先行于德教。必须先建立明确的界限和规范，才能保障家庭的正道。</li>
-</ul>
-<p>治理家庭（有家）之初，要先建立规范、防患未然（闲），因为此时人的心志未变，态度可控，因此设立规矩最为有效，趁此时机立规，易被接受、易于推行，故能消除悔恨。</p>
-<p>初九是家人卦的初始爻，阳爻居阳位，刚健得正、处家之始，内卦巽为 “顺、入、教化”，初爻为 “家道之基”，刚健有决断、能立规范、防患于未然。行动契合时位、合乎正道</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初为家道之始，宜及其时闲之也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>家之始，宜早正其风。</code></p>
-</li>
-<li><p><code>始而闲之，则悔亡也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无攸遂，在中馈。贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无攸遂，在中馈</strong> ： 遂，随心所欲、顺从自己的意愿去完成某事、独行其事。中馈，古代指掌管家中饮食（厨房）、财务等内务的职责，是古代家庭中女性的核心职责。</li>
-</ul>
-<p>六二以阴居内卦离之中，得位又得中，上应九五之阳，有“妻道”之象；其德柔顺附丽而逊（巽），以柔顺之德承接主内之责，不刚愎、不专断，故能安定家庭、得享吉祥。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>不遂其志，舍己以顺。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>二以柔中居内，克尽其职。</code></p>
-</li>
-<li><p><code>中馈者，内事也。顺则吉。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人嗃嗃，悔厉吉；妇子嘻嘻，终吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：家人嗃嗃，未失也；妇子嘻嘻，失家节也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>家人嗃嗃，悔厉吉</strong> ： 嗃嗃（hè hè），严厉、刚硬、威严。以刚硬态度推行规则、约束家人，缺乏适度的巽、顺，可能引发的家人抵触、情感隔阂，长期来看，严虽有弊，却能守正，弊在当下，利在长远</li>
-<li><strong>妇子嘻嘻，终吝</strong> ： 妇子，家庭成员。嘻嘻，嬉戏、懈怠、放纵无度。家庭规则松弛、成员不受约束，沉迷享乐、违背家风。丧失了家庭的节度与规范（失家节也），故终将招致困厄。</li>
-</ul>
-<p>九三阳居阳位，处下卦离的终位，刚健过盛、处家之极，可能过于严苛，有失柔顺，但位正，未失大节（正家），故悔厉吉，治家宁失之严、不失之纵。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>刚正之道，虽悔厉，终吉也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>家道贵严，严则无失。</code></p>
-</li>
-<li><p><code>家若无正声，则妇子当嬉笑而不肃。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">富家大吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：富家大吉，顺在位也。</span><br></pre></td></tr></table></figure>
-
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处家之位，以柔为主，故能富家。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>顺以得位，家道富也。</code></p>
-</li>
-<li><p><code>六四阴顺，相应于九三，得以富家。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">王假有家，勿恤，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：王假有家，交相爱也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>王假有家，勿恤，吉</strong> ： 假，至，到达、至诚。九五尊位得中得正，正应六二，为家人之主。</li>
-</ul>
-<p>九五为阳爻居阳位，处尊得位而正，下应六二，王者之德来主持家庭，治理有方。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>以阳居尊，正家之主也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>五为尊位，又得其中正，故可以正家。</code></p>
-</li>
-<li><p><code>以德理家，家乃吉也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚威如，终吉</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：威如之吉，反身之谓也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>威如之吉，反身之谓也</strong> ： 孚为诚信充于内，威为庄敬形于外；先以正道修己，己正而后家齐（反身之谓），家众见其内省自律，自然心生敬畏，故曰“威如之吉”</li>
-</ul>
-<p>上九处家人卦最上位，为最具影响力的人，代表家庭治理的最高境界，真正的威信，来自于“有孚”（真实可信），威来自自律，而不是压制他人，要以身作则。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>威而有孚，德之威也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>威之在己，则终吉。</code></p>
-</li>
-<li><p><code>非暴怒之威，乃自反正己之威也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之风天小畜</title>
     <url>/20250915160529/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="风天小畜"><a href="#风天小畜" class="headerlink" title="风天小畜"></a>风天小畜</h1><p><img src="https://i.0920811.xyz/img_349.png"></p>
@@ -40030,5 +39596,439 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之风火家人</title>
+    <url>/20251203094620/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地火明夷"><a href="#地火明夷" class="headerlink" title="地火明夷"></a>地火明夷</h1><p><img src="https://i.0920811.xyz/img_382.png"></p>
+<p>风火家人，内（下）离（火、附丽、文明）外（上）巽（风、顺），家人，内也；（火泽）睽，外也。家人卦核心为正家。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人，利女贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：家人，女正位乎内，男正位乎外。男女正，天地之大义也。家人有严君焉，父母之谓也。父父、子子、兄兄、弟弟、夫夫、妇妇，而家道正，正家而天下定矣。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风自火出，家人。君子以言有物而行有恒。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>家人，女正位乎内，男正位乎外</strong> ： 六二阴柔中正于内，九五阳刚中正于外。</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">闲有家，悔亡</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：闲有家，志未变也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>闲有家</strong> ： 闲，本义是门口横亘一木，即木栏杆、栅栏，引申为防范、规范、约束、建立规矩。初九作为开始，强调管理必须先行于德教。必须先建立明确的界限和规范，才能保障家庭的正道。</li>
+</ul>
+<p>治理家庭（有家）之初，要先建立规范、防患未然（闲），因为此时人的心志未变，态度可控，因此设立规矩最为有效，趁此时机立规，易被接受、易于推行，故能消除悔恨。</p>
+<p>初九是家人卦的初始爻，阳爻居阳位，刚健得正、处家之始，内卦巽为 “顺、入、教化”，初爻为 “家道之基”，刚健有决断、能立规范、防患于未然。行动契合时位、合乎正道</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初为家道之始，宜及其时闲之也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>家之始，宜早正其风。</code></p>
+</li>
+<li><p><code>始而闲之，则悔亡也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无攸遂，在中馈。贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二之吉，顺以巽也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无攸遂，在中馈</strong> ： 遂，随心所欲、顺从自己的意愿去完成某事、独行其事。中馈，古代指掌管家中饮食（厨房）、财务等内务的职责，是古代家庭中女性的核心职责。</li>
+</ul>
+<p>六二以阴居内卦离之中，得位又得中，上应九五之阳，有“妻道”之象；其德柔顺附丽而逊（巽），以柔顺之德承接主内之责，不刚愎、不专断，故能安定家庭、得享吉祥。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>不遂其志，舍己以顺。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>二以柔中居内，克尽其职。</code></p>
+</li>
+<li><p><code>中馈者，内事也。顺则吉。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">家人嗃嗃，悔厉吉；妇子嘻嘻，终吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：家人嗃嗃，未失也；妇子嘻嘻，失家节也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>家人嗃嗃，悔厉吉</strong> ： 嗃嗃（hè hè），严厉、刚硬、威严。以刚硬态度推行规则、约束家人，缺乏适度的巽、顺，可能引发的家人抵触、情感隔阂，长期来看，严虽有弊，却能守正，弊在当下，利在长远</li>
+<li><strong>妇子嘻嘻，终吝</strong> ： 妇子，家庭成员。嘻嘻，嬉戏、懈怠、放纵无度。家庭规则松弛、成员不受约束，沉迷享乐、违背家风。丧失了家庭的节度与规范（失家节也），故终将招致困厄。</li>
+</ul>
+<p>九三阳居阳位，处下卦离的终位，刚健过盛、处家之极，可能过于严苛，有失柔顺，但位正，未失大节（正家），故悔厉吉，治家宁失之严、不失之纵。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>刚正之道，虽悔厉，终吉也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>家道贵严，严则无失。</code></p>
+</li>
+<li><p><code>家若无正声，则妇子当嬉笑而不肃。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">富家大吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：富家大吉，顺在位也。</span><br></pre></td></tr></table></figure>
+
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处家之位，以柔为主，故能富家。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>顺以得位，家道富也。</code></p>
+</li>
+<li><p><code>六四阴顺，相应于九三，得以富家。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">王假有家，勿恤，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：王假有家，交相爱也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>王假有家，勿恤，吉</strong> ： 假，至，到达、至诚。九五尊位得中得正，正应六二，为家人之主。</li>
+</ul>
+<p>九五为阳爻居阳位，处尊得位而正，下应六二，王者之德来主持家庭，治理有方。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>以阳居尊，正家之主也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>五为尊位，又得其中正，故可以正家。</code></p>
+</li>
+<li><p><code>以德理家，家乃吉也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚威如，终吉</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：威如之吉，反身之谓也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>威如之吉，反身之谓也</strong> ： 孚为诚信充于内，威为庄敬形于外；先以正道修己，己正而后家齐（反身之谓），家众见其内省自律，自然心生敬畏，故曰“威如之吉”</li>
+</ul>
+<p>上九处家人卦最上位，为最具影响力的人，代表家庭治理的最高境界，真正的威信，来自于“有孚”（真实可信），威来自自律，而不是压制他人，要以身作则。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>威而有孚，德之威也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>威之在己，则终吉。</code></p>
+</li>
+<li><p><code>非暴怒之威，乃自反正己之威也。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之风地观</title>
+    <url>/20251007102040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="风地观"><a href="#风地观" class="headerlink" title="风地观"></a>风地观</h1><p><img src="https://i.0920811.xyz/img_360.png"></p>
+<p>观，上（外）巽（风、入、顺）下（内）坤（地，顺），风行地上，与 <a href="https://0920811.xyz">地泽临卦</a> 成覆卦卦， <strong>临 是上临下，观 是下观上</strong> 。观卦由否卦再长一柔爻而来。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观，盥而不荐，有孚颙若</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：大观在上，顺而巽，中正以观天下。观，盥而不荐，有孚颙若，下观而化也。观天之神道，而四时不忒，圣人以神道设教，而天下服矣。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风行地上，观;先王以省方，观民设教。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>盥而不荐</strong> ： 盥，盥礼（古人祭祀前会用清水洗手，以示 洁净身心、恭敬待神，是祭祀中 最核心的虔诚仪式）、洗手、净身。荐，进献祭品（如牛羊、酒食）、</li>
+<li><strong>有孚颙（yóng）若，下观而化也</strong> ： 孚，诚信、真诚。颙，严肃端正、庄重恭敬、庄严肃穆。上位者以诚敬为本，不尚虚礼，百姓因此观化而从。</li>
+<li><strong>先王以省方，观民设教</strong> ： 省，巡视、考察、观察。方，四方诸侯之地、百姓聚居之处。巡视四方，观察民情而设教化之法。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>临者上临下，观者下观上；观在下而仰上，故以诚敬为本。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>观者，示人以所当观也。君子以身作则，民观而化。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>盥而不荐，洁诚以观，不尚虚礼。有孚颙若，诚信充中而形于外。</code></p>
+</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童观，小人无咎，君子吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：初六童观，小人道也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>童观，小人无咎，君子吝</strong> ： 以稚童般的方式（幼稚、肤浅、不全面）观察世界或看待事物，浅见而未有深察，对地位较低或职责有限的普通人来说，并无不妥（无需看清事物本质，只需应对眼前的现实需求）；对君子（有身份、有责任、需担当全局的人，需洞察本质、谋划长远、引领方向）而言，有缺憾、有隐患</li>
+<li><strong>初六童观，小人道也</strong> ： 符合普通人身份与需求的认知方式，君子需超越童观，君子若止于浅见、见而不察，则为吝</li>
+</ul>
+<p>初六阴爻居最下位，柔弱未进，象征处于观的起始阶段。小人浅见不足责，故无咎；君子识理而不察，则吝。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>童观者，浅见之谓也。处观之初，未能深察。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>童观者，未有定见。小人居下，浅见无害；君子不察则失德。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>童观，以浅识观事。小人无咎，君子可羞。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">窥观，利女贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：窥观女贞，亦可丑也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>窥观，利女贞</strong> ： 窥，从小孔、缝隙中窥视、窥探、偷看，喻视野局促、认识有限。位置低、视野窄，只能局部观察。对坚守被动、守内、安于本分角色的人（女贞）有利</li>
+<li><strong>窥观女贞，亦可丑也</strong> ： 丑，不美、羞耻、缺憾。窥观 虽对守本分者有利，但从 追求更高认知、更优角色的角度看，它仍是一种 有局限的、不应满足的观察方式</li>
+</ul>
+<p>六二阴爻居阴位，处下卦居中得位，虽有局限，却未偏离本分。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>窥观者，视有所限。利女贞言守柔顺之道尚可，然不足美。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>六二得中以柔，处下观上，所见不广，故曰窥观。守正则安，不守则丑。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居卑而观高，见局而识偏。阴柔守正可安，然非君子之道。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>窥观，小见也。利女贞，言妇人守其常也。君子若如此，则可羞也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，进退。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，进退;未失道也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>观我生，进退</strong> ： 观察自己的生活、行为和处境，即自我反省、内观己德，由外观而转内观。根据自我审视结果，决定前进或退守。</li>
+</ul>
+<p>六三阴爻居阳位（不当），是下卦（坤☷）的最后一爻，即将衔接上卦（巽☴），象征 从下位者被动观上（如初六童观、六二窥观），转向中位者主动观己。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>观我生者，反观己也。能观己则知进退，故未失道。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>由观人而反观己，是自省之道。知进退，则守道不失。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观我生，内省也。进退皆得其宜，故未失道。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观国之光，利用宾于王。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观国之光，尚宾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>观国之光，利用宾于王</strong> ： 国之光，即国家之文明、礼乐、政教之光辉；当以宾客之礼、谦敬之态亲近君上；</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>观国之光，以见君德也。能守礼以近上，则无咎，故利宾于王。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居近君之位，当以礼观政，知敬而不干，是宾于王之义。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观国之光，观礼乐教化之盛也。以谦敬近上，故利用宾于王。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，君子无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，观民也。</span><br></pre></td></tr></table></figure>
+<p>阳爻居尊位（天子之位），刚中而正，德位兼备，是君位之正，</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五居尊位而中正，以身为法。观己之生德，则民观而化，故无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居尊位，当自观己德，使下有所观。观己而民观，是以化成。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观我生者，君子以身为天下法。观民也者，民观君而化。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">上九：观其生，君子无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观其生，志未平也。</span><br></pre></td></tr></table></figure>
+
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>观其生者，观天道也。居观之极，明而未中，知而未化，故志未平。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五观我生者，人道也；上九观其生者，天道也。虽无咎，而犹未平。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观其生’，观天之生物之理也。处卦之极，明而不中，故志未平。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之地泽临</title>
+    <url>/20251006102040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地泽临"><a href="#地泽临" class="headerlink" title="地泽临"></a>地泽临</h1><p><img src="https://i.0920811.xyz/img_359.png"></p>
+<p>临，上（外）坤（地、顺）下（内）兑（泽、悦），悦而能顺。临，大也。阳气始生为复卦，二阳长是临卦，三阳长是泰卦，四阳长是大壮卦，临是向大壮发展的，是阳生的过程。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">临，元，亨，利，贞。至于八月有凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：临，刚浸而长。说而顺，刚中而应，大亨以正，天之道也。至于八月有凶，消不久也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽上有地，临;君子以教思无穷，容保民无疆。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>至于八月有凶</strong> ： 八月为观卦、为酉月， <a href="https://0920811.xyz/20250504171818/">秋分之时</a> ，阴气始盛，阳气始衰。八月阴胜，故有凶。提示盛极则衰。</li>
+<li><strong>刚浸而长</strong> ： 阳气渐长（浸上），象征力量增长、地位上升。</li>
+<li><strong>刚中而应</strong> ： 九二居下卦中位、刚健而中正；六五居上卦中位、柔中能应。上下相应，政通人和。</li>
+<li><strong>容保民无疆</strong> : 容，宽容、包容; 无疆，没有边界。 指包容一切、保护所有人。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>临者，君临于民也。刚长而顺，能以德临，则亨通也。至于八月有凶，盛不可久也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>临，君临下之道也。喜而顺，则民服。惟持中正以守盛，方可无凶。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>临，元亨利贞，以德临民也。八月有凶，阳消阴长，盛极必衰。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸临，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸临贞吉，志行正也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸临</strong> ： 咸，古通感，感应、感化、真诚相感、心意相通。这里应为 都、皆之意，初九和九二阳爻一起（都）到来（临）</li>
+<li><strong>志行正也</strong> ： 阳长阴消为天地正道。天地之大德曰生。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初九刚正处下，以诚感上，是以咸临而吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>以刚正之德居下，而感人以诚，是咸临也。志正则行正，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>咸，感也。以诚感人，守正则吉。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸临，吉，无不利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸临，吉，无不利，未顺命也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>未顺命也</strong> ： 临卦二阳复生，虽在阳长阴消的转化过程中，但是此时仍是阴多阳少，刚爻的渐次生长还待继续。</li>
+</ul>
+<p>九二阳爻居下卦兑中位，守中不偏、行事有度，九二与六五相应，为全卦之主。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>二以刚居中，感而通上，下应初九，故无不利。然未顺天命，故戒之。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>咸临之道，以诚感人。九二居中得正，感通无碍。然时未尽顺，故曰未顺命。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>咸临与初同，而二位更中正，感之广也。未顺命，戒其时未尽也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">甘临，无攸利。既忧之，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：甘临，位不当也。既忧之，咎不长也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>甘临</strong> ： 甘，甜、容易、甜美、安逸，引申为好乐、自得。</li>
+</ul>
+<p>六三阴爻居阳位（柔居刚位），处兑卦之终，上卦之下，位不当，象征着行为或态度不适当。若能清醒认知到自身所处大势，忧虑为计，无咎。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>甘临者，安于所临，不复忧惧；安乐之极，故无所利。能忧之，则咎可免。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>甘临者，以安逸而临人，不知戒惧。知忧则改，故无咎。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>甘临，以安逸自恣也。若能忧而知戒，则无咎。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">至临，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：至临无咎，位当也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>至临无咎</strong> ： 至，至诚、至善、至敬、极致之意。以至诚之心、至正之道来临人。</li>
+</ul>
+<p>六四爻是阴爻居阴位，位置得当，象征着行为或态度是适当的。和初九正应，在阳长阴消的大势中，位正又有刚爻应合，无咎。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>三失位以甘，四得位以至；得位则正，正则无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>以至诚而临人，得中正之道，故无咎。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>至临，至诚之临也。六四阴柔得位，以诚感下，无咎。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">知临，大君之宜，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大君之宜，行中之谓也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>知临，大君之宜</strong> ： 知，通智，智慧、明辨、明察、明智。坤为思，为睿智，故为 知临。这一爻中为君临、统治之意。六五为尊位、天子位，有君临之象，有全卦主爻九二为正应，上下都处中位，上下应合，能悦而顺，故为 大君之宜。</li>
+</ul>
+<p>六五阴爻居尊位（天子之位），柔中得正。与九二相应，九二刚中而正，辅佐六五柔中之君，君臣相感，政化通明。</p>
+<p>知临者，以智慧察下而化之也。居中得正，故曰大君之宜。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>五以柔中居尊位，知以临下，不失中道，故大君之宜而吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>知临者，以知而中，不为情蔽。大君之道，当如是而吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>知临，以明德中道临民也。大君之宜，谓居中行中之道。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">敦临，吉无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：敦临之吉，志在内也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>敦临之吉，志在内也</strong> ： 敦，敦实、厚重、笃实、诚恳、质朴。厚德无害，安于本心、敦厚自守、守柔而终吉。</li>
+</ul>
+<p>阴爻居最上位（终位），柔中有止，居临之极。阴柔厚重，能自守谦和，不以尊位为荣，反以诚恳为本。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上六处尊极而能厚下，志不外驰，故吉无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>临之极而不亢，厚以自守，志在内修，不求外饰，此其吉也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>敦，厚也。处上位而能敦厚以临下，志在内修，不为外名，吉而无咎。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
   </entry>
 </search>
