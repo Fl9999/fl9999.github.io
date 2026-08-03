@@ -21219,6 +21219,484 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>iptables 服务使用说明</title>
+    <url>/202210241051/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，<code>netfilter</code> 的架构是在整个网络流程(TCP&#x2F;IP 协议栈)的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
+<p>IP 层的 5 个钩子点的位置，对应就是 <code>iptables</code> 的 5 条内置链，分别是</p>
+<ul>
+<li><code>PREROUTING</code></li>
+<li><code>FORWARD</code></li>
+<li><code>INPUT</code></li>
+<li><code>OUTPUT</code></li>
+<li><code>POSTROUTING</code></li>
+</ul>
+<p><img src="https://i.0920811.xyz/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 <code>netfilter</code> 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过 <strong>查询本地路由表</strong> 决定这个数据包的流向</p>
+<ul>
+<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
+<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 <code>netfilter</code> 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
+</ul>
+<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
+<p>除了 5 条内置的链，<code>iptables</code> 还有 5 张表，这 5 张表主要是用来给 <code>iptables</code> 中的规则（rule）分类，系统中所有的 <code>iptables</code> 规则都被划分到不同的表集合中。5 张表分别为</p>
+<ul>
+<li><code>raw</code> - <code>iptables</code> 是有状态的，即 <code>iptables</code> 对数据包有连接追踪 (<code>connection trackong</code>) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
+<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
+<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
+<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(<code>drop</code>)、或拒绝(<code>reject</code>)</li>
+<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
+</ul>
+<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，<code>iptables</code> 不支持自定义表。不是每个链上都能挂表，<code>iptables</code> 表与链的对应关系如下图</p>
+<table>
+<thead>
+<tr>
+<th>-</th>
+<th>PREROUTING</th>
+<th>FORWARD</th>
+<th>INPUT</th>
+<th>OUTPUT</th>
+<th>POSTROUTING</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>raw</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>mangle</code></td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (SNAT)</code></td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+<td>Y</td>
+</tr>
+<tr>
+<td><code>nat (DNAT)</code></td>
+<td>Y</td>
+<td>N</td>
+<td>N</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>filter</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+<tr>
+<td><code>security</code></td>
+<td>N</td>
+<td>Y</td>
+<td>Y</td>
+<td>Y</td>
+<td>N</td>
+</tr>
+</tbody></table>
+<p><code>iptables</code> 表和链的工作流程图如下</p>
+<p><img src="https://i.0920811.xyz/img_134.png"></p>
+<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-F ,--flush</code></td>
+<td>清除所有规则，默认规则除外</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-P ,--policy</code></td>
+<td>设置默认规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-t ,--table</code></td>
+<td>指定要操作的表，默认为 <code>filter</code> 表</td>
+<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--list ,-L [chain [rulenum]]</code></td>
+<td>列出（指定的链或所有链）的规则</td>
+<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
+</tr>
+<tr>
+<td><code>--verbose	,-v</code></td>
+<td>verbose mode</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--numeric	,-n</code></td>
+<td>不解析协议和端口号，以数字的形式显示</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--line-numbers</code></td>
+<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--jump	,-j</code></td>
+<td>匹配的规则的处理 target</td>
+<td><code>iptables -A INPUT  -j LOG</code></td>
+</tr>
+<tr>
+<td><code>--append  ,-A chain</code></td>
+<td>像指定的链中追加规则</td>
+<td><code>-A INPUT -i lo -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--insert  ,-I chain [rulenum]</code></td>
+<td>向指定的链中指定的位置插入规则</td>
+<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
+</tr>
+<tr>
+<td><code>--delete  ,-D chain rulenum</code></td>
+<td>删除指定链中的指定位置的规则</td>
+<td><code>iptables -D INPUT 10 </code></td>
+</tr>
+<tr>
+<td><code>--replace ,-R chain rulenum</code></td>
+<td>更新指定链中的指定位置的规则</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-S, --list-rules [chain]</code></td>
+<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
+<td></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>删除指定行号的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
+
+<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
+<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
+<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
+<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
+<p>重启 <code>rsyslog</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
+<li><p><code>journalctl -k</code> 命令查看</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
+</ul>
+<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
+<p>iptables 中日志相关的选项：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--log-prefix</code></td>
+<td>记录的日志的内容前缀</td>
+<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
+</tr>
+<tr>
+<td><code>--log-level</code></td>
+<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
+<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
+</tr>
+</tbody></table>
+<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
+<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
+
+<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
+
+<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
+
+<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
+
+<h2 id="iptables-配合-ipset-实现批量-IP-控制"><a href="#iptables-配合-ipset-实现批量-IP-控制" class="headerlink" title="iptables 配合 ipset 实现批量 IP 控制"></a>iptables 配合 ipset 实现批量 IP 控制</h2><p><code>ipset</code> 是 Linux 内核中的一个工具，根据创建 ipset 时指定的类型，它可以存储多个 IP 地址、IP 网络（network）、TCP&#x2F;UDP 端口、MAC 地址等，并且支持动态更新其中的内容。<strong>比如配合 <code>iptables</code> 使用时，可以将多个目标 IP 地址或者网络存储于其中并可以动态更新 <code>iptables</code> 规则（更新 <code>ipset</code> 后无需重启 <code>iptables</code> 即可生效）</strong></p>
+<ol>
+<li><p>创建 <code>ipset</code> 并指定 <code>ipset</code> 类型为 <code>hash:ip</code>，更多支持的类型可以通过 <code>ipset -h</code> 查看</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+<li><p>添加目标 IP 到 <code>ipset</code>，可以多次添加</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在 <code>iptables</code> 中使用 <code>ipset</code></p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ipset 作为源 IP 允许访问</span></span><br><span class="line">iptables -A INPUT -m set --match-set allowed_ips src -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">源 IP 不在 ipset 中则不允许访问</span></span><br><span class="line">iptables -A INPUT -m set ! --match-set allowed_ips src -j DROP</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><strong>默认情况下，<code>ipset</code> 属于临时配置，没有持久化，系统重启后内容会丢失</strong>。要配置 <code>ipset</code> 持久化，可以参考以下步骤</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保存 ipset 配置</span></span><br><span class="line">ipset save &gt; /etc/ipset.conf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">恢复 ipset 配置</span></span><br><span class="line">ipset restore &lt; /etc/ipset.conf</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="docker-compose-场景下使用-iptables-进行白名单限制"><a href="#docker-compose-场景下使用-iptables-进行白名单限制" class="headerlink" title="docker compose 场景下使用 iptables 进行白名单限制"></a>docker compose 场景下使用 iptables 进行白名单限制</h2><p>假设有以下 <code>docker-compose.yml</code> 文件</p>
+<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  nextcloud_aio_mastercontainer:</span><br><span class="line">    image: nextcloud/all-in-one:latest</span><br><span class="line">    container_name: nextcloud-aio-mastercontainer</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;8000:80&quot;</span><br><span class="line">      - &quot;8080:8080&quot;</span><br><span class="line">      - &quot;8443:8443&quot;</span><br><span class="line">    volumes:</span><br><span class="line">      - aio_mastercontainer:/mnt/docker-aio-config</span><br><span class="line">      - /var/run/docker.sock:/var/run/docker.sock:ro</span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  aio_mastercontainer:</span><br><span class="line">    driver: local</span><br><span class="line">    driver_opts:</span><br><span class="line">      type: none</span><br><span class="line">      o: bind</span><br><span class="line">      device: ./data/</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>docker compose up</code> 正常启动后， Docker 会根据 <code>docker-compose.yml</code> 中的定义配置 <code>iptables</code> 防火墙规则，以下为上面 <code>docker-compose.yml</code> 定义的数据端口在 <code>iptables</code> 规则中的数据流向分析</p>
+<ol>
+<li>数据报文首先经过 <code>iptables</code> 的 <code>PREROUTING</code> 链，在 <code>PREROUTING</code> 链中会进行 <code>DNAT</code>，位于 <code>nat</code> 表中，查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -t nat -L -v -n</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 4376 packets, 255K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">80051 4690K DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 3891 packets, 233K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 12629 packets, 1082K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 12637 packets, 1083K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    3   200 MASQUERADE  all  --  *      !br-43e659324492  172.21.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8443</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8080</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 RETURN     all  --  br-43e659324492 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8080 to:172.21.0.2:8080</span><br><span class="line">    2   100 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 to:172.21.0.2:80</span><br></pre></td></tr></table></figure>
+<blockquote>
+<ol>
+<li><code>DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</code> : 所有的报文会被跳转到 <code>DOCKER</code> 链进行处理</li>
+<li><code>DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</code> : 只要不是从 <code>br-43e659324492</code> 网卡（本示例中的 <code>docker-compose.yml</code> 使用的网络）进入的数据包，不论目标网卡&#x2F;源 IP&#x2F;目标 IP 为何，只有其目标端口为 <code>8443</code>，则对其进行 DNAT，将其目标 IP 和端口修改为 <code>172.21.0.2:8443</code>（本示例中的容器）。其他 2 条 DNAT 同理。</li>
+</ol>
+</blockquote>
+</li>
+<li><em><strong>在 <code>iptables</code> 的 <code>PREROUTING</code> 链处理完成后，数据流入 <code>iptables</code> 的 <code>FORWARD</code> 链</strong></em>。规则定义位于 <code>filter</code> 表中。查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -L -v -n --line-numbers</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     605K  585M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0       </span><br><span class="line">...    </span><br><span class="line">9      461 33197 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">10     178  4984 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">11   10055  481K REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2      259  186K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      128  179K ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        8   356 DOCKER     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5      123  7065 ACCEPT     all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  br-43e659324492 br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7        0     0 ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">8        0     0 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">9        0     0 ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">10       0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">11       0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 42129 packets, 7533K bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8443</span><br><span class="line">2        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8080</span><br><span class="line">3        2   100 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      123  7065 DOCKER-ISOLATION-STAGE-2  all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      123  7065 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
+<blockquote>
+<ol>
+<li>数据流进入 <code>iptables</code> 的 <code>FORWARD</code> 链。</li>
+<li><code>DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 首先会被全部跳转到 <code>DOCKER-USER</code> 链进行处理。</li>
+<li><code>RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 默认情况下，<code>DOCKER-USER</code> 链未作任何处理，数据流跳转回 <code>FORWARD</code> 链中的原位置，继续进入下一个链 <code>DOCKER-ISOLATION-STAGE-1</code></li>
+<li><code>ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0</code> : 数据流到了此处，表示目标网络为本示例中的容器的网络，对数据全部放行接收。数据进入容器。</li>
+</ol>
+</blockquote>
+</li>
+</ol>
+<p>根据以上对数据流向的分析，如果要对进入容器的数据进行源 IP 限制，建议将其放置在 <code>DOCKER-USER</code> 链中。具体实现参考如下：</p>
+<ol>
+<li><p>配置 <code>ipset</code>，用于对多个源 IP 设置白名单</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>配置 <code>iptables</code>，如果源 IP 不在白名单中，则禁止访问特定的端口</p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">iptables -t filter -I DOCKER-USER 1 -m set ! --match-set allowed_ips src -m multiport -p tcp --dports 8000,8080,8443 -j DROP -m comment --comment &quot;for Nextcloud&quot;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<h2 id="docker-场景下的自定义-iptables-规则的持久化问题"><a href="#docker-场景下的自定义-iptables-规则的持久化问题" class="headerlink" title="docker 场景下的自定义 iptables 规则的持久化问题"></a>docker 场景下的自定义 iptables 规则的持久化问题</h2><p>在使用 Docker 或者 Docker Compose 部署应用的场景下，假如需要在 Docker 的基础上对 <code>iptables</code> 防火墙做自定义配置，如示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，此种情况下，要对自定义的防火墙规则做 <strong>持久化</strong> （ <strong><code>iptables</code> 或者 <code>docker</code> 重启后规则自动加载</strong>），可以参考以下几种方法：</p>
+<ol>
+<li><p>将配置写入 <code>iptables</code> 默认配置文件，<code>iptables</code> 重启后自动加载自定义规则，针对 示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，可以在 <code>iptables</code> 配置中写入配置</p>
+  <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT ACCEPT [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [0:0]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 提前定义链 &#x27;DOCKER-USER&#x27;，否则加载配置会报错： iptables-restore: line 24 failed</span></span></span><br><span class="line">:DOCKER-USER - [0:0]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">... 其他规则</span></span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 添加 Docker 自定义规则</span></span></span><br><span class="line">-A DOCKER-USER -m set ! --match-set allowed_ips src -m multiport  -p tcp --dports 3000,8080  -j REJECT</span><br><span class="line"></span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
+<li><p>以 Docker Compose 场景为例。可以创建一个容器，专门用来运行配置 <code>iptables</code> 命令。</p>
+<ol>
+<li><p>创建一个自定义 <code>iptables</code> 容器，此容器主要执行修改 <code>iptables</code> 自定义规则</p>
+ <figure class="highlight shell"><figcaption><span>Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM alpine:latest</span><br><span class="line">RUN apk --no-cache add iptables</span><br><span class="line">COPY setup-iptables.sh /usr/local/bin/</span><br><span class="line">RUN chmod +x /usr/local/bin/setup-iptables.sh</span><br><span class="line">ENTRYPOINT [&quot;setup-iptables.sh&quot;]</span><br></pre></td></tr></table></figure></li>
+<li><p>编写 <code>setup-iptables.sh</code> 脚本:</p>
+ <figure class="highlight shell"><figcaption><span>setup-iptables.sh</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line">iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>配置 <code>docker-compose.yml</code>，在 <code>docker-compose.yml</code> 中添加上面配置的容器</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  iptables:</span><br><span class="line">    build: .</span><br><span class="line">    network_mode: &quot;host&quot;</span><br><span class="line">    restart: &quot;no&quot;</span><br><span class="line">    deploy:</span><br><span class="line">      restart_policy:</span><br><span class="line">        condition: none</span><br><span class="line">  your_service:</span><br><span class="line">    image: your_image</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    # Other configuration options for your service</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p> <strong>当运行 <code>docker-compose up</code> 时，<code>iptables</code> 服务(容器)会启动并执行 <code>setup-iptables.sh</code> 脚本，将自定义规则添加到 <code>DOCKER-USER</code> 链中。</strong></p>
+<blockquote>
+<p>根据实际需求谨慎编写 <code>setup-iptables.sh</code> 脚本内容，防止 <code>iptables</code> 规则混乱</p>
+</blockquote>
+</li>
+</ol>
+</li>
+<li><p>要在 Docker Compose 中自定义防火墙规则，可以使用 Docker Compose 的 <code>post-up</code> 脚本功能。</p>
+<ol>
+<li><p>创建 <code>docker-compose.yml</code> 文件</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建 <code>docker-compose.override.yml</code> 文件</p>
+ <figure class="highlight shell"><figcaption><span>docker-compose.override.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    entrypoint: [&quot;sh&quot;, &quot;-c&quot;, &quot;iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT &amp;&amp; exec myservice&quot;]</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>启动 Docker Compose。  这样， 每次启动服务时，都会在 <code>DOCKER-USER</code> 链中添加指定的防火墙规则。确保 <code>myservice</code> 的入口点脚本正确无误，以防止启动失败。</p>
+<blockquote>
+<p><code>docker-compose up</code> 会时同时加载 <code>docker-compose.yml</code> 和 <code>docker-compose.override.yml</code>。</p>
+<p>Docker Compose 会将 <code>docker-compose.override.yml</code> 中的配置与 <code>docker-compose.yml</code> 中的配置合并。<strong>覆盖相同配置项，新增不同配置项</strong>。</p>
+</blockquote>
+</li>
+</ol>
+<p> 以上 2 个 <code>compose</code> 配置文件也可以合并成一个 <code>docker-compose.yml</code>：<br> <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line">    entrypoint: /path/to/setup-firewall.sh myservice-command</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></p>
+<blockquote>
+<p>这样，<strong>每次启动服务时，都会先执行防火墙规则，然后启动实际服务。</strong></p>
+</blockquote>
+</li>
+</ol>
+<h1 id="Ubuntu-22-04-安装-iptables"><a href="#Ubuntu-22-04-安装-iptables" class="headerlink" title="Ubuntu 22.04 安装 iptables"></a>Ubuntu 22.04 安装 iptables</h1><p>Ubuntu 22.04 (Jammy Jellyfish) 默认使用 <code>UFW (Uncomplicated Firewall)</code> 作为防火墙管理工具。UFW 是一个用户友好的前端工具，旨在简化 <code>iptables</code> 的配置。它默认是未激活的，但安装在系统中，用户可以根据需要启用和配置它。</p>
+<p>检查 UFW 状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status ufw</span></span><br><span class="line">● ufw.service - Uncomplicated firewall</span><br><span class="line">     Loaded: loaded (/lib/systemd/system/ufw.service; enabled; vendor preset: enabled)</span><br><span class="line">     Active: active (exited) since Wed 2024-08-14 10:14:19 CST; 2 weeks 3 days ago</span><br><span class="line">       Docs: man:ufw(8)</span><br><span class="line">   Main PID: 389 (code=exited, status=0/SUCCESS)</span><br><span class="line">        CPU: 4ms</span><br><span class="line"></span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Starting Uncomplicated firewall...</span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Finished Uncomplicated firewall.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>卸载 UFW 软件包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl stop ufw</span><br><span class="line"></span><br><span class="line">sudo apt purge ufw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">清理未使用的依赖项</span></span><br><span class="line">sudo apt autoremove</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 iptables</span></span><br><span class="line">sudo apt install iptables</span><br></pre></td></tr></table></figure>
+
+<p><strong>在 Ubuntu 22.04 (Jammy Jellyfish) 中，<code>iptables</code> 仍然是管理防火墙规则的重要工具，不过 Ubuntu 22.04 默认使用 <code>nftables</code> 作为防火墙框架，<code>iptables</code> 已经被 <code>nftables</code> 取代。在这种情况下，<code>iptables</code> 实际上是通过 <code>nftables</code> 的兼容层 (<code>iptables-nft</code>) 实现的</strong>。这意味着你在使用 <code>iptables</code> 命令时，实际上是在通过 <code>nftables</code> 管理规则。</p>
+<blockquote>
+<p><code>nftables</code> 防火墙框架的默认客户端工具是 <code>nft</code>.</p>
+</blockquote>
+<p>检查 <code>iptables</code> 可执行文件路径会发现 <code>iptables</code> 实际上是 <code>iptables-nft</code> 命令的软链接</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">which</span> iptables</span></span><br><span class="line">/usr/sbin/iptables</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /usr/sbin/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 26 Oct  4  2023 /usr/sbin/iptables -&gt; /etc/alternatives/iptables*</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /etc/alternatives/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 22 Oct  4  2023 /etc/alternatives/iptables -&gt; /usr/sbin/iptables-nft*</span><br></pre></td></tr></table></figure>
+
+<p>安装 <code>iptables</code> 后可以使用 <code>iptables</code> 命令管理防火墙规则，但是没有 <code>iptables</code> 服务存在。为了方便 <code>iptables</code> 服务的管理，可以参考以下配置将  <code>iptables</code> 添加为系统服务</p>
+<figure class="highlight shell"><figcaption><span>/etc/systemd/system/iptables.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=IPv4 firewall with iptables</span><br><span class="line">Before=network-pre.target</span><br><span class="line">Wants=network-pre.target</span><br><span class="line">Before=ip6tables.service</span><br><span class="line">After=syslog.target</span><br><span class="line">AssertPathExists=/etc/sysconfig/iptables</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=oneshot</span><br><span class="line">RemainAfterExit=yes</span><br><span class="line">ExecStart=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecReload=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecStop=/usr/sbin/iptables -F</span><br><span class="line">Environment=BOOTUP=serial</span><br><span class="line">Environment=CONSOLETYPE=serial</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=basic.target</span><br></pre></td></tr></table></figure>
+
+<p>防火墙规则配置文件 <code>/etc/sysconfig/iptables</code>(可以自定义路径)</p>
+<blockquote>
+<p><strong>使用以上方式的 <code>iptables</code> 服务，其本质上（底层框架）还是使用的 <code>nftables</code> 防火墙，此方式只是对还不熟悉 <code>nft</code> 而熟悉 <code>iptables</code> 的管理员提供了一种熟悉的管理防火墙（<code>nftables</code>）的方式(通过 <code>iptables-nft</code> 实现)</strong></p>
+</blockquote>
+<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
+<p>ssh 连接失败后查看日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
+<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
+<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
+<p>将其默认规则改为 <code>ACCEPT</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
+<p>重新使用 ssh 登陆，连接正常。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>iptables</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux KVM 配置说明</title>
+    <url>/20260507140030/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>KVM（Kernel-based Virtual Machine）</strong> 是 Linux 内核的一个模块，它将 Linux 内核转变为一个 Type-1（裸机级） <strong>虚拟机管理程序（Hypervisor&#x2F;VMM）</strong> 。</p>
+<p>KVM 本身并不模拟硬件，它只负责处理器虚拟化和内存虚拟化。它需要配合 QEMU 来模拟 I&#x2F;O 设备（如磁盘、网卡、显卡）。</p>
+<ul>
+<li><p><strong>内核态 (KVM Module)</strong> ： 负责将 CPU 切换到 <strong>客户模式（Guest Mode）</strong> ，处理高权限指令。</p>
+</li>
+<li><p><strong>用户态 (QEMU)</strong> ： 负责模拟硬件设备，并提供用户操作接口。</p>
+</li>
+<li><p><strong>管理层 (Libvirt)</strong> ： 一个标准的 API 库，我们常用的 <code>virsh</code> 命令、 <code>virt-manager</code> 界面都是通过 Libvirt 来调用 QEMU&#x2F;KVM 的。</p>
+</li>
+</ul>
+<p><strong>核心技术特性</strong></p>
+<ul>
+<li><p><strong>CPU 虚拟化 (Intel VT-x &#x2F; AMD-V)</strong> 。KVM 利用硬件辅助虚拟化技术。它将 CPU 分为四种模式，使得虚拟机（Guest）可以直接在物理 CPU 上执行绝大多数指令，只有在执行敏感指令时才由内核接管，性能损耗极低。</p>
+</li>
+<li><p><strong>内存管理 (EPT&#x2F;NPT)</strong> 。通过 <strong>扩展页表 (EPT)</strong> 技术，KVM 实现了物理内存与虚拟机内存的直接映射。</p>
+<ul>
+<li><strong>KSM (Kernel Same-page Merging)</strong> 扫描多个 VM 的内存，如果发现相同的内存页（例如多个 VM 都运行 Ubuntu），则将其合并为一页，极大节省物理内存。</li>
+</ul>
+</li>
+<li><p><strong>存储与网络 (VirtIO)</strong> 。传统的模拟设备（如模拟一张经典的百兆网卡）效率极低。KVM 引入了 VirtIO 准虚拟化驱动。VM 意识到自己处于虚拟化环境，通过“共享内存”的方式与宿主机通信。实现磁盘 IO 和网络吞吐量几乎接近物理机性能。</p>
+</li>
+</ul>
+<p><strong>KVM 家族工具链</strong></p>
+<ul>
+<li><p><strong>qemu-kvm</strong> ： 核心包，提供底层仿真。</p>
+</li>
+<li><p><strong>libvirt-daemon</strong> ： 守护进程，负责管理 VM 的生命周期。</p>
+</li>
+<li><p><strong>virsh</strong> ： 命令行工具（运维最常用）。</p>
+</li>
+<li><p><strong>virt-install</strong> ： 用于创建虚拟机的命令行脚本工具。</p>
+</li>
+</ul>
+<h1 id="KVM-安装"><a href="#KVM-安装" class="headerlink" title="KVM 安装"></a>KVM 安装</h1><p><strong>环境信息</strong></p>
+<ul>
+<li>Ubuntu 22.04.5 LTS 5.15.0-119-generic</li>
+</ul>
+<blockquote>
+<ul>
+<li>最好不要和 Docker、K8s 等虚拟化工具同时安装。可能会因为内核参数（如 <code>net.bridge.bridge-nf-call-iptables</code>）冲突导致 VM 无法获得 DHCP 地址。</li>
+</ul>
+</blockquote>
+<blockquote>
+<p>首先需要确认你的物理机 CPU 是否支持虚拟化技术（VT-x 或 AMD-V）</p>
+</blockquote>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">egrep -c <span class="string">&#x27;(vmx|svm)&#x27;</span> /proc/cpuinfo</span></span><br><span class="line">64</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>如果输出大于 0，说明支持虚拟化</p>
+<p><strong>安装 KVM 及相关工具</strong> 。参考以下命令安装 Linux 原生的虚拟化栈</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update</span><br><span class="line">sudo apt install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst virt-manager</span><br><span class="line">sudo systemctl enable --now libvirtd</span><br></pre></td></tr></table></figure>
+
+<h2 id="KVM-中安装-Talos-Linux-系统"><a href="#KVM-中安装-Talos-Linux-系统" class="headerlink" title="KVM 中安装 Talos Linux 系统"></a>KVM 中安装 Talos Linux 系统</h2><p>Talos Linux OS <a href="https://github.com/siderolabs/talos/releases/">Github 下载地址</a> ，从中下载 Talos Linux AMD64 版本的 RAW 镜像并提取 raw 文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/siderolabs/talos/releases/download/v1.14.0-alpha.0/metal-amd64.raw.zst</span><br><span class="line"></span><br><span class="line">zstd -d metal-amd64.raw.zst</span><br></pre></td></tr></table></figure>
+<p>使用解压后的 <code>metal-amd64.raw</code> 文件创建虚拟机</p>
+<p><strong>创建 Talos 虚拟机</strong> 。可以使用 virt-install 命令行快速创建多个 VM。 创建控制平面 (Control Plane) 虚拟机</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp metal-amd64.raw /var/lib/libvirt/images/talos-control-plane-01.raw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">建议稍微扩容一下，20G 比较稳妥</span></span><br><span class="line">qemu-img resize /var/lib/libvirt/images/talos-control-plane-01.raw 20G</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">导入并运行虚拟机</span></span><br><span class="line">virt-install \</span><br><span class="line">  --name talos-control-plane-01 \</span><br><span class="line">  --ram 4096 \</span><br><span class="line">  --vcpus 4 \</span><br><span class="line">  --disk path=/var/lib/libvirt/images/talos-control-plane-01.raw,bus=virtio \</span><br><span class="line">  --os-variant ubuntu22.04 \</span><br><span class="line">  --network network=default,model=virtio \</span><br><span class="line">  --graphics none \</span><br><span class="line">  --import \</span><br><span class="line">  --boot hd \</span><br><span class="line">  --console pty,target_type=serial</span><br></pre></td></tr></table></figure>
+<ul>
+<li><code>--name talos-control-plane-01</code> ： 虚拟机唯一名称为 <code>talos-control-plane-01</code></li>
+<li><code>--ram 4096</code> ： 内存大小为 4096MB</li>
+<li><code>--vcpus 4</code> ： 虚拟 CPU 数量为 4 个</li>
+<li><code>--disk path=/var/lib/libvirt/images/talos-control-plane-01.qcow2,size=20</code> ： <code>path</code> 虚拟磁盘文件存放路径, <code>size</code> 虚拟磁盘文件大小为 20GB</li>
+<li><code>--os-variant ubuntu22.04</code> ： <code>--os-variant</code> 用于指定操作系统类型，这里指定为 Ubuntu 22.04。虽然安装的是 Talos，但指定 ubuntu22.04 会让 KVM 自动应用适合该内核版本的硬件加速参数（如 VirtIO 队列优化）</li>
+<li><code>--network network=default,model=virtio</code> ： 将 VM 挂载到宿主机的 default 网桥上。这是 Libvirt 默认网桥，是 KVM 安装后自动生成的 NAT 网桥。虚拟机可以访问外网，宿主机可以访问虚拟机，但外部机房的其他服务器无法直接访问该虚拟机。</li>
+<li><code>--graphics none</code> ： 不显示图形界面，禁用图形输出</li>
+<li><code>--console pty,target_type=serial</code> ： 串口控制台，将虚拟机的控制台重定向到当前的 shell 终端。运行命令后，你可以直接在当前的终端窗口看到 Talos 的启动日志。</li>
+<li><code>--cdrom /opt/Talos/metal-amd64.iso</code> ： 安装镜像，Talos 首次启动需要通过 ISO 引导来进入安装模式。</li>
+<li><code>--boot hd</code> ： 设置启动优先级。先尝试从硬盘 (hd) 启动，如果硬盘没系统（如首次启动），则从 光盘 (cdrom) 启动。</li>
+</ul>
+<p>执行 VM 安装命令后，你的终端会变为 VM 的输出界面。你会看到 Talos 启动并显示以下信息：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Starting install...</span><br><span class="line">Allocating &#x27;talos-control-plane-01.qcow2&#x27;                                                                                                            | 3.1 MB  00:00:00 ... </span><br><span class="line">Creating domain...                                                                                                                                   |    0 B  00:00:00     </span><br><span class="line">Running text console command: virsh --connect qemu:///system console talos-control-plane-01</span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>到这一步说明虚拟机已经成功创建并运行了。由于你看到了 <code>Escape character is ^] (Ctrl + ])</code> 且屏幕停止滚动，这意味着你已经成功进入了虚拟机的串口终端 (Serial Console)。</p>
+<p>Talos 启动非常快，大约 10-20 秒。如果 1 分钟后还没输出，说明内核可能还在尝试初始化硬件。</p>
+<p>如果你想回到宿主机命令行，执行后续的 <code>talosctl</code> 命令，你需要先 <code>Ctrl + ]</code> (先按住 Ctrl 不放，再按右中括号)退出虚拟机的串口终端。</p>
+<p>如果 VM 安装异常，可以查询 <code>libvirtd</code> 服务日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -u libvirtd -n 50 --no-pager</span></span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Starting Virtualization daemon...</span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Started Virtualization daemon.</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: started, version 2.90 cachesize 150</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: compile time options: IPv6 GNU-getopt DBus no-UBus i18n IDN2 DHCP DHCPv6 no-Lua TFTP conntrack ipset no-nftset auth cryptohash DNSSEC loop-detect inotify dumpfile</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, IP range 192.168.122.2 -- 192.168.122.254, lease time 1h</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, sockets bound exclusively to interface virbr0</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: reading /etc/resolv.conf</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 8.8.8.8#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 114.114.114.114#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /etc/hosts - 3 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /var/lib/libvirt/dnsmasq/default.addnhosts - 0 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: read /var/lib/libvirt/dnsmasq/default.hostsfile</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: libvirt version: 8.0.0, package: 1ubuntu7.16 (Hector Cao &lt;hector.cao@canonical.com&gt; Wed, 04 Feb 2026 11:49:12 +0100)</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: hostname: vp-jmpsvr</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: Unable to read from monitor: Connection reset by peer</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: qemu unexpectedly closed the monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: process exited while connecting to monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="virsh-命令行工具"><a href="#virsh-命令行工具" class="headerlink" title="virsh 命令行工具"></a>virsh 命令行工具</h1><h2 id="虚拟机管理命令"><a href="#虚拟机管理命令" class="headerlink" title="虚拟机管理命令"></a>虚拟机管理命令</h2><h3 id="列出所有虚拟机"><a href="#列出所有虚拟机" class="headerlink" title="列出所有虚拟机"></a>列出所有虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh list --all</span></span><br><span class="line"> Id   Name                     State</span><br><span class="line">----------------------------------------</span><br><span class="line"> 1    talos-control-plane-01   running</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="查看虚拟机分配的-IP-地址"><a href="#查看虚拟机分配的-IP-地址" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>
+
+<h3 id="彻底删除虚拟机"><a href="#彻底删除虚拟机" class="headerlink" title="彻底删除虚拟机"></a>彻底删除虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh destroy talos-control-plane-01</span><br><span class="line">virsh undefine talos-control-plane-01</span><br></pre></td></tr></table></figure>
+
+<h3 id="连接虚拟机串口终端"><a href="#连接虚拟机串口终端" class="headerlink" title="连接虚拟机串口终端"></a>连接虚拟机串口终端</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh console 1</span></span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="Network-管理"><a href="#Network-管理" class="headerlink" title="Network 管理"></a>Network 管理</h2><h3 id="查看所有网络"><a href="#查看所有网络" class="headerlink" title="查看所有网络"></a>查看所有网络</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh net-list</span></span><br><span class="line"> Name      State    Autostart   Persistent</span><br><span class="line">--------------------------------------------</span><br><span class="line"> default   active   yes         yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="查看虚拟机分配的-IP-地址-1"><a href="#查看虚拟机分配的-IP-地址-1" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>linux logrotate 服务</title>
+    <url>/202208191317/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<p><code>logrotate</code> 程序是一个日志文件管理工具。用于分割日志文件，压缩转存、删除旧的日志文件，并创建新的日志文件  </p>
+<p><code>logrotate</code> 是基于 <code>crond</code> 来运行的，其脚本是 <code>/etc/cron.daily/logrotate</code>，日志轮转是系统自动完成的。<br>实际运行时，<code>logrotate</code> 会调用配置文件 <code>/etc/logrotate.conf</code>。<br><code>/etc/cron.daily/logrotate</code> 文件内容如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/cron.daily/logrotate</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">/usr/sbin/logrotate -s /var/lib/logrotate/logrotate.status /etc/logrotate.conf</span><br><span class="line">EXITVALUE=$?</span><br><span class="line">if [ $EXITVALUE != 0 ]; then</span><br><span class="line">    /usr/bin/logger -t logrotate &quot;ALERT exited abnormally with [$EXITVALUE]&quot;</span><br><span class="line">fi</span><br><span class="line">exit 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>可以执行以下命令手动执行日志切割：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -f /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
+<p>以下命令可以检测配置文件是否正确：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -d /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h1 id="配置说明"><a href="#配置说明" class="headerlink" title="配置说明"></a>配置说明</h1><p><code>logrotate</code> 的主配置文件默认为 <code>/etc/logrotate.conf</code>，默认配置如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">默认每一周执行一次 rotate 轮转工作</span></span><br><span class="line">weekly</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保留多少个日志文件(轮转几次).默认保留四个.0 指没有备份</span></span><br><span class="line">rotate 4</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">自动创建新的日志文件，新的日志文件具有和原来的文件相同的权限；</span></span><br><span class="line">create</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个参数很重要！就是切割后的日志文件以当前日期为格式结尾，如xxx.log-20131216这样,</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果注释掉,切割出来是按数字递增,即 xxx.log-1这种格式</span></span><br><span class="line">dateext</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含 /etc/logrotate.d 下的其他配置文件 ，用于隔离出各个服务的配置</span></span><br><span class="line">include /etc/logrotate.d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是否通过gzip压缩转储以后的日志文件，如xxx.log-20131216.gz ；如果不需要压缩，注释掉就行</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">compress</span> </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nocompress</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对指定的文件做轮转切割</span></span><br><span class="line">/var/log/wtmp &#123;</span><br><span class="line">    # 每月轮转一次，取代全局默认值</span><br><span class="line">    monthly</span><br><span class="line">    </span><br><span class="line">    # 创建新文件，并指定权限，用户和组</span><br><span class="line">    create 0664 root utmp</span><br><span class="line">    </span><br><span class="line">    # 文件大小超过 1m 后才进行切割，到了 1 个月，文件大小小于 1m，不会进行切割</span><br><span class="line">	minsize 1M</span><br><span class="line">	</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br><span class="line">/var/log/btmp &#123;</span><br><span class="line">    # 如果日志丢失，不报错继续滚动下一个日志</span><br><span class="line">    missingok</span><br><span class="line">    </span><br><span class="line">    monthly</span><br><span class="line">    create 0600 root utmp</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>其他常用选项说明如下：</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定转储周期为每天</span></span><br><span class="line">daily </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">即使日志文件为空文件也做轮转，这个是 logrotate 的缺省选项。</span></span><br><span class="line">ifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件为空时，不进行轮转</span></span><br><span class="line">notifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件大于指定大小后就轮转，支持的单位： k，K，m，M</span></span><br><span class="line">size 5M</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用于还在打开中的日志文件，把当前日志备份并截断；</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是先拷贝再清空的方式，拷贝和清空之间有一个时间差，可能会丢失部分日志数据。</span></span><br><span class="line">copytruncate</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">运行 postrotate 脚本，作用是在所有日志都轮转后统一执行一次脚本。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果没有配置这个，那么每个日志轮转后都会执行一次脚本</span></span><br><span class="line">sharedscripts                      </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之后需要执行的指令，例如重新启动 (<span class="built_in">kill</span> -HUP) 某个服务！必须独立成行</span></span><br><span class="line">postrotate                         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之前需要执行的指令，例如修改文件的属性等动作；必须独立成行</span></span><br><span class="line">prerotate      </span><br><span class="line">                    </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将轮转的日志保存到指定路径下，默认保存在日志文件同一目录下</span></span><br><span class="line">olddir /data/logs/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果产生日志的进程的运行用户不是 root,需要指定相关的用户和组，否则会报错：because parent directory has insecure permissions (It<span class="string">&#x27;s world writable or writable by group which is not &quot;root&quot;) Set &quot;su&quot; directive in config file to tell logrotate which user/group should be used for rotation. ，如果只配置了用户，未配置组，会报错：error: error switching euid to 1003 and egid to -1: Invalid argument</span></span></span><br><span class="line">su appuser appgroup</span><br></pre></td></tr></table></figure>
+
+<h2 id="配置示例"><a href="#配置示例" class="headerlink" title="配置示例"></a>配置示例</h2><p><code>nginx</code> 日志切割配置文件示例，创建 <code>/etc/logrotate.d/nginx</code>:</p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    sharedscripts</span><br><span class="line">    postrotate</span><br><span class="line">        if [ -f /run/nginx.pid ]; then</span><br><span class="line">                    kill -USR1 `cat /run/nginx.pid`</span><br><span class="line">        fi</span><br><span class="line">    endscript</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>copytruncate</code> 方式切割 <code>nginx</code> 日志，此种方式不需要重启 <code>nginx</code> 服务<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[logrotate 原理介绍和配置详解](https://wsgzao.github.io/post/logrotate/)
+">[1]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    copytruncate</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    </span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>logrotate</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux man 使用</title>
     <url>/202306091031/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 Linux 中，命令提供的 <code>man</code> 手册是一份非常详细的命令使用说明手册，要了解命令的使用方法及其工作原理，熟练参考 <code>man</code> 手册是及其必要的。</p>
@@ -32732,484 +33210,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Vsftpd</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux KVM 配置说明</title>
-    <url>/20260507140030/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>KVM（Kernel-based Virtual Machine）</strong> 是 Linux 内核的一个模块，它将 Linux 内核转变为一个 Type-1（裸机级） <strong>虚拟机管理程序（Hypervisor&#x2F;VMM）</strong> 。</p>
-<p>KVM 本身并不模拟硬件，它只负责处理器虚拟化和内存虚拟化。它需要配合 QEMU 来模拟 I&#x2F;O 设备（如磁盘、网卡、显卡）。</p>
-<ul>
-<li><p><strong>内核态 (KVM Module)</strong> ： 负责将 CPU 切换到 <strong>客户模式（Guest Mode）</strong> ，处理高权限指令。</p>
-</li>
-<li><p><strong>用户态 (QEMU)</strong> ： 负责模拟硬件设备，并提供用户操作接口。</p>
-</li>
-<li><p><strong>管理层 (Libvirt)</strong> ： 一个标准的 API 库，我们常用的 <code>virsh</code> 命令、 <code>virt-manager</code> 界面都是通过 Libvirt 来调用 QEMU&#x2F;KVM 的。</p>
-</li>
-</ul>
-<p><strong>核心技术特性</strong></p>
-<ul>
-<li><p><strong>CPU 虚拟化 (Intel VT-x &#x2F; AMD-V)</strong> 。KVM 利用硬件辅助虚拟化技术。它将 CPU 分为四种模式，使得虚拟机（Guest）可以直接在物理 CPU 上执行绝大多数指令，只有在执行敏感指令时才由内核接管，性能损耗极低。</p>
-</li>
-<li><p><strong>内存管理 (EPT&#x2F;NPT)</strong> 。通过 <strong>扩展页表 (EPT)</strong> 技术，KVM 实现了物理内存与虚拟机内存的直接映射。</p>
-<ul>
-<li><strong>KSM (Kernel Same-page Merging)</strong> 扫描多个 VM 的内存，如果发现相同的内存页（例如多个 VM 都运行 Ubuntu），则将其合并为一页，极大节省物理内存。</li>
-</ul>
-</li>
-<li><p><strong>存储与网络 (VirtIO)</strong> 。传统的模拟设备（如模拟一张经典的百兆网卡）效率极低。KVM 引入了 VirtIO 准虚拟化驱动。VM 意识到自己处于虚拟化环境，通过“共享内存”的方式与宿主机通信。实现磁盘 IO 和网络吞吐量几乎接近物理机性能。</p>
-</li>
-</ul>
-<p><strong>KVM 家族工具链</strong></p>
-<ul>
-<li><p><strong>qemu-kvm</strong> ： 核心包，提供底层仿真。</p>
-</li>
-<li><p><strong>libvirt-daemon</strong> ： 守护进程，负责管理 VM 的生命周期。</p>
-</li>
-<li><p><strong>virsh</strong> ： 命令行工具（运维最常用）。</p>
-</li>
-<li><p><strong>virt-install</strong> ： 用于创建虚拟机的命令行脚本工具。</p>
-</li>
-</ul>
-<h1 id="KVM-安装"><a href="#KVM-安装" class="headerlink" title="KVM 安装"></a>KVM 安装</h1><p><strong>环境信息</strong></p>
-<ul>
-<li>Ubuntu 22.04.5 LTS 5.15.0-119-generic</li>
-</ul>
-<blockquote>
-<ul>
-<li>最好不要和 Docker、K8s 等虚拟化工具同时安装。可能会因为内核参数（如 <code>net.bridge.bridge-nf-call-iptables</code>）冲突导致 VM 无法获得 DHCP 地址。</li>
-</ul>
-</blockquote>
-<blockquote>
-<p>首先需要确认你的物理机 CPU 是否支持虚拟化技术（VT-x 或 AMD-V）</p>
-</blockquote>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">egrep -c <span class="string">&#x27;(vmx|svm)&#x27;</span> /proc/cpuinfo</span></span><br><span class="line">64</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>如果输出大于 0，说明支持虚拟化</p>
-<p><strong>安装 KVM 及相关工具</strong> 。参考以下命令安装 Linux 原生的虚拟化栈</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update</span><br><span class="line">sudo apt install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst virt-manager</span><br><span class="line">sudo systemctl enable --now libvirtd</span><br></pre></td></tr></table></figure>
-
-<h2 id="KVM-中安装-Talos-Linux-系统"><a href="#KVM-中安装-Talos-Linux-系统" class="headerlink" title="KVM 中安装 Talos Linux 系统"></a>KVM 中安装 Talos Linux 系统</h2><p>Talos Linux OS <a href="https://github.com/siderolabs/talos/releases/">Github 下载地址</a> ，从中下载 Talos Linux AMD64 版本的 RAW 镜像并提取 raw 文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/siderolabs/talos/releases/download/v1.14.0-alpha.0/metal-amd64.raw.zst</span><br><span class="line"></span><br><span class="line">zstd -d metal-amd64.raw.zst</span><br></pre></td></tr></table></figure>
-<p>使用解压后的 <code>metal-amd64.raw</code> 文件创建虚拟机</p>
-<p><strong>创建 Talos 虚拟机</strong> 。可以使用 virt-install 命令行快速创建多个 VM。 创建控制平面 (Control Plane) 虚拟机</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cp metal-amd64.raw /var/lib/libvirt/images/talos-control-plane-01.raw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">建议稍微扩容一下，20G 比较稳妥</span></span><br><span class="line">qemu-img resize /var/lib/libvirt/images/talos-control-plane-01.raw 20G</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">导入并运行虚拟机</span></span><br><span class="line">virt-install \</span><br><span class="line">  --name talos-control-plane-01 \</span><br><span class="line">  --ram 4096 \</span><br><span class="line">  --vcpus 4 \</span><br><span class="line">  --disk path=/var/lib/libvirt/images/talos-control-plane-01.raw,bus=virtio \</span><br><span class="line">  --os-variant ubuntu22.04 \</span><br><span class="line">  --network network=default,model=virtio \</span><br><span class="line">  --graphics none \</span><br><span class="line">  --import \</span><br><span class="line">  --boot hd \</span><br><span class="line">  --console pty,target_type=serial</span><br></pre></td></tr></table></figure>
-<ul>
-<li><code>--name talos-control-plane-01</code> ： 虚拟机唯一名称为 <code>talos-control-plane-01</code></li>
-<li><code>--ram 4096</code> ： 内存大小为 4096MB</li>
-<li><code>--vcpus 4</code> ： 虚拟 CPU 数量为 4 个</li>
-<li><code>--disk path=/var/lib/libvirt/images/talos-control-plane-01.qcow2,size=20</code> ： <code>path</code> 虚拟磁盘文件存放路径, <code>size</code> 虚拟磁盘文件大小为 20GB</li>
-<li><code>--os-variant ubuntu22.04</code> ： <code>--os-variant</code> 用于指定操作系统类型，这里指定为 Ubuntu 22.04。虽然安装的是 Talos，但指定 ubuntu22.04 会让 KVM 自动应用适合该内核版本的硬件加速参数（如 VirtIO 队列优化）</li>
-<li><code>--network network=default,model=virtio</code> ： 将 VM 挂载到宿主机的 default 网桥上。这是 Libvirt 默认网桥，是 KVM 安装后自动生成的 NAT 网桥。虚拟机可以访问外网，宿主机可以访问虚拟机，但外部机房的其他服务器无法直接访问该虚拟机。</li>
-<li><code>--graphics none</code> ： 不显示图形界面，禁用图形输出</li>
-<li><code>--console pty,target_type=serial</code> ： 串口控制台，将虚拟机的控制台重定向到当前的 shell 终端。运行命令后，你可以直接在当前的终端窗口看到 Talos 的启动日志。</li>
-<li><code>--cdrom /opt/Talos/metal-amd64.iso</code> ： 安装镜像，Talos 首次启动需要通过 ISO 引导来进入安装模式。</li>
-<li><code>--boot hd</code> ： 设置启动优先级。先尝试从硬盘 (hd) 启动，如果硬盘没系统（如首次启动），则从 光盘 (cdrom) 启动。</li>
-</ul>
-<p>执行 VM 安装命令后，你的终端会变为 VM 的输出界面。你会看到 Talos 启动并显示以下信息：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Starting install...</span><br><span class="line">Allocating &#x27;talos-control-plane-01.qcow2&#x27;                                                                                                            | 3.1 MB  00:00:00 ... </span><br><span class="line">Creating domain...                                                                                                                                   |    0 B  00:00:00     </span><br><span class="line">Running text console command: virsh --connect qemu:///system console talos-control-plane-01</span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>到这一步说明虚拟机已经成功创建并运行了。由于你看到了 <code>Escape character is ^] (Ctrl + ])</code> 且屏幕停止滚动，这意味着你已经成功进入了虚拟机的串口终端 (Serial Console)。</p>
-<p>Talos 启动非常快，大约 10-20 秒。如果 1 分钟后还没输出，说明内核可能还在尝试初始化硬件。</p>
-<p>如果你想回到宿主机命令行，执行后续的 <code>talosctl</code> 命令，你需要先 <code>Ctrl + ]</code> (先按住 Ctrl 不放，再按右中括号)退出虚拟机的串口终端。</p>
-<p>如果 VM 安装异常，可以查询 <code>libvirtd</code> 服务日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">journalctl -u libvirtd -n 50 --no-pager</span></span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Starting Virtualization daemon...</span><br><span class="line">May 07 15:13:11 vp-jmpsvr systemd[1]: Started Virtualization daemon.</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: started, version 2.90 cachesize 150</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: compile time options: IPv6 GNU-getopt DBus no-UBus i18n IDN2 DHCP DHCPv6 no-Lua TFTP conntrack ipset no-nftset auth cryptohash DNSSEC loop-detect inotify dumpfile</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, IP range 192.168.122.2 -- 192.168.122.254, lease time 1h</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: DHCP, sockets bound exclusively to interface virbr0</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: reading /etc/resolv.conf</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 8.8.8.8#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: using nameserver 114.114.114.114#53</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /etc/hosts - 3 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq[417014]: read /var/lib/libvirt/dnsmasq/default.addnhosts - 0 names</span><br><span class="line">May 07 15:13:12 vp-jmpsvr dnsmasq-dhcp[417014]: read /var/lib/libvirt/dnsmasq/default.hostsfile</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: libvirt version: 8.0.0, package: 1ubuntu7.16 (Hector Cao &lt;hector.cao@canonical.com&gt; Wed, 04 Feb 2026 11:49:12 +0100)</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: hostname: vp-jmpsvr</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: Unable to read from monitor: Connection reset by peer</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: qemu unexpectedly closed the monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line">May 07 17:20:03 vp-jmpsvr libvirtd[416897]: internal error: process exited while connecting to monitor: 2026-05-07T09:20:03.828580Z qemu-system-x86_64: -append only allowed with -kernel option</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="virsh-命令行工具"><a href="#virsh-命令行工具" class="headerlink" title="virsh 命令行工具"></a>virsh 命令行工具</h1><h2 id="虚拟机管理命令"><a href="#虚拟机管理命令" class="headerlink" title="虚拟机管理命令"></a>虚拟机管理命令</h2><h3 id="列出所有虚拟机"><a href="#列出所有虚拟机" class="headerlink" title="列出所有虚拟机"></a>列出所有虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh list --all</span></span><br><span class="line"> Id   Name                     State</span><br><span class="line">----------------------------------------</span><br><span class="line"> 1    talos-control-plane-01   running</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="查看虚拟机分配的-IP-地址"><a href="#查看虚拟机分配的-IP-地址" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>
-
-<h3 id="彻底删除虚拟机"><a href="#彻底删除虚拟机" class="headerlink" title="彻底删除虚拟机"></a>彻底删除虚拟机</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh destroy talos-control-plane-01</span><br><span class="line">virsh undefine talos-control-plane-01</span><br></pre></td></tr></table></figure>
-
-<h3 id="连接虚拟机串口终端"><a href="#连接虚拟机串口终端" class="headerlink" title="连接虚拟机串口终端"></a>连接虚拟机串口终端</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh console 1</span></span><br><span class="line">Connected to domain &#x27;talos-control-plane-01&#x27;</span><br><span class="line">Escape character is ^] (Ctrl + ])</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="Network-管理"><a href="#Network-管理" class="headerlink" title="Network 管理"></a>Network 管理</h2><h3 id="查看所有网络"><a href="#查看所有网络" class="headerlink" title="查看所有网络"></a>查看所有网络</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">virsh net-list</span></span><br><span class="line"> Name      State    Autostart   Persistent</span><br><span class="line">--------------------------------------------</span><br><span class="line"> default   active   yes         yes</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="查看虚拟机分配的-IP-地址-1"><a href="#查看虚拟机分配的-IP-地址-1" class="headerlink" title="查看虚拟机分配的 IP 地址"></a>查看虚拟机分配的 IP 地址</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">virsh net-dhcp-leases default</span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>iptables 服务使用说明</title>
-    <url>/202210241051/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>iptables 的底层实现是 <code>netfilter</code>，<code>netfilter</code> 的架构是在整个网络流程(TCP&#x2F;IP 协议栈)的若干位置放置一些钩子，并在每个钩子上挂载一些处理函数进行处理。</p>
-<p>IP 层的 5 个钩子点的位置，对应就是 <code>iptables</code> 的 5 条内置链，分别是</p>
-<ul>
-<li><code>PREROUTING</code></li>
-<li><code>FORWARD</code></li>
-<li><code>INPUT</code></li>
-<li><code>OUTPUT</code></li>
-<li><code>POSTROUTING</code></li>
-</ul>
-<p><img src="https://i.0920811.xyz/img_133.png"><br>当网卡收到一个网络报文送达协议栈时，最先经过的 <code>netfilter</code> 钩子是 <code>PREROUTING</code>，此处常见的钩子函数是 <code>目的地址转换 (DNAT)</code>。无论 <code>PREROUTING</code> 是否存在钩子处理网络数据包，下一步内核都会通过 <strong>查询本地路由表</strong> 决定这个数据包的流向</p>
-<ul>
-<li>如果是发送给本地进程，则进入 <code>INPUT</code> 链传给本地进程</li>
-<li>如果是发送给其他机器（或者其他 <code>network namespace</code>），则经过 <code>netfilter</code> 的 <code>FORWARD</code> 钩子传送出去，相当于将本地机器当作路由器</li>
-</ul>
-<p>所有马上要发送到网络协议栈之外的数据包，都会经过 <code>POSTROUTING</code> 钩子，这里常见的处理函数是 <code>源地址转换(SNAT)</code> 或者 <code>源地址伪装(Masquerade, 简称 Masq)</code></p>
-<p>除了 5 条内置的链，<code>iptables</code> 还有 5 张表，这 5 张表主要是用来给 <code>iptables</code> 中的规则（rule）分类，系统中所有的 <code>iptables</code> 规则都被划分到不同的表集合中。5 张表分别为</p>
-<ul>
-<li><code>raw</code> - <code>iptables</code> 是有状态的，即 <code>iptables</code> 对数据包有连接追踪 (<code>connection trackong</code>) 机制，而 <code>raw</code> 可以用来去除这种追踪机制</li>
-<li><code>mangle</code> - 用于修改数据包的 IP 头信息</li>
-<li><code>nat</code> - 用于修改数据包的源或者目的地址</li>
-<li><code>filter</code> - 用于控制到达某条链上面的数据包是继续放行、直接丢弃(<code>drop</code>)、或拒绝(<code>reject</code>)</li>
-<li><code>security</code> - 用于在数据包上面应用 SELinux</li>
-</ul>
-<p>表是有优先级的，5 张表的优先级从高到低是: <code>raw</code>、<code>mangle</code>、<code>nat</code>、<code>filter</code>、<code>security</code>，<code>iptables</code> 不支持自定义表。不是每个链上都能挂表，<code>iptables</code> 表与链的对应关系如下图</p>
-<table>
-<thead>
-<tr>
-<th>-</th>
-<th>PREROUTING</th>
-<th>FORWARD</th>
-<th>INPUT</th>
-<th>OUTPUT</th>
-<th>POSTROUTING</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>raw</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>mangle</code></td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (SNAT)</code></td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-<td>Y</td>
-</tr>
-<tr>
-<td><code>nat (DNAT)</code></td>
-<td>Y</td>
-<td>N</td>
-<td>N</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>filter</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-<tr>
-<td><code>security</code></td>
-<td>N</td>
-<td>Y</td>
-<td>Y</td>
-<td>Y</td>
-<td>N</td>
-</tr>
-</tbody></table>
-<p><code>iptables</code> 表和链的工作流程图如下</p>
-<p><img src="https://i.0920811.xyz/img_134.png"></p>
-<h1 id="iptables-命令"><a href="#iptables-命令" class="headerlink" title="iptables 命令"></a>iptables 命令</h1><p>常用选项说明</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-F ,--flush</code></td>
-<td>清除所有规则，默认规则除外</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-P ,--policy</code></td>
-<td>设置默认规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t ,--table</code></td>
-<td>指定要操作的表，默认为 <code>filter</code> 表</td>
-<td><code>iptables -t nat -P INPUT ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--list ,-L [chain [rulenum]]</code></td>
-<td>列出（指定的链或所有链）的规则</td>
-<td><code>iptables -t nat -L -v -n --line-numbers</code></td>
-</tr>
-<tr>
-<td><code>--verbose	,-v</code></td>
-<td>verbose mode</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--numeric	,-n</code></td>
-<td>不解析协议和端口号，以数字的形式显示</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--line-numbers</code></td>
-<td>显示规则的行号，可以根据行号对具体的规则进行操作</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--jump	,-j</code></td>
-<td>匹配的规则的处理 target</td>
-<td><code>iptables -A INPUT  -j LOG</code></td>
-</tr>
-<tr>
-<td><code>--append  ,-A chain</code></td>
-<td>像指定的链中追加规则</td>
-<td><code>-A INPUT -i lo -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--insert  ,-I chain [rulenum]</code></td>
-<td>向指定的链中指定的位置插入规则</td>
-<td><code>iptables -I INPUT 10 -p tcp --dport 80 -j ACCEPT</code></td>
-</tr>
-<tr>
-<td><code>--delete  ,-D chain rulenum</code></td>
-<td>删除指定链中的指定位置的规则</td>
-<td><code>iptables -D INPUT 10 </code></td>
-</tr>
-<tr>
-<td><code>--replace ,-R chain rulenum</code></td>
-<td>更新指定链中的指定位置的规则</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-S, --list-rules [chain]</code></td>
-<td>按照类似 <code>iptables-save</code> 的输出打印规则</td>
-<td></td>
-</tr>
-</tbody></table>
-<span id="more"></span>
-<h2 id="删除指定规则"><a href="#删除指定规则" class="headerlink" title="删除指定规则"></a>删除指定规则</h2><p>查看规则及行号</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-number</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       90  6516 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0            state NEW tcp multiport dports 10050,10051</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>删除指定行号的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -D INPUT 7</span><br></pre></td></tr></table></figure>
-
-<h2 id="记录-iptables-日志"><a href="#记录-iptables-日志" class="headerlink" title="记录 iptables 日志"></a>记录 iptables 日志</h2><p>可以通过以下 2 种方式之一查看 iptables 记录的日志</p>
-<h3 id="rsyslog-服务记录日志"><a href="#rsyslog-服务记录日志" class="headerlink" title="rsyslog 服务记录日志"></a>rsyslog 服务记录日志</h3><ul>
-<li><p>使用 <code>rsyslog</code> 服务记录日志</p>
-<p>在 <code>rsyslog.conf</code> 中添加配置 <code>kern.*     /var/log/iptables.log</code></p>
-<p>重启 <code>rsyslog</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart rsyslog.service</span><br></pre></td></tr></table></figure></li>
-<li><p><code>journalctl -k</code> 命令查看</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">journalctl -f -k | grep iptables </span><br></pre></td></tr></table></figure></li>
-</ul>
-<h3 id="配置-iptables-记录日志"><a href="#配置-iptables-记录日志" class="headerlink" title="配置 iptables 记录日志"></a>配置 iptables 记录日志</h3><p>iptables 配置日志选项：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">记录所有通过防火墙的日志，之后可以在 /var/log/messages 中查看日志</span></span><br><span class="line">iptables -A INPUT  -j LOG --log-prefix &quot;iptables&quot;</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">只记录特定日志的方法</span></span><br><span class="line">iptables -A INPUT -s 192.168.10.0/24 -p tcp -j LOG --log-prefix &quot;iptables icmp warn&quot;</span><br></pre></td></tr></table></figure>
-<p>iptables 中日志相关的选项：</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>--log-prefix</code></td>
-<td>记录的日志的内容前缀</td>
-<td><code>-A INPUT  -j LOG --log-prefix &quot;iptables&quot;</code></td>
-</tr>
-<tr>
-<td><code>--log-level</code></td>
-<td>日志级别<br/>由高到低 <code>emerg</code>、<code>alert</code>、<code>crit</code>、<code>error</code>、<code>warning</code>、<code>notice</code>、<code>info</code>、<code>debug</code></td>
-<td><code>-A INPUT -s 192.168.10.0/24 -j LOG --log-level 4</code></td>
-</tr>
-</tbody></table>
-<p>使用 LOG 动作，可以将符合条件的报文的相关信息记录到日志中，但当前报文具体是被“接受”，还是被“拒绝”，都由后面的规则控制，换句话说，LOG 动作只负责记录匹配到的报文的相关信息，不负责对报文的其他处理，如果想要对报文进行进一步的处理，可以在之后设置具体规则，进行进一步的处理。</p>
-<h2 id="端口转发"><a href="#端口转发" class="headerlink" title="端口转发"></a>端口转发</h2><p>以下示例实现，将目标端口为 80 的流量转发到目标端口 8080</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -s 192.168.10.0/24 -p tcp --dport 80 -i eth0 -j REDIRECT --to-port 8080</span><br></pre></td></tr></table></figure>
-
-<h2 id="NAT"><a href="#NAT" class="headerlink" title="NAT"></a>NAT</h2><h3 id="DNAT"><a href="#DNAT" class="headerlink" title="DNAT"></a>DNAT</h3><p>DNAT 根据指定条件修改数据包的目标 ip 地址和目标端口，DNAT 的原理和端口转发的原理差不多，区别是端口转发不修改 ip 地址。需要注意的是，当转发的 ip 地址不是本机时，需要确保启用 <code>ip froward</code> 功能(<code>echo 1 &gt; /proc/sys/net/ipv4/ip_forward</code>)，即把 Linux 当做交换机使用</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A PREROUTING -d 192.168.10.10 -p tcp --dport 80 -j DNAT --to-destination 192.168.10.20:8080</span><br></pre></td></tr></table></figure>
-
-<h3 id="SNAT-和-Maskuerade"><a href="#SNAT-和-Maskuerade" class="headerlink" title="SNAT 和 Maskuerade"></a>SNAT 和 Maskuerade</h3><p>Maskuerade 本质上是 SNAT 的一种。SNAT 根据指定的条件修改数据包的源 IP 地址，SNAT 策略只能发生在 nat 表的 POSTROUTING 链</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.10 -j SNAT --to-source 192.168.10.20</span><br></pre></td></tr></table></figure>
-
-<p>Maskuerade 是一种特殊的 SNAT，数据包从那个网卡发出，就使用该网卡的 IP 做 SNAT，具体使用哪个 IP 由内核决定</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -A POSTROUTING -s 192.168.10.0/24 -j MASQUERADE</span><br></pre></td></tr></table></figure>
-
-<h2 id="iptables-配合-ipset-实现批量-IP-控制"><a href="#iptables-配合-ipset-实现批量-IP-控制" class="headerlink" title="iptables 配合 ipset 实现批量 IP 控制"></a>iptables 配合 ipset 实现批量 IP 控制</h2><p><code>ipset</code> 是 Linux 内核中的一个工具，根据创建 ipset 时指定的类型，它可以存储多个 IP 地址、IP 网络（network）、TCP&#x2F;UDP 端口、MAC 地址等，并且支持动态更新其中的内容。<strong>比如配合 <code>iptables</code> 使用时，可以将多个目标 IP 地址或者网络存储于其中并可以动态更新 <code>iptables</code> 规则（更新 <code>ipset</code> 后无需重启 <code>iptables</code> 即可生效）</strong></p>
-<ol>
-<li><p>创建 <code>ipset</code> 并指定 <code>ipset</code> 类型为 <code>hash:ip</code>，更多支持的类型可以通过 <code>ipset -h</code> 查看</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-<li><p>添加目标 IP 到 <code>ipset</code>，可以多次添加</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>在 <code>iptables</code> 中使用 <code>ipset</code></p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ipset 作为源 IP 允许访问</span></span><br><span class="line">iptables -A INPUT -m set --match-set allowed_ips src -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">源 IP 不在 ipset 中则不允许访问</span></span><br><span class="line">iptables -A INPUT -m set ! --match-set allowed_ips src -j DROP</span><br></pre></td></tr></table></figure>
-</li>
-<li><p><strong>默认情况下，<code>ipset</code> 属于临时配置，没有持久化，系统重启后内容会丢失</strong>。要配置 <code>ipset</code> 持久化，可以参考以下步骤</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保存 ipset 配置</span></span><br><span class="line">ipset save &gt; /etc/ipset.conf</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">恢复 ipset 配置</span></span><br><span class="line">ipset restore &lt; /etc/ipset.conf</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="docker-compose-场景下使用-iptables-进行白名单限制"><a href="#docker-compose-场景下使用-iptables-进行白名单限制" class="headerlink" title="docker compose 场景下使用 iptables 进行白名单限制"></a>docker compose 场景下使用 iptables 进行白名单限制</h2><p>假设有以下 <code>docker-compose.yml</code> 文件</p>
-<figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line">version: &quot;3&quot;</span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  nextcloud_aio_mastercontainer:</span><br><span class="line">    image: nextcloud/all-in-one:latest</span><br><span class="line">    container_name: nextcloud-aio-mastercontainer</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;8000:80&quot;</span><br><span class="line">      - &quot;8080:8080&quot;</span><br><span class="line">      - &quot;8443:8443&quot;</span><br><span class="line">    volumes:</span><br><span class="line">      - aio_mastercontainer:/mnt/docker-aio-config</span><br><span class="line">      - /var/run/docker.sock:/var/run/docker.sock:ro</span><br><span class="line"></span><br><span class="line">volumes:</span><br><span class="line">  aio_mastercontainer:</span><br><span class="line">    driver: local</span><br><span class="line">    driver_opts:</span><br><span class="line">      type: none</span><br><span class="line">      o: bind</span><br><span class="line">      device: ./data/</span><br></pre></td></tr></table></figure>
-
-<p>在 <code>docker compose up</code> 正常启动后， Docker 会根据 <code>docker-compose.yml</code> 中的定义配置 <code>iptables</code> 防火墙规则，以下为上面 <code>docker-compose.yml</code> 定义的数据端口在 <code>iptables</code> 规则中的数据流向分析</p>
-<ol>
-<li>数据报文首先经过 <code>iptables</code> 的 <code>PREROUTING</code> 链，在 <code>PREROUTING</code> 链中会进行 <code>DNAT</code>，位于 <code>nat</code> 表中，查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -t nat -L -v -n</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 4376 packets, 255K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">80051 4690K DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 3891 packets, 233K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 12629 packets, 1082K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 12637 packets, 1083K bytes)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    3   200 MASQUERADE  all  --  *      !br-43e659324492  172.21.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8443</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:8080</span><br><span class="line">    0     0 MASQUERADE  tcp  --  *      *       172.21.0.2           172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line"> pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">    0     0 RETURN     all  --  br-43e659324492 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</span><br><span class="line">    3   128 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8080 to:172.21.0.2:8080</span><br><span class="line">    2   100 DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8000 to:172.21.0.2:80</span><br></pre></td></tr></table></figure>
-<blockquote>
-<ol>
-<li><code>DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</code> : 所有的报文会被跳转到 <code>DOCKER</code> 链进行处理</li>
-<li><code>DNAT       tcp  --  !br-43e659324492 *       0.0.0.0/0            0.0.0.0/0            tcp dpt:8443 to:172.21.0.2:8443</code> : 只要不是从 <code>br-43e659324492</code> 网卡（本示例中的 <code>docker-compose.yml</code> 使用的网络）进入的数据包，不论目标网卡&#x2F;源 IP&#x2F;目标 IP 为何，只有其目标端口为 <code>8443</code>，则对其进行 DNAT，将其目标 IP 和端口修改为 <code>172.21.0.2:8443</code>（本示例中的容器）。其他 2 条 DNAT 同理。</li>
-</ol>
-</blockquote>
-</li>
-<li><em><strong>在 <code>iptables</code> 的 <code>PREROUTING</code> 链处理完成后，数据流入 <code>iptables</code> 的 <code>FORWARD</code> 链</strong></em>。规则定义位于 <code>filter</code> 表中。查看其具体规则 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">iptables -L -v -n --line-numbers</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     605K  585M ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0       </span><br><span class="line">...    </span><br><span class="line">9      461 33197 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">10     178  4984 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">11   10055  481K REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2      259  186K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      128  179K ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        8   356 DOCKER     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5      123  7065 ACCEPT     all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  br-43e659324492 br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7        0     0 ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">8        0     0 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">9        0     0 ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">10       0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">11       0     0 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 42129 packets, 7533K bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8443</span><br><span class="line">2        3   128 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:8080</span><br><span class="line">3        2   100 ACCEPT     tcp  --  !br-43e659324492 br-43e659324492  0.0.0.0/0            172.21.0.2           tcp dpt:80</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      123  7065 DOCKER-ISOLATION-STAGE-2  all  --  br-43e659324492 !br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3      123  7065 RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      259  186K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
-<blockquote>
-<ol>
-<li>数据流进入 <code>iptables</code> 的 <code>FORWARD</code> 链。</li>
-<li><code>DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 首先会被全部跳转到 <code>DOCKER-USER</code> 链进行处理。</li>
-<li><code>RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</code> : 默认情况下，<code>DOCKER-USER</code> 链未作任何处理，数据流跳转回 <code>FORWARD</code> 链中的原位置，继续进入下一个链 <code>DOCKER-ISOLATION-STAGE-1</code></li>
-<li><code>ACCEPT     all  --  *      br-43e659324492  0.0.0.0/0            0.0.0.0/0</code> : 数据流到了此处，表示目标网络为本示例中的容器的网络，对数据全部放行接收。数据进入容器。</li>
-</ol>
-</blockquote>
-</li>
-</ol>
-<p>根据以上对数据流向的分析，如果要对进入容器的数据进行源 IP 限制，建议将其放置在 <code>DOCKER-USER</code> 链中。具体实现参考如下：</p>
-<ol>
-<li><p>配置 <code>ipset</code>，用于对多个源 IP 设置白名单</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ipset create allowed_ips hash:ip</span><br><span class="line"></span><br><span class="line">ipset add allowed_ips 2.9.1.171</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>配置 <code>iptables</code>，如果源 IP 不在白名单中，则禁止访问特定的端口</p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">iptables -t filter -I DOCKER-USER 1 -m set ! --match-set allowed_ips src -m multiport -p tcp --dports 8000,8080,8443 -j DROP -m comment --comment &quot;for Nextcloud&quot;</span><br></pre></td></tr></table></figure></li>
-</ol>
-<h2 id="docker-场景下的自定义-iptables-规则的持久化问题"><a href="#docker-场景下的自定义-iptables-规则的持久化问题" class="headerlink" title="docker 场景下的自定义 iptables 规则的持久化问题"></a>docker 场景下的自定义 iptables 规则的持久化问题</h2><p>在使用 Docker 或者 Docker Compose 部署应用的场景下，假如需要在 Docker 的基础上对 <code>iptables</code> 防火墙做自定义配置，如示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，此种情况下，要对自定义的防火墙规则做 <strong>持久化</strong> （ <strong><code>iptables</code> 或者 <code>docker</code> 重启后规则自动加载</strong>），可以参考以下几种方法：</p>
-<ol>
-<li><p>将配置写入 <code>iptables</code> 默认配置文件，<code>iptables</code> 重启后自动加载自定义规则，针对 示例 <a href="#docker-compose-%E5%9C%BA%E6%99%AF%E4%B8%8B%E4%BD%BF%E7%94%A8-iptables-%E8%BF%9B%E8%A1%8C%E7%99%BD%E5%90%8D%E5%8D%95%E9%99%90%E5%88%B6">docker compose 场景下使用 iptables 进行白名单限制</a>，可以在 <code>iptables</code> 配置中写入配置</p>
-  <figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT ACCEPT [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [0:0]</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 提前定义链 &#x27;DOCKER-USER&#x27;，否则加载配置会报错： iptables-restore: line 24 failed</span></span></span><br><span class="line">:DOCKER-USER - [0:0]</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -j ACCEPT</span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">... 其他规则</span></span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 添加 Docker 自定义规则</span></span></span><br><span class="line">-A DOCKER-USER -m set ! --match-set allowed_ips src -m multiport  -p tcp --dports 3000,8080  -j REJECT</span><br><span class="line"></span><br><span class="line">COMMIT</span><br></pre></td></tr></table></figure></li>
-<li><p>以 Docker Compose 场景为例。可以创建一个容器，专门用来运行配置 <code>iptables</code> 命令。</p>
-<ol>
-<li><p>创建一个自定义 <code>iptables</code> 容器，此容器主要执行修改 <code>iptables</code> 自定义规则</p>
- <figure class="highlight shell"><figcaption><span>Dockerfile</span></figcaption><table><tr><td class="code"><pre><span class="line">FROM alpine:latest</span><br><span class="line">RUN apk --no-cache add iptables</span><br><span class="line">COPY setup-iptables.sh /usr/local/bin/</span><br><span class="line">RUN chmod +x /usr/local/bin/setup-iptables.sh</span><br><span class="line">ENTRYPOINT [&quot;setup-iptables.sh&quot;]</span><br></pre></td></tr></table></figure></li>
-<li><p>编写 <code>setup-iptables.sh</code> 脚本:</p>
- <figure class="highlight shell"><figcaption><span>setup-iptables.sh</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line">iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>配置 <code>docker-compose.yml</code>，在 <code>docker-compose.yml</code> 中添加上面配置的容器</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  iptables:</span><br><span class="line">    build: .</span><br><span class="line">    network_mode: &quot;host&quot;</span><br><span class="line">    restart: &quot;no&quot;</span><br><span class="line">    deploy:</span><br><span class="line">      restart_policy:</span><br><span class="line">        condition: none</span><br><span class="line">  your_service:</span><br><span class="line">    image: your_image</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    # Other configuration options for your service</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p> <strong>当运行 <code>docker-compose up</code> 时，<code>iptables</code> 服务(容器)会启动并执行 <code>setup-iptables.sh</code> 脚本，将自定义规则添加到 <code>DOCKER-USER</code> 链中。</strong></p>
-<blockquote>
-<p>根据实际需求谨慎编写 <code>setup-iptables.sh</code> 脚本内容，防止 <code>iptables</code> 规则混乱</p>
-</blockquote>
-</li>
-</ol>
-</li>
-<li><p>要在 Docker Compose 中自定义防火墙规则，可以使用 Docker Compose 的 <code>post-up</code> 脚本功能。</p>
-<ol>
-<li><p>创建 <code>docker-compose.yml</code> 文件</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建 <code>docker-compose.override.yml</code> 文件</p>
- <figure class="highlight shell"><figcaption><span>docker-compose.override.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    entrypoint: [&quot;sh&quot;, &quot;-c&quot;, &quot;iptables -A DOCKER-USER -m set ! --match-set allowed_ips src -p tcp --dport 3000 -j REJECT &amp;&amp; exec myservice&quot;]</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>启动 Docker Compose。  这样， 每次启动服务时，都会在 <code>DOCKER-USER</code> 链中添加指定的防火墙规则。确保 <code>myservice</code> 的入口点脚本正确无误，以防止启动失败。</p>
-<blockquote>
-<p><code>docker-compose up</code> 会时同时加载 <code>docker-compose.yml</code> 和 <code>docker-compose.override.yml</code>。</p>
-<p>Docker Compose 会将 <code>docker-compose.override.yml</code> 中的配置与 <code>docker-compose.yml</code> 中的配置合并。<strong>覆盖相同配置项，新增不同配置项</strong>。</p>
-</blockquote>
-</li>
-</ol>
-<p> 以上 2 个 <code>compose</code> 配置文件也可以合并成一个 <code>docker-compose.yml</code>：<br> <figure class="highlight shell"><figcaption><span>docker-compose.yml</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line">services:</span><br><span class="line">  myservice:</span><br><span class="line">    image: myimage</span><br><span class="line">    ports:</span><br><span class="line">      - &quot;3000:3000&quot;</span><br><span class="line">    networks:</span><br><span class="line">      - mynetwork</span><br><span class="line">    entrypoint: /path/to/setup-firewall.sh myservice-command</span><br><span class="line"></span><br><span class="line">networks:</span><br><span class="line">  mynetwork:</span><br><span class="line">    driver: bridge</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></p>
-<blockquote>
-<p>这样，<strong>每次启动服务时，都会先执行防火墙规则，然后启动实际服务。</strong></p>
-</blockquote>
-</li>
-</ol>
-<h1 id="Ubuntu-22-04-安装-iptables"><a href="#Ubuntu-22-04-安装-iptables" class="headerlink" title="Ubuntu 22.04 安装 iptables"></a>Ubuntu 22.04 安装 iptables</h1><p>Ubuntu 22.04 (Jammy Jellyfish) 默认使用 <code>UFW (Uncomplicated Firewall)</code> 作为防火墙管理工具。UFW 是一个用户友好的前端工具，旨在简化 <code>iptables</code> 的配置。它默认是未激活的，但安装在系统中，用户可以根据需要启用和配置它。</p>
-<p>检查 UFW 状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">systemctl status ufw</span></span><br><span class="line">● ufw.service - Uncomplicated firewall</span><br><span class="line">     Loaded: loaded (/lib/systemd/system/ufw.service; enabled; vendor preset: enabled)</span><br><span class="line">     Active: active (exited) since Wed 2024-08-14 10:14:19 CST; 2 weeks 3 days ago</span><br><span class="line">       Docs: man:ufw(8)</span><br><span class="line">   Main PID: 389 (code=exited, status=0/SUCCESS)</span><br><span class="line">        CPU: 4ms</span><br><span class="line"></span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Starting Uncomplicated firewall...</span><br><span class="line">Aug 14 10:14:19 U-3TSDMAL9IVFAQ systemd[1]: Finished Uncomplicated firewall.</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>卸载 UFW 软件包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl stop ufw</span><br><span class="line"></span><br><span class="line">sudo apt purge ufw</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">清理未使用的依赖项</span></span><br><span class="line">sudo apt autoremove</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">安装 iptables</span></span><br><span class="line">sudo apt install iptables</span><br></pre></td></tr></table></figure>
-
-<p><strong>在 Ubuntu 22.04 (Jammy Jellyfish) 中，<code>iptables</code> 仍然是管理防火墙规则的重要工具，不过 Ubuntu 22.04 默认使用 <code>nftables</code> 作为防火墙框架，<code>iptables</code> 已经被 <code>nftables</code> 取代。在这种情况下，<code>iptables</code> 实际上是通过 <code>nftables</code> 的兼容层 (<code>iptables-nft</code>) 实现的</strong>。这意味着你在使用 <code>iptables</code> 命令时，实际上是在通过 <code>nftables</code> 管理规则。</p>
-<blockquote>
-<p><code>nftables</code> 防火墙框架的默认客户端工具是 <code>nft</code>.</p>
-</blockquote>
-<p>检查 <code>iptables</code> 可执行文件路径会发现 <code>iptables</code> 实际上是 <code>iptables-nft</code> 命令的软链接</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">which</span> iptables</span></span><br><span class="line">/usr/sbin/iptables</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /usr/sbin/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 26 Oct  4  2023 /usr/sbin/iptables -&gt; /etc/alternatives/iptables*</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /etc/alternatives/iptables</span></span><br><span class="line">lrwxrwxrwx 1 root root 22 Oct  4  2023 /etc/alternatives/iptables -&gt; /usr/sbin/iptables-nft*</span><br></pre></td></tr></table></figure>
-
-<p>安装 <code>iptables</code> 后可以使用 <code>iptables</code> 命令管理防火墙规则，但是没有 <code>iptables</code> 服务存在。为了方便 <code>iptables</code> 服务的管理，可以参考以下配置将  <code>iptables</code> 添加为系统服务</p>
-<figure class="highlight shell"><figcaption><span>/etc/systemd/system/iptables.service</span></figcaption><table><tr><td class="code"><pre><span class="line">[Unit]</span><br><span class="line">Description=IPv4 firewall with iptables</span><br><span class="line">Before=network-pre.target</span><br><span class="line">Wants=network-pre.target</span><br><span class="line">Before=ip6tables.service</span><br><span class="line">After=syslog.target</span><br><span class="line">AssertPathExists=/etc/sysconfig/iptables</span><br><span class="line"></span><br><span class="line">[Service]</span><br><span class="line">Type=oneshot</span><br><span class="line">RemainAfterExit=yes</span><br><span class="line">ExecStart=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecReload=/usr/sbin/iptables-restore /etc/sysconfig/iptables</span><br><span class="line">ExecStop=/usr/sbin/iptables -F</span><br><span class="line">Environment=BOOTUP=serial</span><br><span class="line">Environment=CONSOLETYPE=serial</span><br><span class="line"></span><br><span class="line">[Install]</span><br><span class="line">WantedBy=basic.target</span><br></pre></td></tr></table></figure>
-
-<p>防火墙规则配置文件 <code>/etc/sysconfig/iptables</code>(可以自定义路径)</p>
-<blockquote>
-<p><strong>使用以上方式的 <code>iptables</code> 服务，其本质上（底层框架）还是使用的 <code>nftables</code> 防火墙，此方式只是对还不熟悉 <code>nft</code> 而熟悉 <code>iptables</code> 的管理员提供了一种熟悉的管理防火墙（<code>nftables</code>）的方式(通过 <code>iptables-nft</code> 实现)</strong></p>
-</blockquote>
-<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="ssh-无法连接"><a href="#ssh-无法连接" class="headerlink" title="ssh 无法连接"></a>ssh 无法连接</h2><p>iptables 配置文件内容如下，关闭防火墙后，ssh 可以从客户端 <code>192.168.1.2</code> 进行连接。重启防火墙后，则无法连接。说明问题是因为防火墙导致。</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>针对 sshd 的防火墙规则添加日志，配置文件修改如下 </p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">*filter</span><br><span class="line">:INPUT DROP [0:0]</span><br><span class="line">:FORWARD ACCEPT [0:0]</span><br><span class="line">:OUTPUT ACCEPT [4:368]</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">允许本机访问外网</span></span><br><span class="line">-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">回环网卡配置</span></span><br><span class="line">-A INPUT -i lo -j ACCEPT</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sshd</span></span><br><span class="line">-A INPUT -p tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix  &#x27;iptables-sshd&#x27;</span><br><span class="line">-A INPUT -m comment --comment &quot;ssh&quot; -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j ACCEPT</span><br><span class="line"></span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT</span><br><span class="line">-A INPUT -p icmp -m icmp --icmp-type 0 -j ACCEPT</span><br><span class="line">-A INPUT -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">-A FORWARD -j REJECT --reject-with icmp-host-prohibited</span><br><span class="line">COMMIT</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>主要添加日志规则： <code>-A INPUT -p tcp -m state --state NEW -m tcp -s 192.168.1.2 --dport 22 -j LOG --log-prefix &#39;iptables-sshd&#39;</code> <a href="#%E8%AE%B0%E5%BD%95-iptables-%E6%97%A5%E5%BF%97">日志规则配置参考</a></p>
-<p>ssh 连接失败后查看日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Feb 17 13:32:02 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61621 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:32:04 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=61622 DF PROTO=TCP SPT=53576 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br><span class="line">Feb 17 13:34:13 ip-172-31-2-4 kernel: iptables-sshdIN=eth0 OUT= MAC=02:d4:c1:a7:73:bb:02:69:00:94:63:ed:08:00 SRC=192.168.1.2 DST=172.31.2.4 LEN=60 TOS=0x00 PREC=0x00 TTL=42 ID=56660 DF PROTO=TCP SPT=53746 DPT=22 WINDOW=26883 RES=0x00 SYN URGP=0</span><br></pre></td></tr></table></figure>
-<p>根据日志可知，规则 <code>INPUT -p tcp -s 192.168.1.2 --dport 22</code> 可以匹配到 ssh 的流量，说明 <code>filter</code> 表的 <code>INPUT</code> 链配置无误，根据 <code>-j ACCEPT</code>，<code>filter</code> 表的 <code>INPUT</code> 链会 ACCEPT 此连接请求。连接无法建立，应该是因为其他防火墙规则导致。</p>
-<p>检查 <code>filter</code> 表之外的其他表的 <code>INPUT</code> 链，看是否存在拒绝的规则，发现 <code>NAT</code> 表中，<code>INPUT</code> 链的规则默认为 <code>DROP</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 31 packets, 1742 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain INPUT (policy DROP 6 packets, 360 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 5 packets, 367 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination  </span><br></pre></td></tr></table></figure>
-<p>将其默认规则改为 <code>ACCEPT</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">iptables -t nat -P INPUT ACCEPT</span><br></pre></td></tr></table></figure>
-<p>重新使用 ssh 登陆，连接正常。</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>iptables</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux logrotate 服务</title>
-    <url>/202208191317/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<p><code>logrotate</code> 程序是一个日志文件管理工具。用于分割日志文件，压缩转存、删除旧的日志文件，并创建新的日志文件  </p>
-<p><code>logrotate</code> 是基于 <code>crond</code> 来运行的，其脚本是 <code>/etc/cron.daily/logrotate</code>，日志轮转是系统自动完成的。<br>实际运行时，<code>logrotate</code> 会调用配置文件 <code>/etc/logrotate.conf</code>。<br><code>/etc/cron.daily/logrotate</code> 文件内容如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/cron.daily/logrotate</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"></span><br><span class="line">/usr/sbin/logrotate -s /var/lib/logrotate/logrotate.status /etc/logrotate.conf</span><br><span class="line">EXITVALUE=$?</span><br><span class="line">if [ $EXITVALUE != 0 ]; then</span><br><span class="line">    /usr/bin/logger -t logrotate &quot;ALERT exited abnormally with [$EXITVALUE]&quot;</span><br><span class="line">fi</span><br><span class="line">exit 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p>可以执行以下命令手动执行日志切割：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -f /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
-<p>以下命令可以检测配置文件是否正确：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">logrotate -d /etc/logrotate.conf</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h1 id="配置说明"><a href="#配置说明" class="headerlink" title="配置说明"></a>配置说明</h1><p><code>logrotate</code> 的主配置文件默认为 <code>/etc/logrotate.conf</code>，默认配置如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">默认每一周执行一次 rotate 轮转工作</span></span><br><span class="line">weekly</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">保留多少个日志文件(轮转几次).默认保留四个.0 指没有备份</span></span><br><span class="line">rotate 4</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">自动创建新的日志文件，新的日志文件具有和原来的文件相同的权限；</span></span><br><span class="line">create</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">这个参数很重要！就是切割后的日志文件以当前日期为格式结尾，如xxx.log-20131216这样,</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果注释掉,切割出来是按数字递增,即 xxx.log-1这种格式</span></span><br><span class="line">dateext</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">包含 /etc/logrotate.d 下的其他配置文件 ，用于隔离出各个服务的配置</span></span><br><span class="line">include /etc/logrotate.d</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是否通过gzip压缩转储以后的日志文件，如xxx.log-20131216.gz ；如果不需要压缩，注释掉就行</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">compress</span> </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nocompress</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对指定的文件做轮转切割</span></span><br><span class="line">/var/log/wtmp &#123;</span><br><span class="line">    # 每月轮转一次，取代全局默认值</span><br><span class="line">    monthly</span><br><span class="line">    </span><br><span class="line">    # 创建新文件，并指定权限，用户和组</span><br><span class="line">    create 0664 root utmp</span><br><span class="line">    </span><br><span class="line">    # 文件大小超过 1m 后才进行切割，到了 1 个月，文件大小小于 1m，不会进行切割</span><br><span class="line">	minsize 1M</span><br><span class="line">	</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br><span class="line">/var/log/btmp &#123;</span><br><span class="line">    # 如果日志丢失，不报错继续滚动下一个日志</span><br><span class="line">    missingok</span><br><span class="line">    </span><br><span class="line">    monthly</span><br><span class="line">    create 0600 root utmp</span><br><span class="line">    rotate 1</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>其他常用选项说明如下：</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.conf</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">指定转储周期为每天</span></span><br><span class="line">daily </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">即使日志文件为空文件也做轮转，这个是 logrotate 的缺省选项。</span></span><br><span class="line">ifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件为空时，不进行轮转</span></span><br><span class="line">notifempty </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">当日志文件大于指定大小后就轮转，支持的单位： k，K，m，M</span></span><br><span class="line">size 5M</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">用于还在打开中的日志文件，把当前日志备份并截断；</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">是先拷贝再清空的方式，拷贝和清空之间有一个时间差，可能会丢失部分日志数据。</span></span><br><span class="line">copytruncate</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">运行 postrotate 脚本，作用是在所有日志都轮转后统一执行一次脚本。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果没有配置这个，那么每个日志轮转后都会执行一次脚本</span></span><br><span class="line">sharedscripts                      </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之后需要执行的指令，例如重新启动 (<span class="built_in">kill</span> -HUP) 某个服务！必须独立成行</span></span><br><span class="line">postrotate                         </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">在 logrotate 转储之前需要执行的指令，例如修改文件的属性等动作；必须独立成行</span></span><br><span class="line">prerotate      </span><br><span class="line">                    </span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">将轮转的日志保存到指定路径下，默认保存在日志文件同一目录下</span></span><br><span class="line">olddir /data/logs/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">如果产生日志的进程的运行用户不是 root,需要指定相关的用户和组，否则会报错：because parent directory has insecure permissions (It<span class="string">&#x27;s world writable or writable by group which is not &quot;root&quot;) Set &quot;su&quot; directive in config file to tell logrotate which user/group should be used for rotation. ，如果只配置了用户，未配置组，会报错：error: error switching euid to 1003 and egid to -1: Invalid argument</span></span></span><br><span class="line">su appuser appgroup</span><br></pre></td></tr></table></figure>
-
-<h2 id="配置示例"><a href="#配置示例" class="headerlink" title="配置示例"></a>配置示例</h2><p><code>nginx</code> 日志切割配置文件示例，创建 <code>/etc/logrotate.d/nginx</code>:</p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    sharedscripts</span><br><span class="line">    postrotate</span><br><span class="line">        if [ -f /run/nginx.pid ]; then</span><br><span class="line">                    kill -USR1 `cat /run/nginx.pid`</span><br><span class="line">        fi</span><br><span class="line">    endscript</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>copytruncate</code> 方式切割 <code>nginx</code> 日志，此种方式不需要重启 <code>nginx</code> 服务<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[logrotate 原理介绍和配置详解](https://wsgzao.github.io/post/logrotate/)
-">[1]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>/etc/logrotate.d/nginx</span></figcaption><table><tr><td class="code"><pre><span class="line">/logs/nginx/access/*.log</span><br><span class="line">/logs/bginx/error/*.log &#123;</span><br><span class="line">    copytruncate</span><br><span class="line">    daily</span><br><span class="line">    compress</span><br><span class="line">    rotate 7</span><br><span class="line">    missingok</span><br><span class="line">    notifempty</span><br><span class="line">    dateext</span><br><span class="line">    </span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://wsgzao.github.io/post/logrotate/">logrotate 原理介绍和配置详解</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>logrotate</tag>
       </tags>
   </entry>
   <entry>
