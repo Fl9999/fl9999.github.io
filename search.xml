@@ -5324,6 +5324,251 @@ width: 20%;
 <p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
 <ul>
 <li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
+<li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现“能出不能进”的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
+</ul>
+</blockquote>
+<ul>
+<li><strong>路由表（Route Tables）</strong> 分为主路由表和自定义路由表<ul>
+<li><strong>主路由表（Main route table）</strong> 随 VPC 自动生成，它控制未与任何其他路由表显式关联的所有子网的路由，也就是 VPC 中的默认路由。</li>
+<li><strong>自定义路由表</strong> 为新建的路由表。</li>
+<li>一个子网只能关联一个路由表，一个路由表可以关联多个子网</li>
+</ul>
+</li>
+</ul>
+<p><strong>流量如何进出</strong></p>
+<p>VPC 与外界互联网通信可以使用以下方式：</p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>作用</th>
+<th>流量方向</th>
+<th>用法说明｜</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Internet Gateway (IGW，互联网网关)</td>
+<td>允许 VPC 连接互联网。</td>
+<td>双向 (In&#x2F;Out)</td>
+<td>实例必须分配公网 IP 或弹性 IP (EIP)</td>
+</tr>
+<tr>
+<td>NAT Gateway (NAT 网关)</td>
+<td>允许私有实例上外网，但防止外部主动连接。</td>
+<td>单向 (Outbound only)</td>
+<td>仅需私有 IP</td>
+</tr>
+<tr>
+<td>VPC Peering （对等连接）</td>
+<td>连接两个不同的 VPC，使其像在一个网络内通信。</td>
+<td>跨 VPC</td>
+<td></td>
+</tr>
+<tr>
+<td>Transit Gateway</td>
+<td>充当“中央枢纽”，连接数千个 VPC 和本地网络。</td>
+<td>复杂网络拓扑</td>
+<td></td>
+</tr>
+<tr>
+<td>Virtual Private Gateway</td>
+<td>用于建立 VPN 连接。</td>
+<td>混合云</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="部署-NAT-Gateway-网关并关联子网"><a href="#部署-NAT-Gateway-网关并关联子网" class="headerlink" title="部署 NAT Gateway 网关并关联子网"></a>部署 NAT Gateway 网关并关联子网</h2><p>通过 NAT Gateway 可以实现子网中的实例的对外互联网出口 IP 都是 NAT Gateway 绑定的 EIP，子网中的实例对互联网不可见。NAT Gateway 典型使用场景：</p>
+<ul>
+<li>为了安全，生产环境通常将 <strong>EKS 工作节点、RDS 数据库</strong> 或 <strong>缓存服务器（Redis）</strong> 放在私有子网中，这些资源不需要（也不应该）被互联网直接访问。</li>
+<li>应用需要调用外部服务（如支付网关、银行接口或第三方 API）时，对方的防火墙通常需要你提供一个白名单 IP。由于 EKS 节点是动态变化的，IP 并不固定。</li>
+<li>减少受攻击面，防止外部扫描。</li>
+</ul>
+<p>以下为创建 NAT Gateway 并关联子网的相关步骤：</p>
+<figure class="highlight shell"><figcaption><span>正确的整体架构</span></figcaption><table><tr><td class="code"><pre><span class="line">VPC</span><br><span class="line">├── Public Subnet</span><br><span class="line">│   ├── NAT Gateway（有 EIP）</span><br><span class="line">│   └── Route Table (Public RT)</span><br><span class="line">│       └── 0.0.0.0/0 → Internet Gateway</span><br><span class="line">│</span><br><span class="line">└── Private Subnet</span><br><span class="line">    ├── EC2 / ECS / EKS Node</span><br><span class="line">    └── Route Table (Private RT)</span><br><span class="line">        └── 0.0.0.0/0 → NAT Gateway</span><br></pre></td></tr></table></figure>
+<p>关键点：</p>
+<ul>
+<li><strong>NAT Gateway 必须在公有子网</strong></li>
+<li><strong>私有子网的默认路由指向 NAT Gateway</strong></li>
+</ul>
+<ol>
+<li><p><strong>确认 Public Subnet 存在</strong></p>
+<p> VPC 默认的 Main Route Table 已经满足这个条件，其默认网关为 Internet Gateway<br> <img src="https://i.0920811.xyz/img_390.png"></p>
+</li>
+<li><p><strong>创建 NAT Gateway</strong></p>
+<p> 在 <strong>NAT gateways</strong> 标签页面中，点击 <strong>Create NAT gateway</strong> ， <strong>Connectivity type</strong> 选择 <strong>Public</strong> ， <strong>Elastic IP (EIP) association</strong> 选择 <strong>手动分配 EIP（Manual）</strong><br> <img src="https://i.0920811.xyz/img_391.png"><br> 创建完成后，状态应为 <strong>Available</strong> 。在路由表（Route Tables）中，这时会多一个路由表，其 <strong>Edge associations（边缘关联）</strong> 关联到了刚刚创建的 NAT Gateway<br> <img src="https://i.0920811.xyz/img_392.png"></p>
+</li>
+<li><p><strong>创建一个新的子网（私有、Private Subnet）</strong></p>
+<p> 在 <strong>VPC → Subnets → Create subnet</strong> 标签页面中创建新的子网， <strong>不要勾选 Auto-assign public IPv4</strong> ，如此处于此子网中的实例，不会为其分配公网地址<br> <img src="https://i.0920811.xyz/img_394.png"></p>
+</li>
+<li><p><strong>创建 Private Route Table</strong></p>
+<p> 在 <strong>VPC → Route tables → Create route table</strong> 标签页面中创建新的路由表，本示例名为 <code>private-rt</code></p>
+</li>
+<li><p><strong>配置路由规则</strong></p>
+<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Routes</strong> 中 <strong>编辑路由（Edit Routes）</strong> ，添加一条路由规则： </p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| Destination | Target          |</span><br><span class="line">| ----------- | --------------- |</span><br><span class="line">| 0.0.0.0/0   | NAT Gateway |</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p> <img src="https://i.0920811.xyz/img_395.png"></p>
+</li>
+<li><p><strong>关联 Private Subnet</strong></p>
+<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Subnet associations(子网关联)</strong> 中 <strong>Edit subnet associations（编辑子网关联）</strong> ，选择目标子网进行关联<br> <img src="https://i.0920811.xyz/img_396.png"></p>
+</li>
+<li><p><strong>最终的 VPC 整体路由可以在 VPC 的 Resource map 中进行检查</strong><br> <img src="https://i.0920811.xyz/img_397.png"></p>
+</li>
+</ol>
+<h1 id="EKS-中的授权机制"><a href="#EKS-中的授权机制" class="headerlink" title="EKS 中的授权机制"></a>EKS 中的授权机制</h1><p>Kubernetes 原生提供 <strong>RBAC（Role-Based Access Control）</strong> 来控制集群中的 <strong>用户和服务账户（ServiceAccount）</strong> 对资源的访问权限。</p>
+<table>
+<thead>
+<tr>
+<th>对象</th>
+<th>描述</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Role</strong></td>
+<td>命名空间级别（Namespace）权限，指定某个命名空间内允许的操作和资源类型。</td>
+</tr>
+<tr>
+<td><strong>ClusterRole</strong></td>
+<td>集群级别权限，可以跨命名空间使用。</td>
+</tr>
+<tr>
+<td><strong>RoleBinding</strong></td>
+<td>将 Role 绑定到一个用户或 ServiceAccount。</td>
+</tr>
+<tr>
+<td><strong>ClusterRoleBinding</strong></td>
+<td>将 ClusterRole 绑定到一个用户或 ServiceAccount。</td>
+</tr>
+</tbody></table>
+<p><strong>核心字段</strong></p>
+<ul>
+<li><p><code>apiGroups</code> ：资源所属 API 组，例如 <code>&quot;&quot;</code> 代表 <strong>core API</strong> 。</p>
+</li>
+<li><p><code>resources</code> ：允许访问的资源类型，如 pods、deployments。</p>
+</li>
+<li><p><code>verbs</code> ：允许的操作，如 <code>get, list, create, delete</code> 。</p>
+</li>
+</ul>
+<p>RBAC 示例：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">apiGroups:</span> [<span class="string">&quot;&quot;</span>]</span><br><span class="line">    <span class="attr">resources:</span> [<span class="string">&quot;pods&quot;</span>]</span><br><span class="line">    <span class="attr">verbs:</span> [<span class="string">&quot;get&quot;</span>, <span class="string">&quot;list&quot;</span>]</span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">RoleBinding</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">read-pods</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">subjects:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">kind:</span> <span class="string">ServiceAccount</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">my-serviceaccount</span></span><br><span class="line"><span class="attr">roleRef:</span></span><br><span class="line">  <span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">apiGroup:</span> <span class="string">rbac.authorization.k8s.io</span></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><p><strong>RBAC 控制的是 Kubernetes 资源访问权限</strong> 。</p>
+</li>
+<li><p><strong>RBAC 对象绑定的是 Kubernetes 用户或 ServiceAccount，而不是 AWS IAM 用户</strong> 。</p>
+</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>全称</th>
+<th>解决的问题</th>
+<th>作用范围</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>RBAC</strong></td>
+<td>Role-Based Access Control</td>
+<td>决定 “用户&#x2F;进程” 在 K8s 集群内能做什么（如：查看 Pod）</td>
+<td>K8s 集群内部</td>
+</tr>
+<tr>
+<td><strong>Role</strong></td>
+<td>Kubernetes Role</td>
+<td>RBAC 的一部分，定义一组具体的集群内操作权限</td>
+<td>命名空间 (Namespace)</td>
+</tr>
+<tr>
+<td><strong>IRSA</strong></td>
+<td>IAM Roles for Service Accounts</td>
+<td>决定 “Pod 里的应用” 对 AWS 外部资源（如 S3&#x2F;RDS）的访问权限</td>
+<td>AWS 云环境</td>
+</tr>
+</tbody></table>
+<p><strong>AWS IAM Role</strong> 是 AWS 层面的权限机制，用于授权 AWS 资源访问，例如 S3、DynamoDB、Secrets Manager 等。</p>
+<p>AWS IAM Role 的特点：</p>
+<ul>
+<li><p>可以被 IAM 用户、服务或 EC2&#x2F;EKS Pod 假设（Assume）。</p>
+</li>
+<li><p>权限通过 IAM Policy 定义。</p>
+</li>
+</ul>
+<p><strong>AWS IAM Role</strong> 在 EKS 中的应用:</p>
+<ul>
+<li><p>管理集群本身访问 AWS 资源，例如节点组（NodeGroup）访问 S3。</p>
+</li>
+<li><p>可以通过 IAM 用户&#x2F;Role 管理集群级别的操作权限，例如 <code>eks:DescribeCluster</code> 。</p>
+</li>
+</ul>
+<blockquote>
+<p>💡 核心点：IAM Role 本身无法直接控制 Kubernetes 资源，它管理的是 AWS 资源访问。</p>
+</blockquote>
+<p><strong>IRSA（IAM Roles for Service Accounts）</strong> 是 AWS EKS 引入的将 Kubernetes ServiceAccount 与 AWS IAM Role 绑定，实现 Pod 级别的 AWS 权限控制的机制。其大致原理如下：</p>
+<ul>
+<li><strong>EKS 集群开启 OIDC Provider</strong></li>
+<li><strong>创建 IAM Role 并信任该 OIDC Provider</strong></li>
+<li><strong>Role 上定义 IAM Policy（如访问 S3）</strong></li>
+<li><strong>Kubernetes ServiceAccount 指定注解 <code>eks.amazonaws.com/role-arn</code>。</strong></li>
+<li><strong>Pod 使用该 ServiceAccount 时自动获取 Role 权限</strong></li>
+</ul>
+<p><strong>实践建议：</strong></p>
+<ul>
+<li><p>不要在 Pod 内放 AWS AccessKey，使用 IRSA。</p>
+</li>
+<li><p>最小权限原则：</p>
+<ul>
+<li><p>RBAC：只给 Pod 或用户真正需要的 Kubernetes 权限。</p>
+</li>
+<li><p>IAM Role &#x2F; IRSA：只给访问 AWS 资源的最小权限。</p>
+</li>
+</ul>
+</li>
+<li><p>多集群管理：可以通过 ClusterRole + RoleBinding 管理跨命名空间权限。</p>
+</li>
+<li><p>审计：</p>
+<ul>
+<li><p>使用 CloudTrail 监控 IRSA 调用。</p>
+</li>
+<li><p>Kubernetes API Server 日志审计 RBAC 权限。</p>
+</li>
+</ul>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Aws</category>
+      </categories>
+      <tags>
+        <tag>Aws</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Amazon AWS 概念及相关操作步骤</title>
+    <url>/20260207135211/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="AWS-虚拟私有云-VPC"><a href="#AWS-虚拟私有云-VPC" class="headerlink" title="AWS 虚拟私有云 VPC"></a>AWS 虚拟私有云 VPC</h1><p>在进入具体的网络配置前，必须理解 AWS 的地理隔离：</p>
+<ul>
+<li><p><strong>区域 (Region)</strong> ：地理上的独立区域（如新加坡、弗吉尼亚）。区域之间完全隔离。</p>
+</li>
+<li><p><strong>可用区 (Availability Zone, AZ)</strong> ：一个区域内由多个物理机房组成。AZ 之间通过高速、低延迟光纤连接。高可用架构必须跨 AZ 部署。跨 AZ 之间的流量需要付费。</p>
+</li>
+</ul>
+<p>VPC 是你在 AWS 云中的逻辑隔离网络。你可以完全控制其 IP 地址范围、子网、路由表和网络网关。</p>
+<p>核心组件：</p>
+<ul>
+<li><p><strong>CIDR 范围</strong> ：你为 VPC 定义的私有 IP 地址块（如 <code>10.0.0.0/16</code> ）。</p>
+</li>
+<li><p><strong>子网 (Subnets)</strong> ：将 VPC 划分为更小的网段。子网必须位于特定的可用区内。</p>
+</li>
+<li><p><strong>公有子网 (Public Subnet)</strong> ：路由指向互联网网关 (IGW)，实例可以有公网 IP。</p>
+</li>
+<li><p><strong>私有子网 (Private Subnet)</strong> ：没有指向 IGW 的直接路由，通常通过 <strong>NAT 网关 访问外网</strong> 。</p>
+</li>
+</ul>
+<blockquote>
+<p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
+<ul>
+<li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
 <li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现 “能出不能进” 的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
 </ul>
 </blockquote>
@@ -10531,6 +10776,86 @@ width: 20%;
         <category>Django</category>
       </categories>
       <tags>
+        <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Django 模板语言</title>
+    <url>/202303241517/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11</li>
+<li>Django 4.1</li>
+</ul>
+<h1 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h1><p>在 Django 4.1 中，使用静态文件的方法与之前的版本相同。以下是使用静态文件的步骤：</p>
+<ol>
+<li><p>在 <code>settings.py</code> 中设置静态文件目录：</p>
+ <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">STATIC_URL = <span class="string">&#x27;/static/&#x27;</span></span><br><span class="line">STATICFILES_DIRS = [</span><br><span class="line">    BASE_DIR / <span class="string">&quot;static&quot;</span>,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>STATIC_URL</code> 是静态文件 URL 的前缀。</li>
+<li><code>STATICFILES_DIRS</code> 是一个列表，其中包含要在其中查找静态文件的目录。</li>
+</ul>
+</li>
+<li><p>在 HTML 文件中使用静态文件</p>
+ <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Static File Example<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> <span class="attr">type</span>=<span class="string">&quot;text/css&quot;</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;css/style.css&#x27; %&#125;&quot;</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">img</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;images/logo.png&#x27; %&#125;&quot;</span> <span class="attr">alt</span>=<span class="string">&quot;My logo&quot;</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;js/script.js&#x27; %&#125;&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<p> 在上面的示例中，我们使用了 Django 模板语言的 <code>&#123;% static %&#125;</code> 标记来引用静态文件。<code>&#123;% load static %&#125;</code> 指令必须在使用 <code>&#123;% static %&#125;</code> 标记之前加载，以确保 Django 能够正确解析它们。</p>
+</li>
+<li><p>运行 <code>collectstatic</code> 命令：<br>  当您准备部署您的 Django 应用程序时，您需要将静态文件收集到一个单独的目录中，以便可以轻松地在生产服务器上提供它们。您可以使用 Django 的 <code>collectstatic</code> 命令来完成此操作。在命令行中运行以下命令：</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py collectstatic</span><br></pre></td></tr></table></figure>
+
+<p> Django 将在 <code>STATIC_ROOT</code> 目录中创建一个新的静态文件目录，并将您的静态文件从 <code>STATICFILES_DIRS</code> 中指定的目录复制到该目录中。您可以在 <code>settings.py</code> 文件中设置 <code>STATIC_ROOT</code> 目录的路径</p>
+</li>
+</ol>
+<h1 id="DTL-语法"><a href="#DTL-语法" class="headerlink" title="DTL 语法"></a>DTL 语法</h1><h2 id="load-static"><a href="#load-static" class="headerlink" title="load static"></a>load static</h2><p><a href="#%E5%9C%A8-HTML-%E6%96%87%E4%BB%B6%E4%B8%AD%E4%BD%BF%E7%94%A8%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6">参考说明</a></p>
+<h2 id="block-super"><a href="#block-super" class="headerlink" title="block.super"></a>block.super</h2><p>用来从父 block 中继承选项</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrahead %&#125;</span><br><span class="line">&#123;&#123; block.super &#125;&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/bootstrap.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/base.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="include"><a href="#include" class="headerlink" title="include"></a>include</h2><p>假设有两个 HTML 文件：<code>header.html</code> 和 <code>content.html</code>。<br><code>header.html</code> 包含页面的头部内容。</p>
+<figure class="highlight html"><figcaption><span>header.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- header.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">header</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h1</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">h1</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">nav</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 导航栏内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">nav</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">header</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p><code>content.html</code> 包含页面的主要内容。</p>
+<figure class="highlight html"><figcaption><span>content.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- content.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">section</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h2</span>&gt;</span>Welcome to our website!<span class="tag">&lt;/<span class="name">h2</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>This is the main content of the page.<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">section</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p>现在，可以在另一个 HTML 文件中使用 <code>&#123;% include %&#125;</code> 标签来包含这些内容。</p>
+<figure class="highlight html"><figcaption><span>main_template.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- main_template.html --&gt;</span></span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    &#123;% include &#x27;header.html&#x27; %&#125;</span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span> <span class="attr">class</span>=<span class="string">&quot;content&quot;</span>&gt;</span></span><br><span class="line">        &#123;% include &#x27;content.html&#x27; %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line">    </span><br><span class="line">    <span class="tag">&lt;<span class="name">footer</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 页脚内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">footer</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p>在这个示例中，<code>&#123;% include 'header.html' %&#125;</code> 和 <code>&#123;% include 'content.html' %&#125;</code> 标签会将相应的模板文件的内容包含在 <code>main_template.html</code> 中。这样，就可以在一个模板中包含另一个模板的内容了。</p>
+<h2 id="url-反向解析"><a href="#url-反向解析" class="headerlink" title="url 反向解析"></a>url 反向解析</h2><p>在模板中不推荐使用 url 硬编码，建议使用 url 反向解析功能，在 <code>urls.py</code> 中定义 url 时，给 url 命名，在模板中 可以使用反向解析使用 url，避免使用 url 硬编码。<strong>需要在 <code>urls.py</code> 中配置 <code>app_name = &#39;polls&#39;</code>，否则会因为 namespace 不清楚而报错：<code>&#39;polls&#39; is not a registered namespace</code></strong></p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> django.urls <span class="keyword">import</span> path</span><br><span class="line"><span class="keyword">from</span> . <span class="keyword">import</span> views</span><br><span class="line"></span><br><span class="line">app_name = <span class="string">&#x27;polls&#x27;</span></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(<span class="string">&#x27;&#x27;</span>, views.IndexView.as_view(), name=<span class="string">&#x27;index&#x27;</span>),</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+<p>以上事例中，<code>name=&#39;index&#39;</code> 为 url 命名，在模板中通过以下方式使用 url 名称 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[反向命名空间 URLs](https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls)">[1]</span></a></sup></p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;polls:index&#x27; %&#125;&quot;</span>&gt;</span>首页<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+<h2 id="for-循环"><a href="#for-循环" class="headerlink" title="for 循环"></a>for 循环</h2><h3 id="根据-model-中的值实现下拉选择菜单"><a href="#根据-model-中的值实现下拉选择菜单" class="headerlink" title="根据 model 中的值实现下拉选择菜单"></a>根据 model 中的值实现下拉选择菜单</h3><p>假如需要实现下拉表单中的可选值来自于某个 <code>model</code>，可以参考以下实现</p>
+<figure class="highlight shell"><figcaption><span>models.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.db import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your models here.</span></span><br><span class="line">class Account(models.Model):</span><br><span class="line">    name = models.CharField(max_length=16, unique=True)</span><br></pre></td></tr></table></figure>
+
+<p>视图函数代码如下：</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line">from cloudclient import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br></pre></td></tr></table></figure>
+<p>HTML 模板主要代码如下：</p>
+<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">    &#123;% csrf_token %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;category&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line">       &#123;% for account in accounts %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endfor %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p><strong>其中使用 <code>for</code> 循环将视图函数传过来的参数列表（<code>accounts</code>）中的对象添加到下拉菜单中作为下拉选项。</strong><br><img src="https://i.0920811.xyz/img_216.png"></p>
+<p>表单提交后，服务端口会收到 POST 的数据(<code>request.POST</code>)：<code>account=1</code>。参考以下代码处理接收到的表单数据</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    if request.method == &#x27;GET&#x27;:</span><br><span class="line">        accounts = models.Account.objects.all()</span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        # data = request.body</span><br><span class="line">        account_id = request.POST.get(&#x27;account&#x27;)</span><br><span class="line">        logging.info(f&quot;POST DATA: &#123;&#125;&quot;)</span><br></pre></td></tr></table></figure>
+
+<p>如果想在 POST 处理后返回给客户端的 HTML 表单中的默认选中的值任然是客户端 POST 提交时选中的值，可以参考以下代码</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def cf_add_domains(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        data = request.POST</span><br><span class="line">        account_id = data[&#x27;account&#x27;]</span><br><span class="line">        account = models.Account.objects.get(id=account_id)</span><br><span class="line"></span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts, &#x27;selected_account_id&#x27;: account_id&#125;)</span><br></pre></td></tr></table></figure>
+
+<p>HTML 模板中使用 <code>option</code> 的 <code>selected</code> 标签选择指定的值。<em><strong>要注意其中的类型转换 <code>account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot;，将变量值转换一致，否则条件判断会失败</code></strong></em> </p>
+<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">&#123;% csrf_token %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;account&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line"></span><br><span class="line">   &#123;% for account in accounts %&#125;</span><br><span class="line">       &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% else %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endif %&#125;</span><br><span class="line">   &#123;% endfor %&#125;</span><br><span class="line"><span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="if-条件判断"><a href="#if-条件判断" class="headerlink" title="if 条件判断"></a>if 条件判断</h2><p><code>if</code> 语法如下</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% if condition %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为真 --&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为假 --&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% if user.is_authenticated %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>欢迎回来，&#123;&#123; user.username &#125;&#125;！<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;logout&#x27; %&#125;&quot;</span>&gt;</span>退出登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>您还未登录。<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;login&#x27; %&#125;&quot;</span>&gt;</span>立即登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="类型转换"><a href="#类型转换" class="headerlink" title="类型转换"></a>类型转换</h2><p>如果在模板中需要对变量类型进行转换，参考以下语法</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% else %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% endif %&#125;</span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
+
+<p>更精简的写法</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    </span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> &#123;% <span class="attr">if</span> <span class="attr">account.id</span>|<span class="attr">stringformat:</span>&quot;<span class="attr">s</span>&quot; == <span class="string">selected_account_id|stringformat:</span>&quot;<span class="attr">s</span>&quot; %&#125;<span class="attr">selected</span>&#123;% <span class="attr">endif</span> %&#125;&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls">反向命名空间 URLs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
         <tag>Django</tag>
       </tags>
   </entry>
@@ -31409,6 +31734,69 @@ width: 20%;
 <li>Python 3.10.12</li>
 </ul>
 <h1 id="certificate-verify-failed-unable-to-get-local-issuer-certificate"><a href="#certificate-verify-failed-unable-to-get-local-issuer-certificate" class="headerlink" title="certificate verify failed: unable to get local issuer certificate"></a>certificate verify failed: unable to get local issuer certificate</h1><p>报错信息如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1007)</span><br><span class="line">...</span><br><span class="line">urllib.error.URLError: &lt;urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1007)&gt;</span><br></pre></td></tr></table></figure>
+
+<p><strong>问题原因</strong> ： 本地 CA 证书不存在</p>
+<p><strong>解决方法</strong></p>
+<ol>
+<li>查看默认证书位置 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import ssl</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">print</span>(ssl.get_default_verify_paths())</span></span><br><span class="line">DefaultVerifyPaths(cafile=None, capath=&#x27;/usr/local/openssl/ssl/certs&#x27;, openssl_cafile_env=&#x27;SSL_CERT_FILE&#x27;, openssl_cafile=&#x27;/usr/local/openssl/ssl/cert.pem&#x27;, openssl_capath_env=&#x27;SSL_CERT_DIR&#x27;, openssl_capath=&#x27;/usr/local/openssl/ssl/certs&#x27;)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+根据输出内容，可以看到 Python 使用的 <code>openssl</code> 位于 <code>/usr/local/openssl/</code>，CA 证书路径为 <code>/usr/local/openssl/ssl/cert.pem</code>，检查 CA 证书路径，发现 CA 证书不存在 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cd</span> /usr/local/openssl/ssl/</span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span></span></span><br><span class="line">certs  ct_log_list.cnf  ct_log_list.cnf.dist  misc  openssl.cnf  openssl.cnf.dist  private</span><br></pre></td></tr></table></figure></li>
+<li>下载 CA 证书文件 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://curl.haxx.se/ca/cacert.pem --no-check-certificate</span><br><span class="line">mv cacert.pem cert.pem</span><br></pre></td></tr></table></figure>
+下载 CA 证书文件后，重新尝试，SSl 连接正常。</li>
+</ol>
+<h1 id="can’t-start-new-thread"><a href="#can’t-start-new-thread" class="headerlink" title="can’t start new thread"></a>can’t start new thread</h1><h2 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
+<li>Docker 1.13</li>
+<li>Python3.9</li>
+</ul>
+<p>在 Docker 中运行 <code>python</code> 后，使用 <code>pip</code> 报错 <code>RuntimeError: can&#39;t start new thread</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pip install --upgrade pip</span></span><br><span class="line">Requirement already satisfied: pip in /usr/local/lib/python3.9/site-packages (23.0.1)</span><br><span class="line">Collecting pip</span><br><span class="line">  Downloading pip-23.2.1-py3-none-any.whl (2.1 MB)</span><br><span class="line">     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0.0/2.1 MB ? eta -:--:--ERROR: Exception:</span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/cli/base_command.py&quot;, line 160, in exc_logging_wrapper</span><br><span class="line">    status = run_func(*args)</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/cli/req_command.py&quot;, line 247, in wrapper</span><br><span class="line">    return func(self, options, args)</span><br><span class="line">  </span><br><span class="line">  ...</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/operations/prepare.py&quot;, line 107, in get_http_url</span><br><span class="line">    from_path, content_type = download(link, temp_dir.path)</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/network/download.py&quot;, line 147, in __call__</span><br><span class="line">    for chunk in chunks:</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/cli/progress_bars.py&quot;, line 52, in _rich_progress_bar</span><br><span class="line">    with progress:</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_vendor/rich/progress.py&quot;, line 1169, in __enter__</span><br><span class="line">    self.start()</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_vendor/rich/progress.py&quot;, line 1160, in start</span><br><span class="line">    self.live.start(refresh=True)</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_vendor/rich/live.py&quot;, line 132, in start</span><br><span class="line">    self._refresh_thread.start()</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/threading.py&quot;, line 899, in start</span><br><span class="line">    _start_new_thread(self._bootstrap, ())</span><br><span class="line">RuntimeError: can&#x27;t start new thread</span><br><span class="line"></span><br><span class="line">[notice] A new release of pip is available: 23.0.1 -&gt; 23.2.1</span><br><span class="line">[notice] To update, run: pip install --upgrade pip</span><br></pre></td></tr></table></figure>
+
+<p><em><strong>问题原因</strong></em> Docker 版本太低，升级版本到 18.06 以上。<a href="https://stackoverflow.com/questions/70087344/python-in-docker-runtimeerror-cant-start-new-thread">参考说明</a></p>
+<span id="more"></span>
+
+<h1 id="Exception-Can-not-find-valid-pkg-config-name"><a href="#Exception-Can-not-find-valid-pkg-config-name" class="headerlink" title="Exception: Can not find valid pkg-config name"></a>Exception: Can not find valid pkg-config name</h1><p>使用 <code>pip install</code> 命令时报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Exception: Can not find valid pkg-config name.</span><br><span class="line">     Specify MYSQLCLIENT_CFLAGS and MYSQLCLIENT_LDFLAGS env vars manually</span><br></pre></td></tr></table></figure>
+<p>在使用 <code>pip install</code> 安装某些依赖 MySQL 的 Python 包（例如 <code>mysqlclient</code>）时，可能会遇到类似 <code>Exception: Can not find valid pkg-config name.</code> 的错误。这通常是因为你的系统缺少必要的开发工具或库文件。</p>
+<p><strong>以下是解决这个问题的步骤</strong></p>
+<ol>
+<li>安装 MySQL 开发库<ul>
+<li>在 Ubuntu&#x2F;Debian 系统中，确保安装了 <code>libmysqlclient-dev</code> 包 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt-get install libmysqlclient-dev</span><br></pre></td></tr></table></figure></li>
+<li>在 CentOS&#x2F;RHEL 系统中，安装 <code>mysql-devel</code> 包 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo yum install mysql-devel</span><br></pre></td></tr></table></figure></li>
+</ul>
+</li>
+</ol>
+<h1 id="ERROR-Could-not-find-a-version-that-satisfies-the-requirement-mysqlclient-x3D-x3D-2-2-1"><a href="#ERROR-Could-not-find-a-version-that-satisfies-the-requirement-mysqlclient-x3D-x3D-2-2-1" class="headerlink" title="ERROR: Could not find a version that satisfies the requirement mysqlclient&#x3D;&#x3D;2.2.1"></a>ERROR: Could not find a version that satisfies the requirement mysqlclient&#x3D;&#x3D;2.2.1</h1><p><strong>环境信息</strong></p>
+<ul>
+<li>Ubuntu 22.04.4 LTS (Jammy Jellyfish)</li>
+<li>Python 3.10</li>
+</ul>
+<p>安装 <code>mysqlclient==2.2.1</code> 时报错：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Collecting mysqlclient==2.2.1</span><br><span class="line">  Using cached mysqlclient-2.2.1.tar.gz (89 kB)</span><br><span class="line">  Installing build dependencies ... done</span><br><span class="line">  Getting requirements to build wheel ... done</span><br><span class="line">  Installing backend dependencies ... done</span><br><span class="line">  Preparing metadata (pyproject.toml) ... done</span><br><span class="line">  WARNING: Generating metadata for package mysqlclient produced metadata for project name unknown. Fix your #egg=mysqlclient fragments.</span><br><span class="line">Discarding https://files.pythonhosted.org/packages/37/fb/d9a8f763c84f1e789c027af0ffc7dbf94c9a38db961484f253f0552cbb47/mysqlclient-2.2.1.tar.gz#sha256=2c7ad15b87293b12fd44b47c46879ec95ec647f4567e866ccd70b8337584e9b2 (from https://pypi.org/simple/mysqlclient/) (requires-python:&gt;=3.8): Requested unknown from https://files.pythonhosted.org/packages/37/fb/d9a8f763c84f1e789c027af0ffc7dbf94c9a38db961484f253f0552cbb47/mysqlclient-2.2.1.tar.gz#sha256=2c7ad15b87293b12fd44b47c46879ec95ec647f4567e866ccd70b8337584e9b2 (from -r requirements.txt (line 20)) has inconsistent name: filename has &#x27;mysqlclient&#x27;, but metadata has &#x27;unknown&#x27;</span><br><span class="line">ERROR: Could not find a version that satisfies the requirement mysqlclient==2.2.1 (from versions: 1.3.0, 1.3.1, 1.3.2, 1.3.3, 1.3.4, 1.3.5, 1.3.6, 1.3.7, 1.3.8, 1.3.9, 1.3.10, 1.3.11rc1, 1.3.11, 1.3.12, 1.3.13, 1.3.14, 1.4.0rc1, 1.4.0rc2, 1.4.0rc3, 1.4.0, 1.4.1, 1.4.2, 1.4.2.post1, 1.4.3, 1.4.4, 1.4.5, 1.4.6, 2.0.0, 2.0.1, 2.0.2, 2.0.3, 2.1.0rc1, 2.1.0, 2.1.1, 2.2.0rc1, 2.2.0, 2.2.1, 2.2.2, 2.2.3, 2.2.4)</span><br><span class="line">ERROR: No matching distribution found for mysqlclient==2.2.1</span><br></pre></td></tr></table></figure>
+<p>这个错误表明在尝试安装 <code>mysqlclient==2.2.1</code> 时，Python 包管理工具 pip 发现了元数据的不一致性，即文件名是 <code>mysqlclient</code>，但元数据标识的包名为 <code>unknown</code>。这可能是由于该版本的包在 PyPI 上发布时存在问题。</p>
+<p>要解决这个问题，可以尝试使用不同的 <code>mysqlclient</code> 版本。例如不指定具体版本，<strong>默认安装最新的稳定版本，可以成功安装</strong>。</p>
+<h1 id="There-was-a-problem-confirming-the-ssl-certificate"><a href="#There-was-a-problem-confirming-the-ssl-certificate" class="headerlink" title="There was a problem confirming the ssl certificate"></a>There was a problem confirming the ssl certificate</h1><p><strong>环境信息</strong></p>
+<ul>
+<li>Python 2.7</li>
+<li>Centos 7 6.8.9-1</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pip install shadowsocks</span></span><br><span class="line">Collecting shadowsocks</span><br><span class="line">  Could not fetch URL https://pypi.python.org/simple/shadowsocks/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:618) - skipping</span><br><span class="line">  Could not find a version that satisfies the requirement shadowsocks (from versions: )</span><br><span class="line">No matching distribution found for shadowsocks</span><br></pre></td></tr></table></figure>
+
+<p><strong>解决方法 1</strong> ：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install shadowsocks --trusted-host pypi.python.org --trusted-host pypi.org --trusted-host files.pythonhosted.org</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Python 错误集锦</title>
+    <url>/202306161614/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.10.12</li>
+</ul>
+<h1 id="certificate-verify-failed-unable-to-get-local-issuer-certificate"><a href="#certificate-verify-failed-unable-to-get-local-issuer-certificate" class="headerlink" title="certificate verify failed: unable to get local issuer certificate"></a>certificate verify failed: unable to get local issuer certificate</h1><p>报错信息如下：</p>
 <figure class="highlight text"><table><tr><td class="code"><pre><span class="line">ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1007)</span><br><span class="line">...</span><br><span class="line">urllib.error.URLError: &lt;urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1007)&gt;</span><br></pre></td></tr></table></figure>
 
 <p><strong>问题原因</strong> ： 本地 CA 证书不存在</p>
@@ -39344,468 +39732,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之天地否</title>
-    <url>/20250922102639/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天地否"><a href="#天地否" class="headerlink" title="天地否"></a>天地否</h1><p><img src="https://i.0920811.xyz/img_352.png"></p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">否之匪人，不利君子贞，大往小来。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：否之匪人，不利君子贞。大往小来，则是天地不交，而万物不通也;上下不交，而天下无邦也。内阴而外阳，内柔而外刚，内小人而外君子。小人道长，君子道消也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天地不交，否;君子以俭德辟难，不可荣以禄。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>否之匪人</strong> ： 闭塞、不通、与 “泰” 相对。匪人，不正之人、小人、无德之人。正道被阻塞，不正之人得势。</li>
-<li><strong>不利君子贞</strong> ： 在这种闭塞的环境中，君子即使坚守正道，也难以取得好的结果。因为环境不利于正道的施展。</li>
-<li><strong>君子以俭德避难，不可荣以禄</strong> ： 俭，节制、收敛、不张扬。收敛锋芒，洁身自好，不要贪图爵禄荣华，等待时势转机。</li>
-</ul>
-<p>否卦和泰卦互为覆卦，泰卦阳爻上长，阴爻消退，君子（刚爻）道长，小人（柔爻）道消；否卦阴爻上长，阳爻消退，小人道长，君子道消。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>否者，闭塞之谓也。阴盛居内，阳隔居外，小人道长，君子道消，故曰否。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>君子当否世，宜退藏于密，保其正道，不与小人争权利，待时而出。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>否之世，小人道长，君子道消。君子当守其贞而避祸，不可图荣。</code></p>
-</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拔茅茹，以其汇，贞吉，亨。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拔茅贞吉，志在君也。</span><br></pre></td></tr></table></figure>
-
-<p>初六是否卦最下爻，处卦之始。否卦下三爻皆阴（坤），象征 “小人道长”；但初六在下，仍有顺应而求通的可能。拔茅茹表示群体牵连之象：初六若动，则二、三随之，形成整体向上之势。若能守正（贞），则虽身处小人之位，也可志在君子、向往君主（九五阳爻）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初六以阴处下，虽小人位，能拔茅而动群，志在从君，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>否极之初，虽在小人之列，但志向君正，能拔动群类而求通，吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>拔茅之象，言其相引而动。能守正，则虽处否世之初，亦可亨通。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包承。小人吉，大人否，亨。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人否亨，不乱群也。</span><br></pre></td></tr></table></figure>
-
-<p>六二阴爻居阴位，得位，又在下卦中正（居中），正应 九五，虽然下卦都是阴（小人），但六二得中正之位，又与九五刚阳之君相应，所以君子守正不乱，反而能 “否亨”。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二以阴居阴，中而得正，能自守也。小人以守承为吉；大人以守中为亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>小人能安于承顺，则得吉；大人当否之时，不可施为，但守正而不乱群，亦谓之亨。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六二以阴柔居中，能承顺也。小人能守承则吉；大人处否，能守中正，不乱于群，亦亨。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包羞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：包羞，位不当也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>包羞</strong> ： 羞，耻辱、羞耻、羞辱。包容（或蒙受）羞耻、羞辱（包羞）。</li>
-</ul>
-<p>六三爻阴爻居阳位，居位不当（位不当也）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六三以阴居阳，不当位也。知其不当，而包容其羞，不敢自显。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>三以阴柔居刚位，不中不正，自知其辱而包容之，不能正也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>包羞者，知其不当位而内自愧辱也。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有命无咎，畴离祉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：有命无咎，志行也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>有命无咎，畴离祉</strong> ： 有命，有天命、受命、奉命行事。畴，同类、同道者、群体。离，依附、共享、归向、接近。意即同类相亲，得蒙福佑。命指九五（君）之命。</li>
-</ul>
-<p>九四虽非正位，但因为奉天命、行正志，所以不会有过失。九四阳爻处乾，能与群体相合（畴），并归附于福祉（离祉）。说明在否运中，阳刚渐次发挥作用，能带来一定的吉利。它虽处于 “否” 境中期，却因属阳爻（代表刚健），能坚守正道、不被小人裹挟，因此 “承命而行”，自然无灾祸；</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四以阳居阴，不正也；然承九五之中正，得君命以行志，故有命无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四居否之时，得君命以行其志，则虽失位而无咎，且与同类相应，皆得其福。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>有命，得命也；畴离祉，同类皆得福也。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">休否，大人吉。其亡其亡，系于苞桑。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人之吉，位正当也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>休否</strong> ： 休，休息、停止、休止、终结。指否之闭塞之势发展到此处也该结束了。</li>
-<li><strong>其亡其亡，系于苞桑</strong> ： 苞桑，桑树的根。其亡其亡，时刻警惕将要灭亡，才能像将根基系在丛生的桑树上（系于苞桑）一样稳固。</li>
-</ul>
-<p>九五爻居位正当，兼具刚健之性（阳爻）与中正之德（中位），是打破 “天地不交、上下隔绝” （休否）的核心力量，它能推动 “小人道长” 的局面逆转，让闭塞的环境开始通达，标志着 “否” 的困境进入终结阶段。</p>
-<p> 九五虽终结 “否” 境，但 “小人道长” 的余波未散，正道根基尚未完全稳固，若因 “吉” 而放松警惕，可能让闭塞局面复现。因此需时刻警惕（其亡其亡），依托坚固的根本（系于苞桑、中正之道），才能免于祸患（否）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五中正居尊，否可休也。然否方休，危未远，故曰‘其亡其亡’，唯系于中正之道，如系苞桑，乃可免也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>否至此则有转机。九五以中正居尊，能休否而吉。但危机犹在，非深根固守不可。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五中正，能止否。然休否之初，危机尚存，故再言其亡。必系于至坚至固，如苞桑之不可拔，乃得安吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">倾否，先否后喜。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：否终则倾，何可长也。</span><br></pre></td></tr></table></figure>
-
-<p>上九，居卦之终，阳爻在乾上之极，阳气已充，已极盛。阴气在下卦，已不能上行；象征否运发展至极，自然转向，即否极泰来 。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>否至于上九而穷极，故必倾也。倾否则泰道生矣。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>否穷于上，则必倾；否不可长，极则反，故有喜。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>倾否，谓否极而反泰也。否不可长，终必有变。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天火同人</title>
-    <url>/20250923102639/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天火同人"><a href="#天火同人" class="headerlink" title="天火同人"></a>天火同人</h1><p><img src="https://i.0920811.xyz/img_353.png"></p>
-<p>天火同人，上（外）卦为乾（天），下（内）卦为离（火），天在上，火在下，火性向上，与天相合，象征着人与人之间的和谐相处。同人，与人同道，同心同德、聚合同道，讲合作与共济。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人：同人于野，亨。利涉大川，利君子贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：同人，柔得位得中，而应乎乾，曰同人。同人曰，同人于野，亨。利涉大川，乾行也。文明以健，中正而应，君子正也。唯君子为能通天下之志。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与火，同人;君子以类族辨物。</span><br></pre></td></tr></table></figure>
-
-<p>全卦只有六二为柔爻，柔顺中正，正应九五，上下应合，为全卦主爻，柔爻于其他刚爻同心同德，称同人。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>同人者，谓同其道也。非徒同人，必以道同，乃可亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人必以道合，不以利合。能公于天下，则亨。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于野，言无私也。利涉大川，言刚健有为。惟君子能持正，以通天下之志。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于门，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：出门同人，又谁咎也。</span><br></pre></td></tr></table></figure>
-
-<p>出门同人，这里的 <strong>出门</strong> 象征着起点或初始阶段，门更象征 <strong>亲疏、内外、私域与公域得边界</strong> 。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初九阳刚得正，志在同人，但力有限，始同于门，然亦无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人之道，必广而公。初在卑位，未能大同，先同于门，亦已善矣。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>初九刚正，欲同于人，始于门户之内，无咎也。能出门同人，则无咎之至也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于宗，吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于宗，吝道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>同人于宗</strong> ： 宗，本宗、宗族、家族内部、表示有血缘或亲近关系的小群体、亲信、小圈子。这种行为是一种狭隘、保守的方式。虽然有一定的亲和力，但过于局限，缺乏广泛性。</li>
-</ul>
-<p>阴爻居中（得中），柔顺中正，本有善德。只正应九五（阳刚中正之君），忽视了其他刚爻，故为取吝之道。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二柔中而得正，能与人同，然以宗为限，不能大通，故吝。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人贵在大公，不可偏私。二以柔居中，德本可同，但局于宗族，未免为吝。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于宗，谓偏于所亲而已，不广于天下也。吝道也。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">伏戎于莽，升其高陵，三岁不兴。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：伏戎于莽，敌刚也。三岁不兴，安行也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>伏戎于莽</strong> ： 伏，埋伏、隐藏。戎，军队、部队。莽，草莽、草丛、丛林之地。</li>
-<li><strong>升其高陵</strong> ： 登上高地（高丘）观察局势。高陵，象征占据有利地形、隐藏实力、谨慎观望。</li>
-<li><strong>三岁不兴，安行也</strong> ： 三年（多年）不会发动进攻，要确保安全稳定。象征谨慎行事，避免轻举妄动。</li>
-</ul>
-<p>九三爻是同人卦的第三爻，处于下卦的上位，代表积极主动、刚健、果断的品质，但处于下卦与上卦的交界，位置险要，自身力量尚未完全整合，也未与上卦的正道核心（九五）形成呼应。 <strong>伏戎于莽，升其高陵，三岁不兴</strong> 强调了在交往中遇到强大对手时，需要采取隐蔽和谨慎的策略。要占据有利地形，做好充分准备，但不要轻易发动攻击，以确保安全和稳定。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九三刚而不中，处势不利，故伏戎以待，不敢动也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九三处险，志在同人，但上有强刚，不得进。故伏兵草莽，登高以望，久而不举，以安其行。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九三刚正而不中，上应九六之刚，故为敌刚。潜兵不动，得以自安。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘其墉，弗克攻，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：乘其墉，义弗克也，其吉，则困而反则也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>乘其墉，弗克攻</strong> ： 墉，城墙、防御工事。登上城墙，象征着占据了有利位置，有了进攻的机会。但没有发动攻击。这表示在有机会发动攻击时，选择了克制和谨慎。</li>
-<li><strong>义弗克也</strong> ： 义，指道义、正义。登上城墙，但按道义不能发动攻击。</li>
-<li><strong>其吉，则困而反则也</strong> ： 这里的 困而反则 指在困境中回归正道，遵循正确的原则。</li>
-</ul>
-<p>九四为阳爻居阴位（位不正），处于上卦 “乾”（刚健）的初爻，紧邻下卦 “离”（文明）的九三（阳爻），既有阳刚进取的本能，又因 “位不正” 而有顾虑。 <strong>弗克攻</strong> 不是不能攻，而是不应攻（义弗克也）， <strong>同人 的本质是 以正道聚人，而非 以武力征服</strong> 。</p>
-<p>九四虽 “位不正”（阳爻居阴位），却能得 “吉”，核心在于 “困而反则” ：在 “进取与道义” 的困境（位不当，阳爻居阴位，易躁动失道）中回归正道（反则、义弗克也）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四以阳居阴，失位而不中，志欲进而不得，故象乘墉。然义不可攻，止而不攻，是以吉也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四志欲同人，然义不可攻，能止其欲而不行，是以吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>乘其墉者，有攻之势也；弗克攻者，义不可也。知义而止，故吉。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人，先号啕而后笑。大师克，相遇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人之先，以中直也。大师相遇，言相克也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>先号啕而后笑</strong> ： 号啕，大声哭叫。这里比喻一开始遭遇隔阂、不合，难以同人。最后能和同，心志融洽而喜乐。</li>
-<li><strong>大师克，相遇</strong> ： 大师，大军。克，克服、攻克。克服同人得障碍，实现同人。</li>
-<li><strong>同人之先，以中直也</strong> ： “号啕” 的根源是 “中直”，九五坚守中正刚直，直率不曲，所以容易先有冲突，后才化解</li>
-</ul>
-<p>九五阳爻居尊位（君位），而且居中，正是 “中直” 的位置。它与六二正应（阴柔中正），上下呼应，构成同人之象。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五以中正居尊，志直不曲，故与人同，先相克而后相亲。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>刚直之人，未易相合，初多乖戾；然志在道同，终必相合</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>先号啕而后笑，谓其初虽有相克之难，然终于相遇而合也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于郊，无悔。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于郊，志未得也。</span><br></pre></td></tr></table></figure>
-
-<p>“郊” 在 “野”（旷野，“同人” 理想之境）与 “城”（核心区域）之间，意味着上九已突破私域局限，能在更广阔的范围聚合同道，但尚未完全进入 “通天下之志” 的终极理想（同人于野）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上九处同人之终，志在大同，而位极孤危，不能尽合，故同人于郊，无悔而已。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>同人当以天下为公，上九虽同人于郊，已出门户，不为私比，然犹未达于大同，故无悔而志未得。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>同人于郊，犹未尽天下之同也。然已不私比，故无悔</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之天雷无妄</title>
-    <url>/20251016103340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
-<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
-<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
-<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
-<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
-</li>
-<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
-
-<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
-</li>
-<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
-</li>
-<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
-</ul>
-<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
-</li>
-<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
-</li>
-<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
-<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
-</ul>
-<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
-</li>
-<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
-</li>
-<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
-</li>
-<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
-</li>
-<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
-</li>
-<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
-</li>
-<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
-
-<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
-</li>
-<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
-</li>
-<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之天山遁</title>
     <url>/20251122162040/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天山遁"><a href="#天山遁" class="headerlink" title="天山遁"></a>天山遁</h1><p><img src="https://i.0920811.xyz/img_378.png"></p>
@@ -40259,251 +40185,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>Amazon AWS 概念及相关操作步骤</title>
-    <url>/20260207135211/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="AWS-虚拟私有云-VPC"><a href="#AWS-虚拟私有云-VPC" class="headerlink" title="AWS 虚拟私有云 VPC"></a>AWS 虚拟私有云 VPC</h1><p>在进入具体的网络配置前，必须理解 AWS 的地理隔离：</p>
-<ul>
-<li><p><strong>区域 (Region)</strong> ：地理上的独立区域（如新加坡、弗吉尼亚）。区域之间完全隔离。</p>
-</li>
-<li><p><strong>可用区 (Availability Zone, AZ)</strong> ：一个区域内由多个物理机房组成。AZ 之间通过高速、低延迟光纤连接。高可用架构必须跨 AZ 部署。跨 AZ 之间的流量需要付费。</p>
-</li>
-</ul>
-<p>VPC 是你在 AWS 云中的逻辑隔离网络。你可以完全控制其 IP 地址范围、子网、路由表和网络网关。</p>
-<p>核心组件：</p>
-<ul>
-<li><p><strong>CIDR 范围</strong> ：你为 VPC 定义的私有 IP 地址块（如 <code>10.0.0.0/16</code> ）。</p>
-</li>
-<li><p><strong>子网 (Subnets)</strong> ：将 VPC 划分为更小的网段。子网必须位于特定的可用区内。</p>
-</li>
-<li><p><strong>公有子网 (Public Subnet)</strong> ：路由指向互联网网关 (IGW)，实例可以有公网 IP。</p>
-</li>
-<li><p><strong>私有子网 (Private Subnet)</strong> ：没有指向 IGW 的直接路由，通常通过 <strong>NAT 网关 访问外网</strong> 。</p>
-</li>
-</ul>
-<blockquote>
-<p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
-<ul>
-<li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
-<li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现“能出不能进”的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
-</ul>
-</blockquote>
-<ul>
-<li><strong>路由表（Route Tables）</strong> 分为主路由表和自定义路由表<ul>
-<li><strong>主路由表（Main route table）</strong> 随 VPC 自动生成，它控制未与任何其他路由表显式关联的所有子网的路由，也就是 VPC 中的默认路由。</li>
-<li><strong>自定义路由表</strong> 为新建的路由表。</li>
-<li>一个子网只能关联一个路由表，一个路由表可以关联多个子网</li>
-</ul>
-</li>
-</ul>
-<p><strong>流量如何进出</strong></p>
-<p>VPC 与外界互联网通信可以使用以下方式：</p>
-<table>
-<thead>
-<tr>
-<th>组件</th>
-<th>作用</th>
-<th>流量方向</th>
-<th>用法说明｜</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Internet Gateway (IGW，互联网网关)</td>
-<td>允许 VPC 连接互联网。</td>
-<td>双向 (In&#x2F;Out)</td>
-<td>实例必须分配公网 IP 或弹性 IP (EIP)</td>
-</tr>
-<tr>
-<td>NAT Gateway (NAT 网关)</td>
-<td>允许私有实例上外网，但防止外部主动连接。</td>
-<td>单向 (Outbound only)</td>
-<td>仅需私有 IP</td>
-</tr>
-<tr>
-<td>VPC Peering （对等连接）</td>
-<td>连接两个不同的 VPC，使其像在一个网络内通信。</td>
-<td>跨 VPC</td>
-<td></td>
-</tr>
-<tr>
-<td>Transit Gateway</td>
-<td>充当“中央枢纽”，连接数千个 VPC 和本地网络。</td>
-<td>复杂网络拓扑</td>
-<td></td>
-</tr>
-<tr>
-<td>Virtual Private Gateway</td>
-<td>用于建立 VPN 连接。</td>
-<td>混合云</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="部署-NAT-Gateway-网关并关联子网"><a href="#部署-NAT-Gateway-网关并关联子网" class="headerlink" title="部署 NAT Gateway 网关并关联子网"></a>部署 NAT Gateway 网关并关联子网</h2><p>通过 NAT Gateway 可以实现子网中的实例的对外互联网出口 IP 都是 NAT Gateway 绑定的 EIP，子网中的实例对互联网不可见。NAT Gateway 典型使用场景：</p>
-<ul>
-<li>为了安全，生产环境通常将 <strong>EKS 工作节点、RDS 数据库</strong> 或 <strong>缓存服务器（Redis）</strong> 放在私有子网中，这些资源不需要（也不应该）被互联网直接访问。</li>
-<li>应用需要调用外部服务（如支付网关、银行接口或第三方 API）时，对方的防火墙通常需要你提供一个白名单 IP。由于 EKS 节点是动态变化的，IP 并不固定。</li>
-<li>减少受攻击面，防止外部扫描。</li>
-</ul>
-<p>以下为创建 NAT Gateway 并关联子网的相关步骤：</p>
-<figure class="highlight shell"><figcaption><span>正确的整体架构</span></figcaption><table><tr><td class="code"><pre><span class="line">VPC</span><br><span class="line">├── Public Subnet</span><br><span class="line">│   ├── NAT Gateway（有 EIP）</span><br><span class="line">│   └── Route Table (Public RT)</span><br><span class="line">│       └── 0.0.0.0/0 → Internet Gateway</span><br><span class="line">│</span><br><span class="line">└── Private Subnet</span><br><span class="line">    ├── EC2 / ECS / EKS Node</span><br><span class="line">    └── Route Table (Private RT)</span><br><span class="line">        └── 0.0.0.0/0 → NAT Gateway</span><br></pre></td></tr></table></figure>
-<p>关键点：</p>
-<ul>
-<li><strong>NAT Gateway 必须在公有子网</strong></li>
-<li><strong>私有子网的默认路由指向 NAT Gateway</strong></li>
-</ul>
-<ol>
-<li><p><strong>确认 Public Subnet 存在</strong></p>
-<p> VPC 默认的 Main Route Table 已经满足这个条件，其默认网关为 Internet Gateway<br> <img src="https://i.0920811.xyz/img_390.png"></p>
-</li>
-<li><p><strong>创建 NAT Gateway</strong></p>
-<p> 在 <strong>NAT gateways</strong> 标签页面中，点击 <strong>Create NAT gateway</strong> ， <strong>Connectivity type</strong> 选择 <strong>Public</strong> ， <strong>Elastic IP (EIP) association</strong> 选择 <strong>手动分配 EIP（Manual）</strong><br> <img src="https://i.0920811.xyz/img_391.png"><br> 创建完成后，状态应为 <strong>Available</strong> 。在路由表（Route Tables）中，这时会多一个路由表，其 <strong>Edge associations（边缘关联）</strong> 关联到了刚刚创建的 NAT Gateway<br> <img src="https://i.0920811.xyz/img_392.png"></p>
-</li>
-<li><p><strong>创建一个新的子网（私有、Private Subnet）</strong></p>
-<p> 在 <strong>VPC → Subnets → Create subnet</strong> 标签页面中创建新的子网， <strong>不要勾选 Auto-assign public IPv4</strong> ，如此处于此子网中的实例，不会为其分配公网地址<br> <img src="https://i.0920811.xyz/img_394.png"></p>
-</li>
-<li><p><strong>创建 Private Route Table</strong></p>
-<p> 在 <strong>VPC → Route tables → Create route table</strong> 标签页面中创建新的路由表，本示例名为 <code>private-rt</code></p>
-</li>
-<li><p><strong>配置路由规则</strong></p>
-<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Routes</strong> 中 <strong>编辑路由（Edit Routes）</strong> ，添加一条路由规则： </p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| Destination | Target          |</span><br><span class="line">| ----------- | --------------- |</span><br><span class="line">| 0.0.0.0/0   | NAT Gateway |</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p> <img src="https://i.0920811.xyz/img_395.png"></p>
-</li>
-<li><p><strong>关联 Private Subnet</strong></p>
-<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Subnet associations(子网关联)</strong> 中 <strong>Edit subnet associations（编辑子网关联）</strong> ，选择目标子网进行关联<br> <img src="https://i.0920811.xyz/img_396.png"></p>
-</li>
-<li><p><strong>最终的 VPC 整体路由可以在 VPC 的 Resource map 中进行检查</strong><br> <img src="https://i.0920811.xyz/img_397.png"></p>
-</li>
-</ol>
-<h1 id="EKS-中的授权机制"><a href="#EKS-中的授权机制" class="headerlink" title="EKS 中的授权机制"></a>EKS 中的授权机制</h1><p>Kubernetes 原生提供 <strong>RBAC（Role-Based Access Control）</strong> 来控制集群中的 <strong>用户和服务账户（ServiceAccount）</strong> 对资源的访问权限。</p>
-<table>
-<thead>
-<tr>
-<th>对象</th>
-<th>描述</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Role</strong></td>
-<td>命名空间级别（Namespace）权限，指定某个命名空间内允许的操作和资源类型。</td>
-</tr>
-<tr>
-<td><strong>ClusterRole</strong></td>
-<td>集群级别权限，可以跨命名空间使用。</td>
-</tr>
-<tr>
-<td><strong>RoleBinding</strong></td>
-<td>将 Role 绑定到一个用户或 ServiceAccount。</td>
-</tr>
-<tr>
-<td><strong>ClusterRoleBinding</strong></td>
-<td>将 ClusterRole 绑定到一个用户或 ServiceAccount。</td>
-</tr>
-</tbody></table>
-<p><strong>核心字段</strong></p>
-<ul>
-<li><p><code>apiGroups</code> ：资源所属 API 组，例如 <code>&quot;&quot;</code> 代表 <strong>core API</strong> 。</p>
-</li>
-<li><p><code>resources</code> ：允许访问的资源类型，如 pods、deployments。</p>
-</li>
-<li><p><code>verbs</code> ：允许的操作，如 <code>get, list, create, delete</code> 。</p>
-</li>
-</ul>
-<p>RBAC 示例：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">apiGroups:</span> [<span class="string">&quot;&quot;</span>]</span><br><span class="line">    <span class="attr">resources:</span> [<span class="string">&quot;pods&quot;</span>]</span><br><span class="line">    <span class="attr">verbs:</span> [<span class="string">&quot;get&quot;</span>, <span class="string">&quot;list&quot;</span>]</span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">RoleBinding</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">read-pods</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">subjects:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">kind:</span> <span class="string">ServiceAccount</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">my-serviceaccount</span></span><br><span class="line"><span class="attr">roleRef:</span></span><br><span class="line">  <span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">apiGroup:</span> <span class="string">rbac.authorization.k8s.io</span></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><p><strong>RBAC 控制的是 Kubernetes 资源访问权限</strong> 。</p>
-</li>
-<li><p><strong>RBAC 对象绑定的是 Kubernetes 用户或 ServiceAccount，而不是 AWS IAM 用户</strong> 。</p>
-</li>
-</ul>
-<table>
-<thead>
-<tr>
-<th>概念</th>
-<th>全称</th>
-<th>解决的问题</th>
-<th>作用范围</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>RBAC</strong></td>
-<td>Role-Based Access Control</td>
-<td>决定 “用户&#x2F;进程” 在 K8s 集群内能做什么（如：查看 Pod）</td>
-<td>K8s 集群内部</td>
-</tr>
-<tr>
-<td><strong>Role</strong></td>
-<td>Kubernetes Role</td>
-<td>RBAC 的一部分，定义一组具体的集群内操作权限</td>
-<td>命名空间 (Namespace)</td>
-</tr>
-<tr>
-<td><strong>IRSA</strong></td>
-<td>IAM Roles for Service Accounts</td>
-<td>决定 “Pod 里的应用” 对 AWS 外部资源（如 S3&#x2F;RDS）的访问权限</td>
-<td>AWS 云环境</td>
-</tr>
-</tbody></table>
-<p><strong>AWS IAM Role</strong> 是 AWS 层面的权限机制，用于授权 AWS 资源访问，例如 S3、DynamoDB、Secrets Manager 等。</p>
-<p>AWS IAM Role 的特点：</p>
-<ul>
-<li><p>可以被 IAM 用户、服务或 EC2&#x2F;EKS Pod 假设（Assume）。</p>
-</li>
-<li><p>权限通过 IAM Policy 定义。</p>
-</li>
-</ul>
-<p><strong>AWS IAM Role</strong> 在 EKS 中的应用:</p>
-<ul>
-<li><p>管理集群本身访问 AWS 资源，例如节点组（NodeGroup）访问 S3。</p>
-</li>
-<li><p>可以通过 IAM 用户&#x2F;Role 管理集群级别的操作权限，例如 <code>eks:DescribeCluster</code> 。</p>
-</li>
-</ul>
-<blockquote>
-<p>💡 核心点：IAM Role 本身无法直接控制 Kubernetes 资源，它管理的是 AWS 资源访问。</p>
-</blockquote>
-<p><strong>IRSA（IAM Roles for Service Accounts）</strong> 是 AWS EKS 引入的将 Kubernetes ServiceAccount 与 AWS IAM Role 绑定，实现 Pod 级别的 AWS 权限控制的机制。其大致原理如下：</p>
-<ul>
-<li><strong>EKS 集群开启 OIDC Provider</strong></li>
-<li><strong>创建 IAM Role 并信任该 OIDC Provider</strong></li>
-<li><strong>Role 上定义 IAM Policy（如访问 S3）</strong></li>
-<li><strong>Kubernetes ServiceAccount 指定注解 <code>eks.amazonaws.com/role-arn</code>。</strong></li>
-<li><strong>Pod 使用该 ServiceAccount 时自动获取 Role 权限</strong></li>
-</ul>
-<p><strong>实践建议：</strong></p>
-<ul>
-<li><p>不要在 Pod 内放 AWS AccessKey，使用 IRSA。</p>
-</li>
-<li><p>最小权限原则：</p>
-<ul>
-<li><p>RBAC：只给 Pod 或用户真正需要的 Kubernetes 权限。</p>
-</li>
-<li><p>IAM Role &#x2F; IRSA：只给访问 AWS 资源的最小权限。</p>
-</li>
-</ul>
-</li>
-<li><p>多集群管理：可以通过 ClusterRole + RoleBinding 管理跨命名空间权限。</p>
-</li>
-<li><p>审计：</p>
-<ul>
-<li><p>使用 CloudTrail 监控 IRSA 调用。</p>
-</li>
-<li><p>Kubernetes API Server 日志审计 RBAC 权限。</p>
-</li>
-</ul>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Aws</category>
-      </categories>
-      <tags>
-        <tag>Aws</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>六十四卦之水天需</title>
     <url>/20250902163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水天需"><a href="#水天需" class="headerlink" title="水天需"></a>水天需</h1><p><img src="https://i.0920811.xyz/img_344.png"></p>
@@ -40655,6 +40336,415 @@ width: 20%;
 <p>  <code>穴，险极之象。上六居之，柔而不当，不能自出，必待阳来救之。三人者，下卦三阳也。敬而顺之，则终吉。</code></p>
 </li>
 </ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之泽风大过</title>
+    <url>/20251113153340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽风大过"><a href="#泽风大过" class="headerlink" title="泽风大过"></a>泽风大过</h1><p><img src="https://i.0920811.xyz/img_373.png"></p>
+<p>泽风大过卦，下巽（风、顺、入）上兑（泽、悦），大过，即太过，兑为泽、为悦，巽为风、为木，泽水淹舟，卦象四阳居中，两头阴柔，阳刚过头，阴阳失衡，重心过盛，故曰 大过。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">大过，栋桡。利有攸往，亨</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：大过，大者过也。栋桡，本末弱也。刚过而中，巽而说行，利有攸往，乃亨。大过之时大矣哉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽灭木，大过。君子以独立不惧，遁世无闷。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>大过，大者过也</strong> ： 卦象四阳居中，上下（两头）阴柔，阳为大，阳刚过头，是为大过。</li>
+<li><strong>栋桡，本末弱也</strong> ： 栋，房梁、栋梁。桡，弯曲、中心承载过重。初、上皆为阴爻，中间四爻为阳爻，如栋梁之中间太重，两头太弱，会弯曲。</li>
+<li><strong>刚过而中，巽而说行，利有攸往，乃亨</strong> ： 中间四爻皆为刚爻，但有九二、九五刚居中位，巽而悦，外柔内刚，利有攸往。</li>
+<li><strong>泽灭木，大过。君子以独立不惧，遁世无闷</strong> ： 上兑为泽，下巽为木，泽水高涨，木被淹没，灭顶之灾象。大过之时，君子当独撑大梁，不倚傍两端弱枝，若时不可为，则退而内心安然不郁闷，当知时势所然。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">籍用白茅，无咎</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：籍用白茅，柔在下也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>籍用白茅</strong> ： 籍，在下面铺东西垫起来、垫衬、铺垫。白茅，古代祭祀时常用的洁白茅草，象征洁净、谦逊与郑重。</li>
+</ul>
+<p>祭祀时将祭品都放置在白茅上，表示非常的谨慎细致。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>以其柔顺在卦之初，故得无咎。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>白茅者，微之至也；以微垫之，所以无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>柔顺在下，能承其上者也。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">枯杨生梯，老夫得其女妻，无不利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：老夫得其女妻，过以相与也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>枯杨生稊（tí），老夫得其女妻</strong> ： 稊，通 荑，草木新生嫩芽、木更生。枯树发芽，年长男性得年轻女子为妻。杨木为阴，嫩芽为阳，老者（阳之过）得少女（阴之弱），喻阴中生阳，刚得柔助，阴阳合得其宜。老夫指九二，女妻指初六，</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>枯者复生，危者得助，皆所以济过。</code></p>
+</li>
+<li><p><code>阴阳得配，故得无不利。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>枯杨生稊，象枯而更生也。刚得柔助，故无不利。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>大过之时，阳盛为害。此爻阳居阳位，而得女妻之象，刚柔相济，所以无不利。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">栋桡，凶</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：栋桡之凶，不可以有辅也。</span><br></pre></td></tr></table></figure>
+
+<p>九三处卦中，取栋梁之象看，相当于房屋得大梁最中间，因为本末弱而弯曲，屋顶要塌下来，很危险，有凶。表示处在大厦将倾无可挽救的时局中，独木难支。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>承重之处也，阳过而不能任，是以桡而凶。</code></p>
+</li>
+<li><p><code>桡之凶，不可救也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>栋之所系，任最为重。刚过不中，无所受助，故桡。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>以刚处中，上下皆不能助之，必桡而凶。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">栋隆，吉，有它吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：栋隆之吉，不桡乎下也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>栋隆之吉，不桡乎下也</strong> ： 隆，隆起、向上拱起。栋梁向上弯曲，而不是向下，所以吉。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>栋隆者，举其所桡也。然有它则吝，须专一而不旁扰。</code></p>
+</li>
+<li><p><code>九三之桡，由九四之举而吉。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>隆者，举也。能举其下，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四以刚处柔而得位，举其下之桡者，故吉。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">枯杨生华，老妇得其士夫。无咎无誉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：枯杨生华，何可久也；老妇士夫，亦可丑也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>枯杨生华，何可久也；老妇士夫，亦可丑也</strong> ： 华，花、非根芽。士夫，青年男子、阳刚强盛。花发于梢，只花不果，古人有 “老树发花，不久之象”。比九二生稊差一些，稊是嫩芽，可长成新枝。老妇配少夫，阴（老）居主位而阳（少）反来就之， 虽可一时匹配，却难以持续生育、白头。女长男少、阴乘阳，在古人眼里 “颠倒失配”，虽能成局，终显不雅。</li>
+</ul>
+<p>九二得初阴之助而生稊，九五以刚在刚，三阳皆不为用，独于上六阴阳相比，故曰夫妇。上六阴极而衰，在上，故曰老妇。九五阳刚居下，故曰士夫（未娶妻者之谓）。从夫妇之序而论，当曰士夫得老妇，今曰老妇得士夫者，原其配偶之所起，志出老妇，老妇首倡而求士夫，丑体尤在老妇。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阴阳不当，虽无咎，亦不足称善。</code></p>
+</li>
+<li><p><code>美而不实，有丑之象故无誉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>其象虽美，而非正配，故无誉。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">过涉灭顶，凶。无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：过涉之凶，不可咎也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>过涉灭顶，凶。无咎。</strong> ： 过度的涉水、冒险，有灭顶之灾。处于大过卦时，形势危急，大厦将倾，情势所迫，被迫涉险，难免遭厄。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>位穷力竭，涉险而凶，然不可责。</code></p>
+</li>
+<li><p><code>灭顶之危，情所迫，故虽凶而无咎。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>处大过之极，不胜其任，故凶；非咎，势然也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>上六处卦之极穷，不得不涉险，故凶；然非其过。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之泽雷随</title>
+    <url>/20251001132040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽雷随"><a href="#泽雷随" class="headerlink" title="泽雷随"></a>泽雷随</h1><p><img src="https://i.0920811.xyz/img_357.png"></p>
+<p>随，上（外）兑（泽、悦）下（内）震（雷、动），动而悦，象征着顺应（时势）、顺势而为、随时势而动。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随，元亨，利贞，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：随，刚来而下柔，动而说，随。大亨贞，无咎，而天下随时。随时之义大矣哉!</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽中有雷，随;君子以向晦入宴息。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>刚来而下柔，动而悦</strong> ： 随卦从否卦变来，否卦上九和初六交换，上九下到随卦初九位，处柔爻之下。否卦天地不通，上下两爻交换，天地往来，阴阳交流，变得通常，故元亨 0</li>
+<li><strong>君子以向晦入宴息</strong> ： 晦，夜晚、日暮、黄昏。君子效法卦象，随时而行：白天活动，夜晚歇息，动静有度，随顺自然。随之为义，随时而动，不失其正。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>随者，随时也。随时以动，则无往不利。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随时而动者，非附和而已，乃因时顺理之谓。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>随，从也。随时而动，随理而行，则元亨利贞无咎。</code></p>
+</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">官有渝，贞吉。出门交有功。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：官有渝，从正吉也。出门交有功，不失也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>官有渝</strong> ： 官，犹常（道）也。有渝者，变革旧常。能随时改正，必吉。渝，改变、变动、变化。</li>
+</ul>
+<p>初九刚来而下柔，阳爻居阳位，得正，为随卦主爻。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>官有渝者，变常也。能变旧而随时，不失正，则吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随者，当随时而动，不可执常。初九刚正，能随时改易，所以吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>官有渝，谓能变通。随时而变，从正则吉；交际而守正，亦有功。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系小子，失丈夫。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系小子，弗兼与也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>系小子，失丈夫</strong> ： 系，依附、追随、束缚。六二和九五为正应，可以为丈夫，初九为随卦主爻，六二比邻初九，初九为震，为长子，可为小子。若为女性，则顾念子而失丈夫，有离异之象；若男性，丈夫也可为德厚长者，小子为平庸之辈。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六二以柔居中，本应九五。若系初九，则失九五。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随在得其所随。六二应九五而正，若舍之而系于初九，是失正也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>小子，指初九；丈夫，指九五。六二居中得正，应于九五，正随之道也。若系初九，则失九五矣。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系丈夫，失小子。随有求，得，利居贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系丈夫，志舍下也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>系丈夫，失小子</strong> ： 舍初九而随九四。</li>
+<li><strong>志舍下也</strong> ： 三欲随上，舍近而求远，是舍小子而随丈夫。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>二则随小子而失丈夫，三则随丈夫而失小子。志舍下也，故利居贞。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随在择所随，三能舍近就远，志在上也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>小子谓初九，丈夫谓九五。三舍近随远，志在随正也。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随有获，贞凶。有孚在道，以明，何咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：随有获，其义凶也。有孚在道，明功也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>随有获，贞凶</strong> ： 获，获利、获得。九四阳爻居阴位，刚而位不当，又处于近君位，易因刚健（锋芒过露）而居功逐利，招致凶险。</li>
+<li><strong>有孚在道，明功也</strong> ： 孚，诚心、诚信、诚实、真诚。明，明辨、清晰。随人做事，居功获利，其义凶。心怀诚信，明辨所处，则无咎害。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四失位，随而有获，非正也，故贞凶。唯有孚守道，乃可以免咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四以刚居阴位，非正。若随而得，必有凶。然能诚信守道，则虽得，亦无咎。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>随有获，非正也，故凶。有孚在道，则虽获亦可，无咎。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">孚于嘉，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：孚于嘉，吉;位正中也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>孚于嘉</strong> ： 嘉，美好、优秀、善的人或事。</li>
+</ul>
+<p>九五居尊位，阳爻居阳位，又在全卦的中位，正中而得正。以刚健中正之德居尊位，又能以孚随正道、美善之事（嘉），所以合随道。为全卦最好的一爻。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五刚中居尊，孚信在上，下应六二，故孚于嘉而吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五以刚中正居尊位，应六二之柔顺，君臣相孚，随从正道，吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>孚于嘉，言以诚信随美善也。九五中正居尊，正应六二，吉之道也。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拘系之，乃从维之。王用亨于西山。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拘系之，上穷也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>拘系之，乃从维之</strong> ： 拘系，拘束、束缚、捆绑。从、跟从、追随、顺从。维，维系、维持、加固。</li>
+<li><strong>王用亨于西山</strong> ： 用亨，通享，祭祀、祭礼。西山，西周的重要祭祀之地（传为周文王祭祀先祖或天地的场所，象征 “庄重、终结性的仪式”）</li>
+</ul>
+<p>上六阴爻处随卦最上（极），随之至极，随之穷尽，只知（能、过渡）追随，反而被束缚、限制。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上六随之极，柔而无正，故拘系。然犹能随正，则乃可维。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随之至极，必至困穷。然能返正，从维大道，犹可以济。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>拘系之，随极而困也。乃从维之，犹可以归正。王用亨于西山，言随正以大祭，归于至诚。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之泽山咸</title>
+    <url>/20251119103840/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽山咸"><a href="#泽山咸" class="headerlink" title="泽山咸"></a>泽山咸</h1><p><img src="https://i.0920811.xyz/img_376.png"></p>
+<p>泽山咸，下（内）艮（山、止）上（外）兑（泽、悦），咸，感也。阴阳正应相互感应，交感流通，为夫妇之道。咸卦为《周易》下经首卦。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸，亨，利贞。取女吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：咸，感也。柔上而刚下，二气感应以相与。止而说，男下女。是以亨利贞，取女吉也。天地感而万物化生，圣人感人心而天下和平。观其所感，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰： 山上有泽，咸。君子以虚受人。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸，感也</strong> ： 咸卦由天地否卦上九和六三交换而来，否卦上九和六三阴阳正应，相互交换是柔上而刚下，成为泽山咸。阴阳交感，上下流通，打破否之阻塞，是以亨通。</li>
+<li><strong>止而说，男下女，是以亨利贞，取女吉也</strong> ： 艮为山为止、为少男，兑为泽为悦、为少女。少男位居少女之下，是少男以谦恭卑下的态度和少女相处，是男向女求婚之象，故取女吉也。</li>
+<li><strong>山上有泽，咸。君子以虚受人</strong> ： 山上有泽，象征大山能够包容下大泽，有广阔的胸怀，君子观此卦，应胸怀广阔，虚怀若谷，有容人之度。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其拇。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其拇，志在外也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其拇，志在外也</strong> ： 拇，大脚趾。象征感应刚刚发生，尚在最轻微、最表面的阶段，尚未深入，也未行动。初六有九四为正应，故言志在外。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>拇，动之始也。感之微也。志动于外，故曰咸其拇。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>感之始也，意向未定，才动于外耳。</code></p>
+</li>
+<li><p><code>拇为足端，所感最微。夫妇之道，感于微，乃能成天下之大。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其腓，凶，居吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽凶居吉，顺不害也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其腓</strong> ： 腓，小腿、小腿肚。六二居内卦之中，得位得中，本有柔顺之德，宜静不宜动。虽有凶象，但安居可吉，是因为顺从正道，故不受害。六二在互巽中，巽为随顺，随顺不害。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>腓，随动之物也。以柔顺之质，而为感所牵，则凶。能守其中，不随外动，则吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六二顺而中，宜居以守，不宜随感而动。故虽凶，居则吉。</code></p>
+</li>
+<li><p><code>腓不自主，被动而随，若从其感，必有凶害。能居止守中，则感虽动亦不害。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其股，执其随，往吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其股，亦不处也。志在随人，所执下也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其股，执其随</strong> ： 股，大腿，行动的主力部分，象征强烈的行动欲。执，执着、坚持。固执地要跟着别人走。九三以阳居阳，刚而不中，又处内卦之终，上应于上六。刚躁好动，遇外诱即跃跃欲试，故 “亦不处也”。失其主，丧其守，志在随人，所以 “往吝”。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>股，行动之本也。感而动之，不能处也。执志随人，失其正也，故往必有吝。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>志随于人，以刚动之，必陷于过失。</code></p>
+</li>
+<li><p><code>大腿能行，故曰不处。随人而不由己，执志于下，故往必吝也。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞吉悔亡，憧憧往来，朋从尔思。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：贞吉悔亡，未感害也。憧憧往来，未光大也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>贞吉悔亡，憧憧往来，朋从尔思</strong> ： 憧憧，心神不定、思绪摇摆的样子，反复纠结、进退不定的状态。憧憧往来，心神不定、反复走动之貌，象征内心无主、取舍不定。朋从尔思，志同道合者会理解并顺从你的核心想法，因本质未偏离正道，但未光大，只是部分感通。</li>
+</ul>
+<p>九四居外卦之始，上体为兑，兑为口、为悦，主 “外诱”。刚居柔位，不中不正，最易 “心随境转”，故先戒以 “贞”。四与初六相应，本有相感之势；但四位多惧，若一任情感而动，容易失足。故首提 “贞”——以正自持，方可 “悔亡”。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>贞则吉，守正则悔亡也。憧憧往来，志未定也。朋从尔思，党类相应，未能光大也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>利在守正，不可妄动。旷荡往来，志不专也。</code></p>
+</li>
+<li><p><code>往来无定，故憧憧。朋从其思，但同类之应，非深感之至。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其脢，无悔。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其脢，志末也</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其脢，无悔</strong> ： 脢，脊背、背脊肉，身之正中。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>脢，近心之处也。感之深也。处得其正，故无悔。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>感之深而不失正，故无悔。志近而未至心，故曰志末。</code></p>
+</li>
+<li><p><code>脢者，心之所附，感之已深也。近心而不入心，志之末也。能感而中正，因此无悔。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其辅、颊、舌</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其辅颊舌，滕口说也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其辅颊舌，滕口说也</strong> ： 辅，两腮旁的骨、牙床。颊，面颊、脸颊。舌，舌头。滕口，张口、喋喋不休、口舌动的样子。说，通悦，取悦</li>
+</ul>
+<p>上六阴居卦极，与九三（盲动）相应，象征虚言。位高而无实，唯剩 “口说” 之应，故成 “滕口” 之象（“滕” 通 “腾”，腾涌、滔滔不绝之意），口惠而实不至。</p>
 ]]></content>
       <categories>
         <category>易学</category>
@@ -41467,135 +41557,144 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>六十四卦之泽风大过</title>
-    <url>/20251113153340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽风大过"><a href="#泽风大过" class="headerlink" title="泽风大过"></a>泽风大过</h1><p><img src="https://i.0920811.xyz/img_373.png"></p>
-<p>泽风大过卦，下巽（风、顺、入）上兑（泽、悦），大过，即太过，兑为泽、为悦，巽为风、为木，泽水淹舟，卦象四阳居中，两头阴柔，阳刚过头，阴阳失衡，重心过盛，故曰 大过。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">大过，栋桡。利有攸往，亨</span><br></pre></td></tr></table></figure>
+    <title>六十四卦之天地否</title>
+    <url>/20250922102639/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天地否"><a href="#天地否" class="headerlink" title="天地否"></a>天地否</h1><p><img src="https://i.0920811.xyz/img_352.png"></p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">否之匪人，不利君子贞，大往小来。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：大过，大者过也。栋桡，本末弱也。刚过而中，巽而说行，利有攸往，乃亨。大过之时大矣哉。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：否之匪人，不利君子贞。大往小来，则是天地不交，而万物不通也;上下不交，而天下无邦也。内阴而外阳，内柔而外刚，内小人而外君子。小人道长，君子道消也。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽灭木，大过。君子以独立不惧，遁世无闷。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>大过，大者过也</strong> ： 卦象四阳居中，上下（两头）阴柔，阳为大，阳刚过头，是为大过。</li>
-<li><strong>栋桡，本末弱也</strong> ： 栋，房梁、栋梁。桡，弯曲、中心承载过重。初、上皆为阴爻，中间四爻为阳爻，如栋梁之中间太重，两头太弱，会弯曲。</li>
-<li><strong>刚过而中，巽而说行，利有攸往，乃亨</strong> ： 中间四爻皆为刚爻，但有九二、九五刚居中位，巽而悦，外柔内刚，利有攸往。</li>
-<li><strong>泽灭木，大过。君子以独立不惧，遁世无闷</strong> ： 上兑为泽，下巽为木，泽水高涨，木被淹没，灭顶之灾象。大过之时，君子当独撑大梁，不倚傍两端弱枝，若时不可为，则退而内心安然不郁闷，当知时势所然。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">籍用白茅，无咎</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：籍用白茅，柔在下也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天地不交，否;君子以俭德辟难，不可荣以禄。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>籍用白茅</strong> ： 籍，在下面铺东西垫起来、垫衬、铺垫。白茅，古代祭祀时常用的洁白茅草，象征洁净、谦逊与郑重。</li>
+<li><strong>否之匪人</strong> ： 闭塞、不通、与 “泰” 相对。匪人，不正之人、小人、无德之人。正道被阻塞，不正之人得势。</li>
+<li><strong>不利君子贞</strong> ： 在这种闭塞的环境中，君子即使坚守正道，也难以取得好的结果。因为环境不利于正道的施展。</li>
+<li><strong>君子以俭德避难，不可荣以禄</strong> ： 俭，节制、收敛、不张扬。收敛锋芒，洁身自好，不要贪图爵禄荣华，等待时势转机。</li>
 </ul>
-<p>祭祀时将祭品都放置在白茅上，表示非常的谨慎细致。</p>
+<p>否卦和泰卦互为覆卦，泰卦阳爻上长，阴爻消退，君子（刚爻）道长，小人（柔爻）道消；否卦阴爻上长，阳爻消退，小人道长，君子道消。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
-<li><p><code>以其柔顺在卦之初，故得无咎。</code></p>
-</li>
 <li><p>王弼</p>
-<p><code>白茅者，微之至也；以微垫之，所以无咎。</code></p>
+<p><code>否者，闭塞之谓也。阴盛居内，阳隔居外，小人道长，君子道消，故曰否。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>柔顺在下，能承其上者也。</code></p>
+<p>  <code>君子当否世，宜退藏于密，保其正道，不与小人争权利，待时而出。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>否之世，小人道长，君子道消。君子当守其贞而避祸，不可图荣。</code></p>
 </li>
 </ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">枯杨生梯，老夫得其女妻，无不利。</span><br></pre></td></tr></table></figure>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拔茅茹，以其汇，贞吉，亨。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：老夫得其女妻，过以相与也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拔茅贞吉，志在君也。</span><br></pre></td></tr></table></figure>
 
-<ul>
-<li><strong>枯杨生稊（tí），老夫得其女妻</strong> ： 稊，通 荑，草木新生嫩芽、木更生。枯树发芽，年长男性得年轻女子为妻。杨木为阴，嫩芽为阳，老者（阳之过）得少女（阴之弱），喻阴中生阳，刚得柔助，阴阳合得其宜。老夫指九二，女妻指初六，</li>
-</ul>
+<p>初六是否卦最下爻，处卦之始。否卦下三爻皆阴（坤），象征 “小人道长”；但初六在下，仍有顺应而求通的可能。拔茅茹表示群体牵连之象：初六若动，则二、三随之，形成整体向上之势。若能守正（贞），则虽身处小人之位，也可志在君子、向往君主（九五阳爻）。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
-<li><p><code>枯者复生，危者得助，皆所以济过。</code></p>
-</li>
-<li><p><code>阴阳得配，故得无不利。</code></p>
-</li>
 <li><p>王弼</p>
-<p><code>枯杨生稊，象枯而更生也。刚得柔助，故无不利。</code></p>
+<p><code>初六以阴处下，虽小人位，能拔茅而动群，志在从君，故吉。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>大过之时，阳盛为害。此爻阳居阳位，而得女妻之象，刚柔相济，所以无不利。</code></p>
+<p>  <code>否极之初，虽在小人之列，但志向君正，能拔动群类而求通，吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>拔茅之象，言其相引而动。能守正，则虽处否世之初，亦可亨通。</code></p>
 </li>
 </ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">栋桡，凶</span><br></pre></td></tr></table></figure>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包承。小人吉，大人否，亨。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：栋桡之凶，不可以有辅也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人否亨，不乱群也。</span><br></pre></td></tr></table></figure>
 
-<p>九三处卦中，取栋梁之象看，相当于房屋得大梁最中间，因为本末弱而弯曲，屋顶要塌下来，很危险，有凶。表示处在大厦将倾无可挽救的时局中，独木难支。</p>
+<p>六二阴爻居阴位，得位，又在下卦中正（居中），正应 九五，虽然下卦都是阴（小人），但六二得中正之位，又与九五刚阳之君相应，所以君子守正不乱，反而能 “否亨”。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
-<li><p><code>承重之处也，阳过而不能任，是以桡而凶。</code></p>
-</li>
-<li><p><code>桡之凶，不可救也。</code></p>
-</li>
 <li><p>王弼</p>
-<p><code>栋之所系，任最为重。刚过不中，无所受助，故桡。</code></p>
+<p><code>六二以阴居阴，中而得正，能自守也。小人以守承为吉；大人以守中为亨。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>以刚处中，上下皆不能助之，必桡而凶。</code></p>
+<p>  <code>小人能安于承顺，则得吉；大人当否之时，不可施为，但守正而不乱群，亦谓之亨。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六二以阴柔居中，能承顺也。小人能守承则吉；大人处否，能守中正，不乱于群，亦亨。</code></p>
 </li>
 </ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">栋隆，吉，有它吝。</span><br></pre></td></tr></table></figure>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">包羞。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：栋隆之吉，不桡乎下也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：包羞，位不当也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>栋隆之吉，不桡乎下也</strong> ： 隆，隆起、向上拱起。栋梁向上弯曲，而不是向下，所以吉。</li>
+<li><strong>包羞</strong> ： 羞，耻辱、羞耻、羞辱。包容（或蒙受）羞耻、羞辱（包羞）。</li>
 </ul>
+<p>六三爻阴爻居阳位，居位不当（位不当也）。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
-<li><p><code>栋隆者，举其所桡也。然有它则吝，须专一而不旁扰。</code></p>
-</li>
-<li><p><code>九三之桡，由九四之举而吉。</code></p>
-</li>
 <li><p>王弼</p>
-<p><code>隆者，举也。能举其下，故吉。</code></p>
+<p><code>六三以阴居阳，不当位也。知其不当，而包容其羞，不敢自显。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>九四以刚处柔而得位，举其下之桡者，故吉。</code></p>
+<p>  <code>三以阴柔居刚位，不中不正，自知其辱而包容之，不能正也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>包羞者，知其不当位而内自愧辱也。</code></p>
 </li>
 </ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">枯杨生华，老妇得其士夫。无咎无誉。</span><br></pre></td></tr></table></figure>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有命无咎，畴离祉。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：枯杨生华，何可久也；老妇士夫，亦可丑也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：有命无咎，志行也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>枯杨生华，何可久也；老妇士夫，亦可丑也</strong> ： 华，花、非根芽。士夫，青年男子、阳刚强盛。花发于梢，只花不果，古人有 “老树发花，不久之象”。比九二生稊差一些，稊是嫩芽，可长成新枝。老妇配少夫，阴（老）居主位而阳（少）反来就之， 虽可一时匹配，却难以持续生育、白头。女长男少、阴乘阳，在古人眼里 “颠倒失配”，虽能成局，终显不雅。</li>
+<li><strong>有命无咎，畴离祉</strong> ： 有命，有天命、受命、奉命行事。畴，同类、同道者、群体。离，依附、共享、归向、接近。意即同类相亲，得蒙福佑。命指九五（君）之命。</li>
 </ul>
-<p>九二得初阴之助而生稊，九五以刚在刚，三阳皆不为用，独于上六阴阳相比，故曰夫妇。上六阴极而衰，在上，故曰老妇。九五阳刚居下，故曰士夫（未娶妻者之谓）。从夫妇之序而论，当曰士夫得老妇，今曰老妇得士夫者，原其配偶之所起，志出老妇，老妇首倡而求士夫，丑体尤在老妇。</p>
+<p>九四虽非正位，但因为奉天命、行正志，所以不会有过失。九四阳爻处乾，能与群体相合（畴），并归附于福祉（离祉）。说明在否运中，阳刚渐次发挥作用，能带来一定的吉利。它虽处于 “否” 境中期，却因属阳爻（代表刚健），能坚守正道、不被小人裹挟，因此 “承命而行”，自然无灾祸；</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
-<li><p><code>阴阳不当，虽无咎，亦不足称善。</code></p>
-</li>
-<li><p><code>美而不实，有丑之象故无誉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>其象虽美，而非正配，故无誉。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">过涉灭顶，凶。无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：过涉之凶，不可咎也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>过涉灭顶，凶。无咎。</strong> ： 过度的涉水、冒险，有灭顶之灾。处于大过卦时，形势危急，大厦将倾，情势所迫，被迫涉险，难免遭厄。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>位穷力竭，涉险而凶，然不可责。</code></p>
-</li>
-<li><p><code>灭顶之危，情所迫，故虽凶而无咎。</code></p>
-</li>
 <li><p>王弼</p>
-<p><code>处大过之极，不胜其任，故凶；非咎，势然也。</code></p>
+<p><code>九四以阳居阴，不正也；然承九五之中正，得君命以行志，故有命无咎。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>上六处卦之极穷，不得不涉险，故凶；然非其过。</code></p>
+<p>  <code>九四居否之时，得君命以行其志，则虽失位而无咎，且与同类相应，皆得其福。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>有命，得命也；畴离祉，同类皆得福也。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">休否，大人吉。其亡其亡，系于苞桑。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：大人之吉，位正当也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>休否</strong> ： 休，休息、停止、休止、终结。指否之闭塞之势发展到此处也该结束了。</li>
+<li><strong>其亡其亡，系于苞桑</strong> ： 苞桑，桑树的根。其亡其亡，时刻警惕将要灭亡，才能像将根基系在丛生的桑树上（系于苞桑）一样稳固。</li>
+</ul>
+<p>九五爻居位正当，兼具刚健之性（阳爻）与中正之德（中位），是打破 “天地不交、上下隔绝” （休否）的核心力量，它能推动 “小人道长” 的局面逆转，让闭塞的环境开始通达，标志着 “否” 的困境进入终结阶段。</p>
+<p> 九五虽终结 “否” 境，但 “小人道长” 的余波未散，正道根基尚未完全稳固，若因 “吉” 而放松警惕，可能让闭塞局面复现。因此需时刻警惕（其亡其亡），依托坚固的根本（系于苞桑、中正之道），才能免于祸患（否）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五中正居尊，否可休也。然否方休，危未远，故曰‘其亡其亡’，唯系于中正之道，如系苞桑，乃可免也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>否至此则有转机。九五以中正居尊，能休否而吉。但危机犹在，非深根固守不可。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五中正，能止否。然休否之初，危机尚存，故再言其亡。必系于至坚至固，如苞桑之不可拔，乃得安吉。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">倾否，先否后喜。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：否终则倾，何可长也。</span><br></pre></td></tr></table></figure>
+
+<p>上九，居卦之终，阳爻在乾上之极，阳气已充，已极盛。阴气在下卦，已不能上行；象征否运发展至极，自然转向，即否极泰来 。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>否至于上九而穷极，故必倾也。倾否则泰道生矣。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>否穷于上，则必倾；否不可长，极则反，故有喜。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>倾否，谓否极而反泰也。否不可长，终必有变。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -41604,150 +41703,148 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之泽雷随</title>
-    <url>/20251001132040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽雷随"><a href="#泽雷随" class="headerlink" title="泽雷随"></a>泽雷随</h1><p><img src="https://i.0920811.xyz/img_357.png"></p>
-<p>随，上（外）兑（泽、悦）下（内）震（雷、动），动而悦，象征着顺应（时势）、顺势而为、随时势而动。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随，元亨，利贞，无咎。</span><br></pre></td></tr></table></figure>
+    <title>六十四卦之天火同人</title>
+    <url>/20250923102639/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天火同人"><a href="#天火同人" class="headerlink" title="天火同人"></a>天火同人</h1><p><img src="https://i.0920811.xyz/img_353.png"></p>
+<p>天火同人，上（外）卦为乾（天），下（内）卦为离（火），天在上，火在下，火性向上，与天相合，象征着人与人之间的和谐相处。同人，与人同道，同心同德、聚合同道，讲合作与共济。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人：同人于野，亨。利涉大川，利君子贞。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：随，刚来而下柔，动而说，随。大亨贞，无咎，而天下随时。随时之义大矣哉!</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：同人，柔得位得中，而应乎乾，曰同人。同人曰，同人于野，亨。利涉大川，乾行也。文明以健，中正而应，君子正也。唯君子为能通天下之志。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽中有雷，随;君子以向晦入宴息。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与火，同人;君子以类族辨物。</span><br></pre></td></tr></table></figure>
 
-<ul>
-<li><strong>刚来而下柔，动而悦</strong> ： 随卦从否卦变来，否卦上九和初六交换，上九下到随卦初九位，处柔爻之下。否卦天地不通，上下两爻交换，天地往来，阴阳交流，变得通常，故元亨 0</li>
-<li><strong>君子以向晦入宴息</strong> ： 晦，夜晚、日暮、黄昏。君子效法卦象，随时而行：白天活动，夜晚歇息，动静有度，随顺自然。随之为义，随时而动，不失其正。</li>
-</ul>
+<p>全卦只有六二为柔爻，柔顺中正，正应九五，上下应合，为全卦主爻，柔爻于其他刚爻同心同德，称同人。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>随者，随时也。随时以动，则无往不利。</code></p>
+<p><code>同人者，谓同其道也。非徒同人，必以道同，乃可亨。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>随时而动者，非附和而已，乃因时顺理之谓。</code></p>
+<p>  <code>同人必以道合，不以利合。能公于天下，则亨。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>随，从也。随时而动，随理而行，则元亨利贞无咎。</code></p>
+<p>  <code>同人于野，言无私也。利涉大川，言刚健有为。惟君子能持正，以通天下之志。</code></p>
 </li>
 </ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">官有渝，贞吉。出门交有功。</span><br></pre></td></tr></table></figure>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于门，无咎。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：官有渝，从正吉也。出门交有功，不失也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：出门同人，又谁咎也。</span><br></pre></td></tr></table></figure>
 
-<ul>
-<li><strong>官有渝</strong> ： 官，犹常（道）也。有渝者，变革旧常。能随时改正，必吉。渝，改变、变动、变化。</li>
-</ul>
-<p>初九刚来而下柔，阳爻居阳位，得正，为随卦主爻。</p>
+<p>出门同人，这里的 <strong>出门</strong> 象征着起点或初始阶段，门更象征 <strong>亲疏、内外、私域与公域得边界</strong> 。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>官有渝者，变常也。能变旧而随时，不失正，则吉。</code></p>
+<p><code>初九阳刚得正，志在同人，但力有限，始同于门，然亦无咎。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>随者，当随时而动，不可执常。初九刚正，能随时改易，所以吉。</code></p>
+<p>  <code>同人之道，必广而公。初在卑位，未能大同，先同于门，亦已善矣。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>官有渝，谓能变通。随时而变，从正则吉；交际而守正，亦有功。</code></p>
+<p>  <code>初九刚正，欲同于人，始于门户之内，无咎也。能出门同人，则无咎之至也。</code></p>
 </li>
 </ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系小子，失丈夫。</span><br></pre></td></tr></table></figure>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于宗，吝。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系小子，弗兼与也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于宗，吝道也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>系小子，失丈夫</strong> ： 系，依附、追随、束缚。六二和九五为正应，可以为丈夫，初九为随卦主爻，六二比邻初九，初九为震，为长子，可为小子。若为女性，则顾念子而失丈夫，有离异之象；若男性，丈夫也可为德厚长者，小子为平庸之辈。</li>
+<li><strong>同人于宗</strong> ： 宗，本宗、宗族、家族内部、表示有血缘或亲近关系的小群体、亲信、小圈子。这种行为是一种狭隘、保守的方式。虽然有一定的亲和力，但过于局限，缺乏广泛性。</li>
 </ul>
+<p>阴爻居中（得中），柔顺中正，本有善德。只正应九五（阳刚中正之君），忽视了其他刚爻，故为取吝之道。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>六二以柔居中，本应九五。若系初九，则失九五。</code></p>
+<p><code>六二柔中而得正，能与人同，然以宗为限，不能大通，故吝。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>随在得其所随。六二应九五而正，若舍之而系于初九，是失正也。</code></p>
+<p>  <code>同人贵在大公，不可偏私。二以柔居中，德本可同，但局于宗族，未免为吝。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>小子，指初九；丈夫，指九五。六二居中得正，应于九五，正随之道也。若系初九，则失九五矣。</code></p>
+<p>  <code>同人于宗，谓偏于所亲而已，不广于天下也。吝道也。</code></p>
 </li>
 </ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系丈夫，失小子。随有求，得，利居贞。</span><br></pre></td></tr></table></figure>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">伏戎于莽，升其高陵，三岁不兴。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系丈夫，志舍下也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：伏戎于莽，敌刚也。三岁不兴，安行也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>系丈夫，失小子</strong> ： 舍初九而随九四。</li>
-<li><strong>志舍下也</strong> ： 三欲随上，舍近而求远，是舍小子而随丈夫。</li>
+<li><strong>伏戎于莽</strong> ： 伏，埋伏、隐藏。戎，军队、部队。莽，草莽、草丛、丛林之地。</li>
+<li><strong>升其高陵</strong> ： 登上高地（高丘）观察局势。高陵，象征占据有利地形、隐藏实力、谨慎观望。</li>
+<li><strong>三岁不兴，安行也</strong> ： 三年（多年）不会发动进攻，要确保安全稳定。象征谨慎行事，避免轻举妄动。</li>
 </ul>
+<p>九三爻是同人卦的第三爻，处于下卦的上位，代表积极主动、刚健、果断的品质，但处于下卦与上卦的交界，位置险要，自身力量尚未完全整合，也未与上卦的正道核心（九五）形成呼应。 <strong>伏戎于莽，升其高陵，三岁不兴</strong> 强调了在交往中遇到强大对手时，需要采取隐蔽和谨慎的策略。要占据有利地形，做好充分准备，但不要轻易发动攻击，以确保安全和稳定。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>二则随小子而失丈夫，三则随丈夫而失小子。志舍下也，故利居贞。</code></p>
+<p><code>九三刚而不中，处势不利，故伏戎以待，不敢动也。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>随在择所随，三能舍近就远，志在上也。</code></p>
+<p>  <code>九三处险，志在同人，但上有强刚，不得进。故伏兵草莽，登高以望，久而不举，以安其行。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>小子谓初九，丈夫谓九五。三舍近随远，志在随正也。</code></p>
+<p>  <code>九三刚正而不中，上应九六之刚，故为敌刚。潜兵不动，得以自安。</code></p>
 </li>
 </ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随有获，贞凶。有孚在道，以明，何咎。</span><br></pre></td></tr></table></figure>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">乘其墉，弗克攻，吉。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：随有获，其义凶也。有孚在道，明功也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：乘其墉，义弗克也，其吉，则困而反则也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>随有获，贞凶</strong> ： 获，获利、获得。九四阳爻居阴位，刚而位不当，又处于近君位，易因刚健（锋芒过露）而居功逐利，招致凶险。</li>
-<li><strong>有孚在道，明功也</strong> ： 孚，诚心、诚信、诚实、真诚。明，明辨、清晰。随人做事，居功获利，其义凶。心怀诚信，明辨所处，则无咎害。</li>
+<li><strong>乘其墉，弗克攻</strong> ： 墉，城墙、防御工事。登上城墙，象征着占据了有利位置，有了进攻的机会。但没有发动攻击。这表示在有机会发动攻击时，选择了克制和谨慎。</li>
+<li><strong>义弗克也</strong> ： 义，指道义、正义。登上城墙，但按道义不能发动攻击。</li>
+<li><strong>其吉，则困而反则也</strong> ： 这里的 困而反则 指在困境中回归正道，遵循正确的原则。</li>
 </ul>
+<p>九四为阳爻居阴位（位不正），处于上卦 “乾”（刚健）的初爻，紧邻下卦 “离”（文明）的九三（阳爻），既有阳刚进取的本能，又因 “位不正” 而有顾虑。 <strong>弗克攻</strong> 不是不能攻，而是不应攻（义弗克也）， <strong>同人 的本质是 以正道聚人，而非 以武力征服</strong> 。</p>
+<p>九四虽 “位不正”（阳爻居阴位），却能得 “吉”，核心在于 “困而反则” ：在 “进取与道义” 的困境（位不当，阳爻居阴位，易躁动失道）中回归正道（反则、义弗克也）</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>九四失位，随而有获，非正也，故贞凶。唯有孚守道，乃可以免咎。</code></p>
+<p><code>九四以阳居阴，失位而不中，志欲进而不得，故象乘墉。然义不可攻，止而不攻，是以吉也。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>九四以刚居阴位，非正。若随而得，必有凶。然能诚信守道，则虽得，亦无咎。</code></p>
+<p>  <code>九四志欲同人，然义不可攻，能止其欲而不行，是以吉。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>随有获，非正也，故凶。有孚在道，则虽获亦可，无咎。</code></p>
+<p>  <code>乘其墉者，有攻之势也；弗克攻者，义不可也。知义而止，故吉。</code></p>
 </li>
 </ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">孚于嘉，吉。</span><br></pre></td></tr></table></figure>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人，先号啕而后笑。大师克，相遇。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：孚于嘉，吉;位正中也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人之先，以中直也。大师相遇，言相克也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>孚于嘉</strong> ： 嘉，美好、优秀、善的人或事。</li>
+<li><strong>先号啕而后笑</strong> ： 号啕，大声哭叫。这里比喻一开始遭遇隔阂、不合，难以同人。最后能和同，心志融洽而喜乐。</li>
+<li><strong>大师克，相遇</strong> ： 大师，大军。克，克服、攻克。克服同人得障碍，实现同人。</li>
+<li><strong>同人之先，以中直也</strong> ： “号啕” 的根源是 “中直”，九五坚守中正刚直，直率不曲，所以容易先有冲突，后才化解</li>
 </ul>
-<p>九五居尊位，阳爻居阳位，又在全卦的中位，正中而得正。以刚健中正之德居尊位，又能以孚随正道、美善之事（嘉），所以合随道。为全卦最好的一爻。</p>
+<p>九五阳爻居尊位（君位），而且居中，正是 “中直” 的位置。它与六二正应（阴柔中正），上下呼应，构成同人之象。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>九五刚中居尊，孚信在上，下应六二，故孚于嘉而吉。</code></p>
+<p><code>九五以中正居尊，志直不曲，故与人同，先相克而后相亲。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>九五以刚中正居尊位，应六二之柔顺，君臣相孚，随从正道，吉。</code></p>
+<p>  <code>刚直之人，未易相合，初多乖戾；然志在道同，终必相合</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>孚于嘉，言以诚信随美善也。九五中正居尊，正应六二，吉之道也。</code></p>
+<p>  <code>先号啕而后笑，谓其初虽有相克之难，然终于相遇而合也。</code></p>
 </li>
 </ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拘系之，乃从维之。王用亨于西山。</span><br></pre></td></tr></table></figure>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">同人于郊，无悔。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拘系之，上穷也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：同人于郊，志未得也。</span><br></pre></td></tr></table></figure>
 
-<ul>
-<li><strong>拘系之，乃从维之</strong> ： 拘系，拘束、束缚、捆绑。从、跟从、追随、顺从。维，维系、维持、加固。</li>
-<li><strong>王用亨于西山</strong> ： 用亨，通享，祭祀、祭礼。西山，西周的重要祭祀之地（传为周文王祭祀先祖或天地的场所，象征 “庄重、终结性的仪式”）</li>
-</ul>
-<p>上六阴爻处随卦最上（极），随之至极，随之穷尽，只知（能、过渡）追随，反而被束缚、限制。</p>
+<p>“郊” 在 “野”（旷野，“同人” 理想之境）与 “城”（核心区域）之间，意味着上九已突破私域局限，能在更广阔的范围聚合同道，但尚未完全进入 “通天下之志” 的终极理想（同人于野）</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
 <li><p>王弼</p>
-<p><code>上六随之极，柔而无正，故拘系。然犹能随正，则乃可维。</code></p>
+<p><code>上九处同人之终，志在大同，而位极孤危，不能尽合，故同人于郊，无悔而已。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>随之至极，必至困穷。然能返正，从维大道，犹可以济。</code></p>
+<p>  <code>同人当以天下为公，上九虽同人于郊，已出门户，不为私比，然犹未达于大同，故无悔而志未得。</code></p>
 </li>
 <li><p>朱熹</p>
-<p>  <code>拘系之，随极而困也。乃从维之，犹可以归正。王用亨于西山，言随正以大祭，归于至诚。</code></p>
+<p>  <code>同人于郊，犹未尽天下之同也。然已不私比，故无悔</code></p>
 </li>
 </ul>
 ]]></content>
@@ -41756,266 +41853,169 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之泽山咸</title>
-    <url>/20251119103840/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽山咸"><a href="#泽山咸" class="headerlink" title="泽山咸"></a>泽山咸</h1><p><img src="https://i.0920811.xyz/img_376.png"></p>
-<p>泽山咸，下（内）艮（山、止）上（外）兑（泽、悦），咸，感也。阴阳正应相互感应，交感流通，为夫妇之道。咸卦为《周易》下经首卦。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸，亨，利贞。取女吉。</span><br></pre></td></tr></table></figure>
+    <title>六十四卦之天雷无妄</title>
+    <url>/20251016103340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天雷无妄"><a href="#天雷无妄" class="headerlink" title="天雷无妄"></a>天雷无妄</h1><p><img src="https://i.0920811.xyz/img_365.png"></p>
+<p>天雷无妄，上（外）乾（天、刚健）下（内）震（雷、动），动而健。无妄，即无虚妄、不妄动、不妄为、坚守正道。天下雷行，刚健守正，物与无妄。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，元，亨，利，贞。其匪正有眚，不利有攸往。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：咸，感也。柔上而刚下，二气感应以相与。止而说，男下女。是以亨利贞，取女吉也。天地感而万物化生，圣人感人心而天下和平。观其所感，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：无妄，刚自外来而为主於内。动而健，刚中而应，大亨以正，天之命也。其匪正有眚，不利有攸往。无妄之往，何之矣？天命不佑，行矣哉？</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰： 山上有泽，咸。君子以虚受人。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸，感也</strong> ： 咸卦由天地否卦上九和六三交换而来，否卦上九和六三阴阳正应，相互交换是柔上而刚下，成为泽山咸。阴阳交感，上下流通，打破否之阻塞，是以亨通。</li>
-<li><strong>止而说，男下女，是以亨利贞，取女吉也</strong> ： 艮为山为止、为少男，兑为泽为悦、为少女。少男位居少女之下，是少男以谦恭卑下的态度和少女相处，是男向女求婚之象，故取女吉也。</li>
-<li><strong>山上有泽，咸。君子以虚受人</strong> ： 山上有泽，象征大山能够包容下大泽，有广阔的胸怀，君子观此卦，应胸怀广阔，虚怀若谷，有容人之度。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其拇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其拇，志在外也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天下雷行，物与无妄；先王以茂对时，育万物。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>咸其拇，志在外也</strong> ： 拇，大脚趾。象征感应刚刚发生，尚在最轻微、最表面的阶段，尚未深入，也未行动。初六有九四为正应，故言志在外。</li>
+<li><strong>其匪正有眚，不利有攸往</strong> ： 匪，通非。眚，灾祸、过错， <strong>灾为自身无措而受祸，眚为自身招祸</strong> 。天雷为威严和正义之象，天下震雷施威，诸邪避退，虚妄难存，此时若不顾天时，行为不正，就是自招灾眚。天打雷劈之时，不宜出门远行（不利有攸往）。</li>
+<li><strong>刚自外来而为主于内</strong> ： 无妄卦为遁卦（天山遁）上九刚爻从外卦来到（返、复）初九成为内卦之主。爻从上往下移动称为 “来”，从下往上移动称为 “往”。</li>
+<li><strong>动而健，刚中而应，大亨以正，天之命也</strong> ： 震为动，乾为健。六二和九五上下正应。</li>
+<li><strong>无妄之往，何之也？天命不佑，行矣哉？</strong> ： 处无妄之时，又能何往？无妄之时，天下雷行，不利有攸往，天命不佑，不适合出行。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
+<li><p><code>无妄者，不虚妄也。凡妄动而失正，则有灾咎。</code></p>
+</li>
+<li><p><code>无妄者，至诚无伪之谓。君子体天以诚，则无妄而顺；妄则逆天而有眚。</code></p>
+</li>
 <li><p>王弼</p>
-<p><code>拇，动之始也。感之微也。志动于外，故曰咸其拇。</code></p>
+<p><code>无妄者，天命也。天行健而不息，动以正而不妄。人法天而动，故亨。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>感之始也，意向未定，才动于外耳。</code></p>
-</li>
-<li><p><code>拇为足端，所感最微。夫妇之道，感于微，乃能成天下之大。</code></p>
+<p>  <code>无妄之道，天理自然。若以人欲妄动，则天命不佑。</code></p>
 </li>
 </ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其腓，凶，居吉。</span><br></pre></td></tr></table></figure>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，往吉。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽凶居吉，顺不害也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之往，得志也。</span><br></pre></td></tr></table></figure>
+
+<p>无妄卦卦辞言 “不利有攸往”，初九爻辞说 “往吉”，为时势（局部取象），往吉是因为初九为全卦主爻，无妄（刚自外来而为主于内，动而建），得志，在下卦震里，震为动、为足，可以往。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>无妄，正也。往吉者，动正而应时也。初九阳正得位，动而顺天，故吉。</code></p>
+</li>
+<li><p><code>初九阳刚得位，以正而动，不妄为也。其往也正，故吉。得志者，志行也。</code></p>
+</li>
+<li><p><code>初九为震之首，动而刚正，是无妄之行。顺天而动，非私而往，故吉。得志，谓行合其志也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄，顺天也。初刚正得位，动以顺天，无妄也。往而不违其正，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄者，天理自然也。初九刚正得位，行合天理，无妄之往，故吉。得志者，得其天理之志也。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不耕获，不菑畲，则利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不耕获，未富也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>咸其腓</strong> ： 腓，小腿、小腿肚。六二居内卦之中，得位得中，本有柔顺之德，宜静不宜动。虽有凶象，但安居可吉，是因为顺从正道，故不受害。六二在互巽中，巽为随顺，随顺不害。</li>
+<li><strong>不耕获，不菑畬（zī yú）</strong> ： 耕，耕种、耕田、耕地。菑，开垦荒地、开荒。畬，熟地、耕种多年的好地。</li>
+</ul>
+<p>无妄卦是遁卦（天山遁）上九返初，无妄卦的六二是遁卦的初六上移，六二是得现成天地，故言 “不耕获，不菑畬”，即坐享其成，所以 “利有攸往”。 <strong>坤为不富，巽卦为富，六二之上是互卦巽，故言 “未富”</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>不耕获，不菑畬，言无妄也。顺时而往，利也。</code></p>
+</li>
+<li><p><code>耕获，谓务农以求食；菑畬，谓初熟再熟之地。言不劳而欲得，妄也。六二柔中顺应，不妄求，故利有所往。</code></p>
+</li>
+<li><p><code>不耕获，不菑畬，言不妄取。六二中正，顺而不妄，故利有攸往。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>不耕而获，不菑而畬，妄也。今不妄而顺天，故利有攸往。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>不耕获，不菑畬者，言无妄而后可以往也。若妄为以求得，则妄而不利。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之灾，或系之牛，行人之得，邑人之灾。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：行人得牛，邑人灾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>无妄之灾</strong> ： 意外之祸、无端之厄。并非因自身妄为所致的灾祸。坚守正道却遭遇的意外祸患</li>
+<li><strong>或系之牛，行人之得，邑人之灾</strong> ： 如有人把牛系在邑中，行人路过误以为无人所有，将牛牵走；于是行人得牛（误得），邑人失牛（无妄之灾）。即使自身无妄、不作妄行，仍可能受祸于他人之妄。行人之得，原非其分；邑人之灾，原非其咎。</li>
+</ul>
+<p>六三爻不中不正（阴爻居阳位），承上接下，所处不稳（阴柔不正，动处之位；），已被外部环境干扰，自身无妄（守正不妄为），却因他人行为、环境关联被动遭遇灾祸。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>阴居阳位，不得其正，动而妄应，故无妄之灾。或系之牛，非己之牛；行人得之，邑人失也。</code></p>
+</li>
+<li><p><code>六三阴柔处阳，非其位也。虽无妄动，而居动之上，感应不正，故有灾。譬如牛系邑中，行人误取，邑人受害。</code></p>
+</li>
+<li><p><code>无妄者，天理也。然位不当，动不中，则虽无妄亦有灾。此天命自然，不可怨天尤人。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>无妄之灾者，非己之妄而祸及也。牛者，财也；行人得之，邑人失之。得非其有，灾非其罪，天理自然。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>无妄之灾者，非己之妄而祸至。阴居阳位，不得正也。行人得牛，邑人之灾。天地之理，或然也。君子遇之，安于命而不怨。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">可贞，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：可贞无咎，固有之也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>可贞无咎，固有之也</strong> ： 坚守正道（无妄、顺天道、守本心），即可避免过错与风险。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
+<li><p><code>九四阳刚而近君，动而能止，是可贞也。固有之，谓天性也。</code></p>
+</li>
+<li><p><code>九四阳刚，处上卦之初，近君之地。居不正位，若妄动则有咎，能守贞则无咎。其无咎者，性固有之，非勉强也。</code></p>
+</li>
+<li><p><code>九四以阳居阴，居险之地，若妄则害，守贞则安。此其天性刚正，固有之也。</code></p>
+</li>
 <li><p>王弼</p>
-<p><code>腓，随动之物也。以柔顺之质，而为感所牵，则凶。能守其中，不随外动，则吉。</code></p>
+<p><code>九四阳而居阴，不得位也。处无妄之时，能守正不妄，则无咎。固有之者，性之然也。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>六二顺而中，宜居以守，不宜随感而动。故虽凶，居则吉。</code></p>
-</li>
-<li><p><code>腓不自主，被动而随，若从其感，必有凶害。能居止守中，则感虽动亦不害。</code></p>
+<p>  <code>处无妄之时，居高之位，动而近君，最可妄。能守正不妄，固其本性，故无咎。</code></p>
 </li>
 </ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其股，执其随，往吝。</span><br></pre></td></tr></table></figure>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄之疾，勿药有喜。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其股，亦不处也。志在随人，所执下也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之药，不可试也。</span><br></pre></td></tr></table></figure>
 
 <ul>
-<li><strong>咸其股，执其随</strong> ： 股，大腿，行动的主力部分，象征强烈的行动欲。执，执着、坚持。固执地要跟着别人走。九三以阳居阳，刚而不中，又处内卦之终，上应于上六。刚躁好动，遇外诱即跃跃欲试，故 “亦不处也”。失其主，丧其守，志在随人，所以 “往吝”。</li>
+<li><strong>无妄之疾，勿药有喜</strong> ： 并非由妄为所致的疾病，自然之困、外部环境使然。顺天理者，无需外求而自安。</li>
 </ul>
 <p><strong>古人注解</strong> ：</p>
 <ul>
+<li><p><code>无妄之疾，天灾也。勿药者，顺天也。有喜者，天复也。</code></p>
+</li>
+<li><p><code>无妄之疾，谓非妄而病也。居中守正，不妄治，天自复之，故有喜。若妄药试之，反害也。</code></p>
+</li>
+<li><p><code>九五阳刚中正，得位而应二。虽有小疾，非妄所致，勿药而有喜。若试药，则妄也。</code></p>
+</li>
 <li><p>王弼</p>
-<p><code>股，行动之本也。感而动之，不能处也。执志随人，失其正也，故往必有吝。</code></p>
+<p><code>疾者，阴气病阳也。以阳刚中正居尊，虽有小疾，顺理勿药，自然有喜。妄药者，妄为也，不可试。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>志随于人，以刚动之，必陷于过失。</code></p>
-</li>
-<li><p><code>大腿能行，故曰不处。随人而不由己，执志于下，故往必吝也。</code></p>
+<p>  <code>处无妄之时，虽有疾害，非妄而至，顺而安之，则可喜矣。若妄治之，则妄也。</code></p>
 </li>
 </ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞吉悔亡，憧憧往来，朋从尔思。</span><br></pre></td></tr></table></figure>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无妄，行有眚，无攸利。</span><br></pre></td></tr></table></figure>
 
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：贞吉悔亡，未感害也。憧憧往来，未光大也。</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无妄之行，穷之灾也。</span><br></pre></td></tr></table></figure>
 
-<ul>
-<li><strong>贞吉悔亡，憧憧往来，朋从尔思</strong> ： 憧憧，心神不定、思绪摇摆的样子，反复纠结、进退不定的状态。憧憧往来，心神不定、反复走动之貌，象征内心无主、取舍不定。朋从尔思，志同道合者会理解并顺从你的核心想法，因本质未偏离正道，但未光大，只是部分感通。</li>
-</ul>
-<p>九四居外卦之始，上体为兑，兑为口、为悦，主 “外诱”。刚居柔位，不中不正，最易 “心随境转”，故先戒以 “贞”。四与初六相应，本有相感之势；但四位多惧，若一任情感而动，容易失足。故首提 “贞”——以正自持，方可 “悔亡”。</p>
+<p>上九是全卦之终位，阳刚至极、无位无应，象征无妄之道行至极处，若仍欲前行，则成妄动。人虽是无妄之心，但当时机已尽、势不可为，若仍勉强妄行，则必有灾。</p>
 <p><strong>古人注解</strong> ：</p>
 <ul>
+<li><p><code>阳穷于上，过而不止，虽无妄心，行则有灾。</code></p>
+</li>
+<li><p><code>上九阳刚居上，穷极之地也。虽无妄心，而行则违时，故有眚，无攸利。</code></p>
+</li>
+<li><p><code>上九阳穷在上，不中不正。虽无妄心而行，则有眚，无所利。穷极不知止，灾之道也。</code></p>
+</li>
 <li><p>王弼</p>
-<p><code>贞则吉，守正则悔亡也。憧憧往来，志未定也。朋从尔思，党类相应，未能光大也。</code></p>
+<p><code>无妄之行，谓不合时也。处穷而行，是以有眚。知止者无咎，不止者自取其灾。</code></p>
 </li>
 <li><p>程颐</p>
-<p>  <code>利在守正，不可妄动。旷荡往来，志不专也。</code></p>
-</li>
-<li><p><code>往来无定，故憧憧。朋从其思，但同类之应，非深感之至。</code></p>
+<p>  <code>穷则止，天理也。上九穷而不止，是以有灾。虽无妄意，而行之妄也。</code></p>
 </li>
 </ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其脢，无悔。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其脢，志末也</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其脢，无悔</strong> ： 脢，脊背、背脊肉，身之正中。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>脢，近心之处也。感之深也。处得其正，故无悔。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>感之深而不失正，故无悔。志近而未至心，故曰志末。</code></p>
-</li>
-<li><p><code>脢者，心之所附，感之已深也。近心而不入心，志之末也。能感而中正，因此无悔。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其辅、颊、舌</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其辅颊舌，滕口说也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其辅颊舌，滕口说也</strong> ： 辅，两腮旁的骨、牙床。颊，面颊、脸颊。舌，舌头。滕口，张口、喋喋不休、口舌动的样子。说，通悦，取悦</li>
-</ul>
-<p>上六阴居卦极，与九三（盲动）相应，象征虚言。位高而无实，唯剩 “口说” 之应，故成 “滕口” 之象（“滕” 通 “腾”，腾涌、滔滔不绝之意），口惠而实不至。</p>
 ]]></content>
       <categories>
         <category>易学</category>
       </categories>
-  </entry>
-  <entry>
-    <title>Django 模板语言</title>
-    <url>/202303241517/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.11</li>
-<li>Django 4.1</li>
-</ul>
-<h1 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h1><p>在 Django 4.1 中，使用静态文件的方法与之前的版本相同。以下是使用静态文件的步骤：</p>
-<ol>
-<li><p>在 <code>settings.py</code> 中设置静态文件目录：</p>
- <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">STATIC_URL = <span class="string">&#x27;/static/&#x27;</span></span><br><span class="line">STATICFILES_DIRS = [</span><br><span class="line">    BASE_DIR / <span class="string">&quot;static&quot;</span>,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><code>STATIC_URL</code> 是静态文件 URL 的前缀。</li>
-<li><code>STATICFILES_DIRS</code> 是一个列表，其中包含要在其中查找静态文件的目录。</li>
-</ul>
-</li>
-<li><p>在 HTML 文件中使用静态文件</p>
- <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Static File Example<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> <span class="attr">type</span>=<span class="string">&quot;text/css&quot;</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;css/style.css&#x27; %&#125;&quot;</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">img</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;images/logo.png&#x27; %&#125;&quot;</span> <span class="attr">alt</span>=<span class="string">&quot;My logo&quot;</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;js/script.js&#x27; %&#125;&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<p> 在上面的示例中，我们使用了 Django 模板语言的 <code>&#123;% static %&#125;</code> 标记来引用静态文件。<code>&#123;% load static %&#125;</code> 指令必须在使用 <code>&#123;% static %&#125;</code> 标记之前加载，以确保 Django 能够正确解析它们。</p>
-</li>
-<li><p>运行 <code>collectstatic</code> 命令：<br>  当您准备部署您的 Django 应用程序时，您需要将静态文件收集到一个单独的目录中，以便可以轻松地在生产服务器上提供它们。您可以使用 Django 的 <code>collectstatic</code> 命令来完成此操作。在命令行中运行以下命令：</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py collectstatic</span><br></pre></td></tr></table></figure>
-
-<p> Django 将在 <code>STATIC_ROOT</code> 目录中创建一个新的静态文件目录，并将您的静态文件从 <code>STATICFILES_DIRS</code> 中指定的目录复制到该目录中。您可以在 <code>settings.py</code> 文件中设置 <code>STATIC_ROOT</code> 目录的路径</p>
-</li>
-</ol>
-<h1 id="DTL-语法"><a href="#DTL-语法" class="headerlink" title="DTL 语法"></a>DTL 语法</h1><h2 id="load-static"><a href="#load-static" class="headerlink" title="load static"></a>load static</h2><p><a href="#%E5%9C%A8-HTML-%E6%96%87%E4%BB%B6%E4%B8%AD%E4%BD%BF%E7%94%A8%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6">参考说明</a></p>
-<h2 id="block-super"><a href="#block-super" class="headerlink" title="block.super"></a>block.super</h2><p>用来从父 block 中继承选项</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrahead %&#125;</span><br><span class="line">&#123;&#123; block.super &#125;&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/bootstrap.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/base.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="include"><a href="#include" class="headerlink" title="include"></a>include</h2><p>假设有两个 HTML 文件：<code>header.html</code> 和 <code>content.html</code>。<br><code>header.html</code> 包含页面的头部内容。</p>
-<figure class="highlight html"><figcaption><span>header.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- header.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">header</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h1</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">h1</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">nav</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 导航栏内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">nav</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">header</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p><code>content.html</code> 包含页面的主要内容。</p>
-<figure class="highlight html"><figcaption><span>content.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- content.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">section</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h2</span>&gt;</span>Welcome to our website!<span class="tag">&lt;/<span class="name">h2</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>This is the main content of the page.<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">section</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p>现在，可以在另一个 HTML 文件中使用 <code>&#123;% include %&#125;</code> 标签来包含这些内容。</p>
-<figure class="highlight html"><figcaption><span>main_template.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- main_template.html --&gt;</span></span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    &#123;% include &#x27;header.html&#x27; %&#125;</span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span> <span class="attr">class</span>=<span class="string">&quot;content&quot;</span>&gt;</span></span><br><span class="line">        &#123;% include &#x27;content.html&#x27; %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line">    </span><br><span class="line">    <span class="tag">&lt;<span class="name">footer</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 页脚内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">footer</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p>在这个示例中，<code>&#123;% include 'header.html' %&#125;</code> 和 <code>&#123;% include 'content.html' %&#125;</code> 标签会将相应的模板文件的内容包含在 <code>main_template.html</code> 中。这样，就可以在一个模板中包含另一个模板的内容了。</p>
-<h2 id="url-反向解析"><a href="#url-反向解析" class="headerlink" title="url 反向解析"></a>url 反向解析</h2><p>在模板中不推荐使用 url 硬编码，建议使用 url 反向解析功能，在 <code>urls.py</code> 中定义 url 时，给 url 命名，在模板中 可以使用反向解析使用 url，避免使用 url 硬编码。<strong>需要在 <code>urls.py</code> 中配置 <code>app_name = &#39;polls&#39;</code>，否则会因为 namespace 不清楚而报错：<code>&#39;polls&#39; is not a registered namespace</code></strong></p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> django.urls <span class="keyword">import</span> path</span><br><span class="line"><span class="keyword">from</span> . <span class="keyword">import</span> views</span><br><span class="line"></span><br><span class="line">app_name = <span class="string">&#x27;polls&#x27;</span></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(<span class="string">&#x27;&#x27;</span>, views.IndexView.as_view(), name=<span class="string">&#x27;index&#x27;</span>),</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-<p>以上事例中，<code>name=&#39;index&#39;</code> 为 url 命名，在模板中通过以下方式使用 url 名称 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[反向命名空间 URLs](https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls)">[1]</span></a></sup></p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;polls:index&#x27; %&#125;&quot;</span>&gt;</span>首页<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-<h2 id="for-循环"><a href="#for-循环" class="headerlink" title="for 循环"></a>for 循环</h2><h3 id="根据-model-中的值实现下拉选择菜单"><a href="#根据-model-中的值实现下拉选择菜单" class="headerlink" title="根据 model 中的值实现下拉选择菜单"></a>根据 model 中的值实现下拉选择菜单</h3><p>假如需要实现下拉表单中的可选值来自于某个 <code>model</code>，可以参考以下实现</p>
-<figure class="highlight shell"><figcaption><span>models.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.db import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your models here.</span></span><br><span class="line">class Account(models.Model):</span><br><span class="line">    name = models.CharField(max_length=16, unique=True)</span><br></pre></td></tr></table></figure>
-
-<p>视图函数代码如下：</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line">from cloudclient import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br></pre></td></tr></table></figure>
-<p>HTML 模板主要代码如下：</p>
-<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">    &#123;% csrf_token %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;category&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line">       &#123;% for account in accounts %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endfor %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p><strong>其中使用 <code>for</code> 循环将视图函数传过来的参数列表（<code>accounts</code>）中的对象添加到下拉菜单中作为下拉选项。</strong><br><img src="https://i.0920811.xyz/img_216.png"></p>
-<p>表单提交后，服务端口会收到 POST 的数据(<code>request.POST</code>)：<code>account=1</code>。参考以下代码处理接收到的表单数据</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    if request.method == &#x27;GET&#x27;:</span><br><span class="line">        accounts = models.Account.objects.all()</span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        # data = request.body</span><br><span class="line">        account_id = request.POST.get(&#x27;account&#x27;)</span><br><span class="line">        logging.info(f&quot;POST DATA: &#123;&#125;&quot;)</span><br></pre></td></tr></table></figure>
-
-<p>如果想在 POST 处理后返回给客户端的 HTML 表单中的默认选中的值任然是客户端 POST 提交时选中的值，可以参考以下代码</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def cf_add_domains(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        data = request.POST</span><br><span class="line">        account_id = data[&#x27;account&#x27;]</span><br><span class="line">        account = models.Account.objects.get(id=account_id)</span><br><span class="line"></span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts, &#x27;selected_account_id&#x27;: account_id&#125;)</span><br></pre></td></tr></table></figure>
-
-<p>HTML 模板中使用 <code>option</code> 的 <code>selected</code> 标签选择指定的值。<em><strong>要注意其中的类型转换 <code>account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot;，将变量值转换一致，否则条件判断会失败</code></strong></em> </p>
-<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">&#123;% csrf_token %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;account&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line"></span><br><span class="line">   &#123;% for account in accounts %&#125;</span><br><span class="line">       &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% else %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endif %&#125;</span><br><span class="line">   &#123;% endfor %&#125;</span><br><span class="line"><span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<h2 id="if-条件判断"><a href="#if-条件判断" class="headerlink" title="if 条件判断"></a>if 条件判断</h2><p><code>if</code> 语法如下</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% if condition %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为真 --&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为假 --&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% if user.is_authenticated %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>欢迎回来，&#123;&#123; user.username &#125;&#125;！<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;logout&#x27; %&#125;&quot;</span>&gt;</span>退出登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>您还未登录。<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;login&#x27; %&#125;&quot;</span>&gt;</span>立即登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="类型转换"><a href="#类型转换" class="headerlink" title="类型转换"></a>类型转换</h2><p>如果在模板中需要对变量类型进行转换，参考以下语法</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% else %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% endif %&#125;</span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
-
-<p>更精简的写法</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    </span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> &#123;% <span class="attr">if</span> <span class="attr">account.id</span>|<span class="attr">stringformat:</span>&quot;<span class="attr">s</span>&quot; == <span class="string">selected_account_id|stringformat:</span>&quot;<span class="attr">s</span>&quot; %&#125;<span class="attr">selected</span>&#123;% <span class="attr">endif</span> %&#125;&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls">反向命名空间 URLs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-        <tag>Django</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Python 错误集锦</title>
-    <url>/202306161614/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.10.12</li>
-</ul>
-<h1 id="certificate-verify-failed-unable-to-get-local-issuer-certificate"><a href="#certificate-verify-failed-unable-to-get-local-issuer-certificate" class="headerlink" title="certificate verify failed: unable to get local issuer certificate"></a>certificate verify failed: unable to get local issuer certificate</h1><p>报错信息如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1007)</span><br><span class="line">...</span><br><span class="line">urllib.error.URLError: &lt;urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1007)&gt;</span><br></pre></td></tr></table></figure>
-
-<p><strong>问题原因</strong> ： 本地 CA 证书不存在</p>
-<p><strong>解决方法</strong></p>
-<ol>
-<li>查看默认证书位置 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; import ssl</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">print</span>(ssl.get_default_verify_paths())</span></span><br><span class="line">DefaultVerifyPaths(cafile=None, capath=&#x27;/usr/local/openssl/ssl/certs&#x27;, openssl_cafile_env=&#x27;SSL_CERT_FILE&#x27;, openssl_cafile=&#x27;/usr/local/openssl/ssl/cert.pem&#x27;, openssl_capath_env=&#x27;SSL_CERT_DIR&#x27;, openssl_capath=&#x27;/usr/local/openssl/ssl/certs&#x27;)</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-根据输出内容，可以看到 Python 使用的 <code>openssl</code> 位于 <code>/usr/local/openssl/</code>，CA 证书路径为 <code>/usr/local/openssl/ssl/cert.pem</code>，检查 CA 证书路径，发现 CA 证书不存在 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cd</span> /usr/local/openssl/ssl/</span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span></span></span><br><span class="line">certs  ct_log_list.cnf  ct_log_list.cnf.dist  misc  openssl.cnf  openssl.cnf.dist  private</span><br></pre></td></tr></table></figure></li>
-<li>下载 CA 证书文件 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget http://curl.haxx.se/ca/cacert.pem --no-check-certificate</span><br><span class="line">mv cacert.pem cert.pem</span><br></pre></td></tr></table></figure>
-下载 CA 证书文件后，重新尝试，SSl 连接正常。</li>
-</ol>
-<h1 id="can’t-start-new-thread"><a href="#can’t-start-new-thread" class="headerlink" title="can’t start new thread"></a>can’t start new thread</h1><h2 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
-<li>Docker 1.13</li>
-<li>Python3.9</li>
-</ul>
-<p>在 Docker 中运行 <code>python</code> 后，使用 <code>pip</code> 报错 <code>RuntimeError: can&#39;t start new thread</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pip install --upgrade pip</span></span><br><span class="line">Requirement already satisfied: pip in /usr/local/lib/python3.9/site-packages (23.0.1)</span><br><span class="line">Collecting pip</span><br><span class="line">  Downloading pip-23.2.1-py3-none-any.whl (2.1 MB)</span><br><span class="line">     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0.0/2.1 MB ? eta -:--:--ERROR: Exception:</span><br><span class="line">Traceback (most recent call last):</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/cli/base_command.py&quot;, line 160, in exc_logging_wrapper</span><br><span class="line">    status = run_func(*args)</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/cli/req_command.py&quot;, line 247, in wrapper</span><br><span class="line">    return func(self, options, args)</span><br><span class="line">  </span><br><span class="line">  ...</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/operations/prepare.py&quot;, line 107, in get_http_url</span><br><span class="line">    from_path, content_type = download(link, temp_dir.path)</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/network/download.py&quot;, line 147, in __call__</span><br><span class="line">    for chunk in chunks:</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_internal/cli/progress_bars.py&quot;, line 52, in _rich_progress_bar</span><br><span class="line">    with progress:</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_vendor/rich/progress.py&quot;, line 1169, in __enter__</span><br><span class="line">    self.start()</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_vendor/rich/progress.py&quot;, line 1160, in start</span><br><span class="line">    self.live.start(refresh=True)</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/site-packages/pip/_vendor/rich/live.py&quot;, line 132, in start</span><br><span class="line">    self._refresh_thread.start()</span><br><span class="line">  File &quot;/usr/local/lib/python3.9/threading.py&quot;, line 899, in start</span><br><span class="line">    _start_new_thread(self._bootstrap, ())</span><br><span class="line">RuntimeError: can&#x27;t start new thread</span><br><span class="line"></span><br><span class="line">[notice] A new release of pip is available: 23.0.1 -&gt; 23.2.1</span><br><span class="line">[notice] To update, run: pip install --upgrade pip</span><br></pre></td></tr></table></figure>
-
-<p><em><strong>问题原因</strong></em> Docker 版本太低，升级版本到 18.06 以上。<a href="https://stackoverflow.com/questions/70087344/python-in-docker-runtimeerror-cant-start-new-thread">参考说明</a></p>
-<span id="more"></span>
-
-<h1 id="Exception-Can-not-find-valid-pkg-config-name"><a href="#Exception-Can-not-find-valid-pkg-config-name" class="headerlink" title="Exception: Can not find valid pkg-config name"></a>Exception: Can not find valid pkg-config name</h1><p>使用 <code>pip install</code> 命令时报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Exception: Can not find valid pkg-config name.</span><br><span class="line">     Specify MYSQLCLIENT_CFLAGS and MYSQLCLIENT_LDFLAGS env vars manually</span><br></pre></td></tr></table></figure>
-<p>在使用 <code>pip install</code> 安装某些依赖 MySQL 的 Python 包（例如 <code>mysqlclient</code>）时，可能会遇到类似 <code>Exception: Can not find valid pkg-config name.</code> 的错误。这通常是因为你的系统缺少必要的开发工具或库文件。</p>
-<p><strong>以下是解决这个问题的步骤</strong></p>
-<ol>
-<li>安装 MySQL 开发库<ul>
-<li>在 Ubuntu&#x2F;Debian 系统中，确保安装了 <code>libmysqlclient-dev</code> 包 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt-get install libmysqlclient-dev</span><br></pre></td></tr></table></figure></li>
-<li>在 CentOS&#x2F;RHEL 系统中，安装 <code>mysql-devel</code> 包 <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo yum install mysql-devel</span><br></pre></td></tr></table></figure></li>
-</ul>
-</li>
-</ol>
-<h1 id="ERROR-Could-not-find-a-version-that-satisfies-the-requirement-mysqlclient-x3D-x3D-2-2-1"><a href="#ERROR-Could-not-find-a-version-that-satisfies-the-requirement-mysqlclient-x3D-x3D-2-2-1" class="headerlink" title="ERROR: Could not find a version that satisfies the requirement mysqlclient&#x3D;&#x3D;2.2.1"></a>ERROR: Could not find a version that satisfies the requirement mysqlclient&#x3D;&#x3D;2.2.1</h1><p><strong>环境信息</strong></p>
-<ul>
-<li>Ubuntu 22.04.4 LTS (Jammy Jellyfish)</li>
-<li>Python 3.10</li>
-</ul>
-<p>安装 <code>mysqlclient==2.2.1</code> 时报错：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Collecting mysqlclient==2.2.1</span><br><span class="line">  Using cached mysqlclient-2.2.1.tar.gz (89 kB)</span><br><span class="line">  Installing build dependencies ... done</span><br><span class="line">  Getting requirements to build wheel ... done</span><br><span class="line">  Installing backend dependencies ... done</span><br><span class="line">  Preparing metadata (pyproject.toml) ... done</span><br><span class="line">  WARNING: Generating metadata for package mysqlclient produced metadata for project name unknown. Fix your #egg=mysqlclient fragments.</span><br><span class="line">Discarding https://files.pythonhosted.org/packages/37/fb/d9a8f763c84f1e789c027af0ffc7dbf94c9a38db961484f253f0552cbb47/mysqlclient-2.2.1.tar.gz#sha256=2c7ad15b87293b12fd44b47c46879ec95ec647f4567e866ccd70b8337584e9b2 (from https://pypi.org/simple/mysqlclient/) (requires-python:&gt;=3.8): Requested unknown from https://files.pythonhosted.org/packages/37/fb/d9a8f763c84f1e789c027af0ffc7dbf94c9a38db961484f253f0552cbb47/mysqlclient-2.2.1.tar.gz#sha256=2c7ad15b87293b12fd44b47c46879ec95ec647f4567e866ccd70b8337584e9b2 (from -r requirements.txt (line 20)) has inconsistent name: filename has &#x27;mysqlclient&#x27;, but metadata has &#x27;unknown&#x27;</span><br><span class="line">ERROR: Could not find a version that satisfies the requirement mysqlclient==2.2.1 (from versions: 1.3.0, 1.3.1, 1.3.2, 1.3.3, 1.3.4, 1.3.5, 1.3.6, 1.3.7, 1.3.8, 1.3.9, 1.3.10, 1.3.11rc1, 1.3.11, 1.3.12, 1.3.13, 1.3.14, 1.4.0rc1, 1.4.0rc2, 1.4.0rc3, 1.4.0, 1.4.1, 1.4.2, 1.4.2.post1, 1.4.3, 1.4.4, 1.4.5, 1.4.6, 2.0.0, 2.0.1, 2.0.2, 2.0.3, 2.1.0rc1, 2.1.0, 2.1.1, 2.2.0rc1, 2.2.0, 2.2.1, 2.2.2, 2.2.3, 2.2.4)</span><br><span class="line">ERROR: No matching distribution found for mysqlclient==2.2.1</span><br></pre></td></tr></table></figure>
-<p>这个错误表明在尝试安装 <code>mysqlclient==2.2.1</code> 时，Python 包管理工具 pip 发现了元数据的不一致性，即文件名是 <code>mysqlclient</code>，但元数据标识的包名为 <code>unknown</code>。这可能是由于该版本的包在 PyPI 上发布时存在问题。</p>
-<p>要解决这个问题，可以尝试使用不同的 <code>mysqlclient</code> 版本。例如不指定具体版本，<strong>默认安装最新的稳定版本，可以成功安装</strong>。</p>
-<h1 id="There-was-a-problem-confirming-the-ssl-certificate"><a href="#There-was-a-problem-confirming-the-ssl-certificate" class="headerlink" title="There was a problem confirming the ssl certificate"></a>There was a problem confirming the ssl certificate</h1><p><strong>环境信息</strong></p>
-<ul>
-<li>Python 2.7</li>
-<li>Centos 7 6.8.9-1</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">pip install shadowsocks</span></span><br><span class="line">Collecting shadowsocks</span><br><span class="line">  Could not fetch URL https://pypi.python.org/simple/shadowsocks/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:618) - skipping</span><br><span class="line">  Could not find a version that satisfies the requirement shadowsocks (from versions: )</span><br><span class="line">No matching distribution found for shadowsocks</span><br></pre></td></tr></table></figure>
-
-<p><strong>解决方法 1</strong> ：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install shadowsocks --trusted-host pypi.python.org --trusted-host pypi.org --trusted-host files.pythonhosted.org</span><br><span class="line"></span><br></pre></td></tr></table></figure>]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
   </entry>
 </search>
