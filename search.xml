@@ -5324,6 +5324,251 @@ width: 20%;
 <p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
 <ul>
 <li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
+<li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现“能出不能进”的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
+</ul>
+</blockquote>
+<ul>
+<li><strong>路由表（Route Tables）</strong> 分为主路由表和自定义路由表<ul>
+<li><strong>主路由表（Main route table）</strong> 随 VPC 自动生成，它控制未与任何其他路由表显式关联的所有子网的路由，也就是 VPC 中的默认路由。</li>
+<li><strong>自定义路由表</strong> 为新建的路由表。</li>
+<li>一个子网只能关联一个路由表，一个路由表可以关联多个子网</li>
+</ul>
+</li>
+</ul>
+<p><strong>流量如何进出</strong></p>
+<p>VPC 与外界互联网通信可以使用以下方式：</p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>作用</th>
+<th>流量方向</th>
+<th>用法说明｜</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Internet Gateway (IGW，互联网网关)</td>
+<td>允许 VPC 连接互联网。</td>
+<td>双向 (In&#x2F;Out)</td>
+<td>实例必须分配公网 IP 或弹性 IP (EIP)</td>
+</tr>
+<tr>
+<td>NAT Gateway (NAT 网关)</td>
+<td>允许私有实例上外网，但防止外部主动连接。</td>
+<td>单向 (Outbound only)</td>
+<td>仅需私有 IP</td>
+</tr>
+<tr>
+<td>VPC Peering （对等连接）</td>
+<td>连接两个不同的 VPC，使其像在一个网络内通信。</td>
+<td>跨 VPC</td>
+<td></td>
+</tr>
+<tr>
+<td>Transit Gateway</td>
+<td>充当“中央枢纽”，连接数千个 VPC 和本地网络。</td>
+<td>复杂网络拓扑</td>
+<td></td>
+</tr>
+<tr>
+<td>Virtual Private Gateway</td>
+<td>用于建立 VPN 连接。</td>
+<td>混合云</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="部署-NAT-Gateway-网关并关联子网"><a href="#部署-NAT-Gateway-网关并关联子网" class="headerlink" title="部署 NAT Gateway 网关并关联子网"></a>部署 NAT Gateway 网关并关联子网</h2><p>通过 NAT Gateway 可以实现子网中的实例的对外互联网出口 IP 都是 NAT Gateway 绑定的 EIP，子网中的实例对互联网不可见。NAT Gateway 典型使用场景：</p>
+<ul>
+<li>为了安全，生产环境通常将 <strong>EKS 工作节点、RDS 数据库</strong> 或 <strong>缓存服务器（Redis）</strong> 放在私有子网中，这些资源不需要（也不应该）被互联网直接访问。</li>
+<li>应用需要调用外部服务（如支付网关、银行接口或第三方 API）时，对方的防火墙通常需要你提供一个白名单 IP。由于 EKS 节点是动态变化的，IP 并不固定。</li>
+<li>减少受攻击面，防止外部扫描。</li>
+</ul>
+<p>以下为创建 NAT Gateway 并关联子网的相关步骤：</p>
+<figure class="highlight shell"><figcaption><span>正确的整体架构</span></figcaption><table><tr><td class="code"><pre><span class="line">VPC</span><br><span class="line">├── Public Subnet</span><br><span class="line">│   ├── NAT Gateway（有 EIP）</span><br><span class="line">│   └── Route Table (Public RT)</span><br><span class="line">│       └── 0.0.0.0/0 → Internet Gateway</span><br><span class="line">│</span><br><span class="line">└── Private Subnet</span><br><span class="line">    ├── EC2 / ECS / EKS Node</span><br><span class="line">    └── Route Table (Private RT)</span><br><span class="line">        └── 0.0.0.0/0 → NAT Gateway</span><br></pre></td></tr></table></figure>
+<p>关键点：</p>
+<ul>
+<li><strong>NAT Gateway 必须在公有子网</strong></li>
+<li><strong>私有子网的默认路由指向 NAT Gateway</strong></li>
+</ul>
+<ol>
+<li><p><strong>确认 Public Subnet 存在</strong></p>
+<p> VPC 默认的 Main Route Table 已经满足这个条件，其默认网关为 Internet Gateway<br> <img src="https://i.0920811.xyz/img_390.png"></p>
+</li>
+<li><p><strong>创建 NAT Gateway</strong></p>
+<p> 在 <strong>NAT gateways</strong> 标签页面中，点击 <strong>Create NAT gateway</strong> ， <strong>Connectivity type</strong> 选择 <strong>Public</strong> ， <strong>Elastic IP (EIP) association</strong> 选择 <strong>手动分配 EIP（Manual）</strong><br> <img src="https://i.0920811.xyz/img_391.png"><br> 创建完成后，状态应为 <strong>Available</strong> 。在路由表（Route Tables）中，这时会多一个路由表，其 <strong>Edge associations（边缘关联）</strong> 关联到了刚刚创建的 NAT Gateway<br> <img src="https://i.0920811.xyz/img_392.png"></p>
+</li>
+<li><p><strong>创建一个新的子网（私有、Private Subnet）</strong></p>
+<p> 在 <strong>VPC → Subnets → Create subnet</strong> 标签页面中创建新的子网， <strong>不要勾选 Auto-assign public IPv4</strong> ，如此处于此子网中的实例，不会为其分配公网地址<br> <img src="https://i.0920811.xyz/img_394.png"></p>
+</li>
+<li><p><strong>创建 Private Route Table</strong></p>
+<p> 在 <strong>VPC → Route tables → Create route table</strong> 标签页面中创建新的路由表，本示例名为 <code>private-rt</code></p>
+</li>
+<li><p><strong>配置路由规则</strong></p>
+<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Routes</strong> 中 <strong>编辑路由（Edit Routes）</strong> ，添加一条路由规则： </p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| Destination | Target          |</span><br><span class="line">| ----------- | --------------- |</span><br><span class="line">| 0.0.0.0/0   | NAT Gateway |</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p> <img src="https://i.0920811.xyz/img_395.png"></p>
+</li>
+<li><p><strong>关联 Private Subnet</strong></p>
+<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Subnet associations(子网关联)</strong> 中 <strong>Edit subnet associations（编辑子网关联）</strong> ，选择目标子网进行关联<br> <img src="https://i.0920811.xyz/img_396.png"></p>
+</li>
+<li><p><strong>最终的 VPC 整体路由可以在 VPC 的 Resource map 中进行检查</strong><br> <img src="https://i.0920811.xyz/img_397.png"></p>
+</li>
+</ol>
+<h1 id="EKS-中的授权机制"><a href="#EKS-中的授权机制" class="headerlink" title="EKS 中的授权机制"></a>EKS 中的授权机制</h1><p>Kubernetes 原生提供 <strong>RBAC（Role-Based Access Control）</strong> 来控制集群中的 <strong>用户和服务账户（ServiceAccount）</strong> 对资源的访问权限。</p>
+<table>
+<thead>
+<tr>
+<th>对象</th>
+<th>描述</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Role</strong></td>
+<td>命名空间级别（Namespace）权限，指定某个命名空间内允许的操作和资源类型。</td>
+</tr>
+<tr>
+<td><strong>ClusterRole</strong></td>
+<td>集群级别权限，可以跨命名空间使用。</td>
+</tr>
+<tr>
+<td><strong>RoleBinding</strong></td>
+<td>将 Role 绑定到一个用户或 ServiceAccount。</td>
+</tr>
+<tr>
+<td><strong>ClusterRoleBinding</strong></td>
+<td>将 ClusterRole 绑定到一个用户或 ServiceAccount。</td>
+</tr>
+</tbody></table>
+<p><strong>核心字段</strong></p>
+<ul>
+<li><p><code>apiGroups</code> ：资源所属 API 组，例如 <code>&quot;&quot;</code> 代表 <strong>core API</strong> 。</p>
+</li>
+<li><p><code>resources</code> ：允许访问的资源类型，如 pods、deployments。</p>
+</li>
+<li><p><code>verbs</code> ：允许的操作，如 <code>get, list, create, delete</code> 。</p>
+</li>
+</ul>
+<p>RBAC 示例：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">apiGroups:</span> [<span class="string">&quot;&quot;</span>]</span><br><span class="line">    <span class="attr">resources:</span> [<span class="string">&quot;pods&quot;</span>]</span><br><span class="line">    <span class="attr">verbs:</span> [<span class="string">&quot;get&quot;</span>, <span class="string">&quot;list&quot;</span>]</span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">RoleBinding</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">read-pods</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">subjects:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">kind:</span> <span class="string">ServiceAccount</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">my-serviceaccount</span></span><br><span class="line"><span class="attr">roleRef:</span></span><br><span class="line">  <span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">apiGroup:</span> <span class="string">rbac.authorization.k8s.io</span></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><p><strong>RBAC 控制的是 Kubernetes 资源访问权限</strong> 。</p>
+</li>
+<li><p><strong>RBAC 对象绑定的是 Kubernetes 用户或 ServiceAccount，而不是 AWS IAM 用户</strong> 。</p>
+</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>全称</th>
+<th>解决的问题</th>
+<th>作用范围</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>RBAC</strong></td>
+<td>Role-Based Access Control</td>
+<td>决定 “用户&#x2F;进程” 在 K8s 集群内能做什么（如：查看 Pod）</td>
+<td>K8s 集群内部</td>
+</tr>
+<tr>
+<td><strong>Role</strong></td>
+<td>Kubernetes Role</td>
+<td>RBAC 的一部分，定义一组具体的集群内操作权限</td>
+<td>命名空间 (Namespace)</td>
+</tr>
+<tr>
+<td><strong>IRSA</strong></td>
+<td>IAM Roles for Service Accounts</td>
+<td>决定 “Pod 里的应用” 对 AWS 外部资源（如 S3&#x2F;RDS）的访问权限</td>
+<td>AWS 云环境</td>
+</tr>
+</tbody></table>
+<p><strong>AWS IAM Role</strong> 是 AWS 层面的权限机制，用于授权 AWS 资源访问，例如 S3、DynamoDB、Secrets Manager 等。</p>
+<p>AWS IAM Role 的特点：</p>
+<ul>
+<li><p>可以被 IAM 用户、服务或 EC2&#x2F;EKS Pod 假设（Assume）。</p>
+</li>
+<li><p>权限通过 IAM Policy 定义。</p>
+</li>
+</ul>
+<p><strong>AWS IAM Role</strong> 在 EKS 中的应用:</p>
+<ul>
+<li><p>管理集群本身访问 AWS 资源，例如节点组（NodeGroup）访问 S3。</p>
+</li>
+<li><p>可以通过 IAM 用户&#x2F;Role 管理集群级别的操作权限，例如 <code>eks:DescribeCluster</code> 。</p>
+</li>
+</ul>
+<blockquote>
+<p>💡 核心点：IAM Role 本身无法直接控制 Kubernetes 资源，它管理的是 AWS 资源访问。</p>
+</blockquote>
+<p><strong>IRSA（IAM Roles for Service Accounts）</strong> 是 AWS EKS 引入的将 Kubernetes ServiceAccount 与 AWS IAM Role 绑定，实现 Pod 级别的 AWS 权限控制的机制。其大致原理如下：</p>
+<ul>
+<li><strong>EKS 集群开启 OIDC Provider</strong></li>
+<li><strong>创建 IAM Role 并信任该 OIDC Provider</strong></li>
+<li><strong>Role 上定义 IAM Policy（如访问 S3）</strong></li>
+<li><strong>Kubernetes ServiceAccount 指定注解 <code>eks.amazonaws.com/role-arn</code>。</strong></li>
+<li><strong>Pod 使用该 ServiceAccount 时自动获取 Role 权限</strong></li>
+</ul>
+<p><strong>实践建议：</strong></p>
+<ul>
+<li><p>不要在 Pod 内放 AWS AccessKey，使用 IRSA。</p>
+</li>
+<li><p>最小权限原则：</p>
+<ul>
+<li><p>RBAC：只给 Pod 或用户真正需要的 Kubernetes 权限。</p>
+</li>
+<li><p>IAM Role &#x2F; IRSA：只给访问 AWS 资源的最小权限。</p>
+</li>
+</ul>
+</li>
+<li><p>多集群管理：可以通过 ClusterRole + RoleBinding 管理跨命名空间权限。</p>
+</li>
+<li><p>审计：</p>
+<ul>
+<li><p>使用 CloudTrail 监控 IRSA 调用。</p>
+</li>
+<li><p>Kubernetes API Server 日志审计 RBAC 权限。</p>
+</li>
+</ul>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Aws</category>
+      </categories>
+      <tags>
+        <tag>Aws</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Amazon AWS 概念及相关操作步骤</title>
+    <url>/20260207135211/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="AWS-虚拟私有云-VPC"><a href="#AWS-虚拟私有云-VPC" class="headerlink" title="AWS 虚拟私有云 VPC"></a>AWS 虚拟私有云 VPC</h1><p>在进入具体的网络配置前，必须理解 AWS 的地理隔离：</p>
+<ul>
+<li><p><strong>区域 (Region)</strong> ：地理上的独立区域（如新加坡、弗吉尼亚）。区域之间完全隔离。</p>
+</li>
+<li><p><strong>可用区 (Availability Zone, AZ)</strong> ：一个区域内由多个物理机房组成。AZ 之间通过高速、低延迟光纤连接。高可用架构必须跨 AZ 部署。跨 AZ 之间的流量需要付费。</p>
+</li>
+</ul>
+<p>VPC 是你在 AWS 云中的逻辑隔离网络。你可以完全控制其 IP 地址范围、子网、路由表和网络网关。</p>
+<p>核心组件：</p>
+<ul>
+<li><p><strong>CIDR 范围</strong> ：你为 VPC 定义的私有 IP 地址块（如 <code>10.0.0.0/16</code> ）。</p>
+</li>
+<li><p><strong>子网 (Subnets)</strong> ：将 VPC 划分为更小的网段。子网必须位于特定的可用区内。</p>
+</li>
+<li><p><strong>公有子网 (Public Subnet)</strong> ：路由指向互联网网关 (IGW)，实例可以有公网 IP。</p>
+</li>
+<li><p><strong>私有子网 (Private Subnet)</strong> ：没有指向 IGW 的直接路由，通常通过 <strong>NAT 网关 访问外网</strong> 。</p>
+</li>
+</ul>
+<blockquote>
+<p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
+<ul>
+<li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
 <li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现 “能出不能进” 的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
 </ul>
 </blockquote>
@@ -20634,6 +20879,426 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>linux 常用目录和文件说明</title>
+    <url>/202208180923/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="常用目录和文件说明"><a href="#常用目录和文件说明" class="headerlink" title="常用目录和文件说明"></a>常用目录和文件说明</h1><h2 id="etc-目录常用文件说明"><a href="#etc-目录常用文件说明" class="headerlink" title="etc 目录常用文件说明"></a>etc 目录常用文件说明</h2><table>
+<thead>
+<tr>
+<th>文件路径</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&#x2F;etc&#x2F;motd</td>
+<td>登录成功后的欢迎信息，ssh 登录和 console 登录成功后都会显示</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;issue</td>
+<td>在登录系统输入用户名之前显示的信息，远程 ssh 连接的时候并不会显示此信息</td>
+<td><a href="#x2F-etc-x2F-issue">说明示例</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;services</td>
+<td>记录网络服务名和它们对应使用的端口号及协议</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;protocols</td>
+<td>该文件是网络协议定义文件，里面记录了 <code>TCP/IP</code> 协议族的所有协议类型。文件中的每一行对应一个协议类型，它有 3 个字段，分别表示 <code>协议名称</code> 、 <code>协议号</code> 和 <code>协议别名</code></td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;vimrc<br/>~&#x2F;.vimrc</td>
+<td><code>vim</code> 启动时会读取 <code>/etc/vimrc</code> （全局配置） 和 <code>~/.vimrc</code> （用户配置）</td>
+<td><a href="/202208181117/" title="vim">vim</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;passwd<br/>&#x2F;etc&#x2F;shadow<br/>&#x2F;etc&#x2F;group</td>
+<td>用户数据库，其中记录了 <code>用户名</code> ， <code>id</code> ， <code>用户家目录</code> ， <code>shell</code> 等<br/>用户密码文件<br/>组信息</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;fstab</td>
+<td>系统启动时需要自动挂载的文件系统列表</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;mtab</td>
+<td>当前系统已挂载的文件系统，并由 <code>mount</code> 命令自动更新。当需要当前挂载的文件系统的列表时使用(例如 df 命令)</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;shells</td>
+<td>系统可使用的 <code>shell</code></td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;filesystems</td>
+<td>系统可使用的 <code>文件系统</code></td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;hostname</td>
+<td>存放这主机名</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;hosts</td>
+<td>主机名查询静态表，域名和 ip 本地静态表</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;nsswitch.conf</td>
+<td>它规定通过哪些途径以及按照什么顺序以及通过这些途径来查找特定类型的信息，还可以指定某个方法奏效或失效时系统将采取什么动作</td>
+<td><code>hosts:      files dns myhostname</code> <br/>此配置设定：在查找域名解析的时候，先查找本地 <code>/etc/hosts</code> ，再发送给 DNS 服务器查询</td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;rsyslog.conf</td>
+<td><code>rsyslog</code> 服务的配置文件，用来托管其他服务的日志</td>
+<td><a href="/202208191014/" title="linux rsyslog 服务">linux rsyslog 服务</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;logrotate.conf</td>
+<td>linux 日志切割工具</td>
+<td><a href="/202208191317/" title="linux logrotate 服务">linux logrotate 服务</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;rsyncd.conf</td>
+<td><code>rsync</code> 服务的配置文件</td>
+<td><a href="/36f703dc/" title="rsyncd 服务">rsyncd 服务</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;sysctl.conf<br/>&#x2F;etc&#x2F;sysctl.d&#x2F;</td>
+<td>内核的运行参数配置文件， <code>sysctl</code> 命令对内核参数的修改仅在当前生效，重启系统后参数丢失，如果希望参数永久生效可以修改此配置文件</td>
+<td><a href="/202302131009/" title="Linux 常用内核参数说明">Linux 常用内核参数说明</a></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+
+<h2 id="x2F-usr-x2F-src-x2F"><a href="#x2F-usr-x2F-src-x2F" class="headerlink" title="&#x2F;usr&#x2F;src&#x2F;"></a>&#x2F;usr&#x2F;src&#x2F;</h2><p><code>/usr/src/</code> 目录下面一般会放置 Linux 发行版所使用的 <strong>内核源代码</strong> ，具体路径可能类似 <code>/usr/src/kernels/3.10.0-1160.11.1.el7.x86_64</code></p>
+<h2 id="x2F-proc-x2F-目录"><a href="#x2F-proc-x2F-目录" class="headerlink" title="&#x2F;proc&#x2F; 目录"></a>&#x2F;proc&#x2F; 目录</h2><p><code>/proc/</code> 目录是一个 <code>虚假的（pseudo）</code> 的仅存在于内存中的文件系统， 存储了系统运行时的内核状态统计信息。大多数检测系统运行指标的工具（如 <code>top</code> 、 <code>vmstat</code> 等）都是从此接口中读取统计数据。</p>
+<p>其中的大多数内容都是 <em>只读</em> 的，是进程在内核中的相关数据结构的映射和统计数据。部分是 <em>可写</em> 的，用于控制进程状态或者是内核的行为（如 <code>sysctl</code> ）。</p>
+<p><code>/proc/</code> 中包括的内容取决于具体的内核版本。关于 <code>/proc/</code> 的帮助文档，请查看 <code>man 5 proc</code> 。</p>
+<p>以下内容为全局（System Wide）范围的统计数据接口</p>
+<table>
+<thead>
+<tr>
+<th>文件路径</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/proc/cmdline</code></td>
+<td>全局统计数据。存储了系统启动时使用的内核及选项（参数）<br/> <code>BOOT_IMAGE</code> 是系统加载的内核镜像<br/> <code>root</code> 是 <code>root file system</code> 的 UID</td>
+<td><code># cat /proc/cmdline</code> <br/> <code>BOOT_IMAGE=/boot/vmlinuz-6.8.9-1.el7.elrepo.x86_64 root=UUID=44a6a613-4e21-478b-a909-ab653c9d39df ro console=tty0 crashkernel=auto net.ifnames=0 console=ttyS0</code></td>
+</tr>
+<tr>
+<td><code>/proc/cpuinfo</code></td>
+<td>物理 CPU 处理器信息（Physical Processors），包括 Virtual CPU、Model Name、Clock Speed、Cache Sizes 等</td>
+<td><code>lscpu</code></td>
+</tr>
+<tr>
+<td><code>/proc/diskstatus</code></td>
+<td>所有存储设备的 Disk I&#x2F;O 统计信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/interrupts</code></td>
+<td>每个 CPU 的中断计数器信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/loadavg</code></td>
+<td>系统的负载信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/meminfo</code></td>
+<td>系统内存使用统计</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/net/dev</code></td>
+<td>Network Interface 统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/net/netstat</code></td>
+<td>网络统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/net/tcp</code> <br/> <code>/proc/net/udp</code></td>
+<td>Active TCP&#x2F;UDP Socket 信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/pressure</code></td>
+<td>Pressure stall information (PSI) files</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/schedstat</code></td>
+<td>全局范围的 CPU 调度统计</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/self</code></td>
+<td>链接到当前 Process ID 目录</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/slabinfo</code></td>
+<td>内核 Slab 分配器缓存（Slab Allocator Cache）  统计信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/stat</code></td>
+<td>内核和系统资源的简略统计，包括： CPUs, Disks, Paging, Swap, Processes</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/zoneinfo</code></td>
+<td>内存区域信息（Memory Zone Information）</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>以下是针对 Process 的统计数据接口</p>
+<table>
+<thead>
+<tr>
+<th>文件路径</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/proc/&lt;PID&gt;/cmdline</code></td>
+<td>存储了程启动时的命令行参数。 <code>ps</code> 命令显示的 <code>command</code> 内容来自此处</td>
+<td><code># cat /proc/1/cmdline</code> <br/> <code>/usr/lib/systemd/systemd --switched-root --system--deserialize 21</code></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/comm</code></td>
+<td>存储了进程的名称，一般为进程启动的 <strong>文件名</strong> ，如 <code>systemd</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/status</code></td>
+<td>进程的详细状态信息,包括进程的基本属性、内存使用情况、权限和调度策略等</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/stat</code></td>
+<td>进程的状态以及使用的 CPU 和 Memory 统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/statm</code></td>
+<td>进程使用的内存统计，基于 Pages 为单位</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/task/</code></td>
+<td>进程的子任务（Per-task）相关的统计数据目录</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/limits</code></td>
+<td>进程使用的资源限制</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/maps</code></td>
+<td>映射的内存区域</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/sched</code></td>
+<td>CPU 调度统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/schedstat</code></td>
+<td>CPU 运行时（Runtime） 、延迟（Latency）和时间分片（Time Slices）数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/smaps</code></td>
+<td>映射的内存区域（Mapped Memroy Regions）以及使用的内存统计</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/fd/</code> <br/> <code>/proc/&lt;PID&gt;/fdinfo/</code></td>
+<td>包含文件描述符的目录</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/cgroup</code></td>
+<td>Cgroup 信息</td>
+<td></td>
+</tr>
+</tbody></table>
+<p><code>/proc/&lt;PID&gt;/status</code> 记录内容</p>
+<table>
+<thead>
+<tr>
+<th>记录字段</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>voluntary_ctxt_switches</code> <br/> <code>nonvoluntary_ctxt_switches</code></td>
+<td>Context Switch 的次数，包括 <code>voluntary</code> 和 <code>nonvoluntary</code> 类型的 Context Switch</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="说明示例"><a href="#说明示例" class="headerlink" title="说明示例"></a>说明示例</h1><h2 id="x2F-etc-x2F-issue"><a href="#x2F-etc-x2F-issue" class="headerlink" title="&#x2F;etc&#x2F;issue"></a>&#x2F;etc&#x2F;issue</h2><p><img src="https://i.0920811.xyz/img_40.png"></p>
+<p>文件内容可使用的各个变量说明如下</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>\d</td>
+<td>显示当前日期</td>
+</tr>
+<tr>
+<td>\l</td>
+<td>显示虚拟控制台号</td>
+</tr>
+<tr>
+<td>\m</td>
+<td>显示机器类型，即 CPU 架构，如 i386 或 x86_64 等（相当于 uname -m）</td>
+</tr>
+<tr>
+<td>\n</td>
+<td>显示主机的网络名（相当于 uname -n）</td>
+</tr>
+<tr>
+<td>\o</td>
+<td>显示域名</td>
+</tr>
+<tr>
+<td>\r</td>
+<td>显示 Kernel 内核版本号（相当于 uname -r）</td>
+</tr>
+<tr>
+<td>\t</td>
+<td>显示当前时间</td>
+</tr>
+<tr>
+<td>\s</td>
+<td>显示当前操作系统名称</td>
+</tr>
+<tr>
+<td>\u</td>
+<td>显示当前登录用户的编号</td>
+</tr>
+<tr>
+<td>\U</td>
+<td>显示当前登录用户的编号和用户</td>
+</tr>
+<tr>
+<td>\v</td>
+<td>显示当前操作系统的版本日期</td>
+</tr>
+</tbody></table>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux 常见系统进程及参数说明</title>
+    <url>/20240718134326/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h1><p>内存管理相关的系统关键进程</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Path</th>
+<th>Info</th>
+<th>Demonstrate</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>[kswapd0]</code></td>
+<td><strong>由内核启动</strong></td>
+<td>Linux 内核中的一个内存管理守护进程，负责内存交换（ <code>swap</code> ）.当系统内存不足时，触发内存回收机制，释放不常用的内存页。<br/>内存回收使用 Page Replacement 算法（新版本使用）</td>
+<td><a href="#kswapd">kswapd</a></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+
+<h2 id="kswapd"><a href="#kswapd" class="headerlink" title="kswapd"></a>kswapd</h2><p><code>kswapd</code> 是 Linux 内核中的一个内存管理守护进程，负责系统内存不足时进行页面回收（即将不活跃的页面移至内存交换（Swap）空间）。它确保系统有足够的可用内存，以维持系统稳定性和性能。主要功能包括：</p>
+<ul>
+<li>监控系统的内存使用情况。</li>
+<li>当系统内存不足时（低于设定的阈值），触发内存回收机制，释放不常用的内存页。</li>
+<li>将内存页交换到交换分区（ <code>swap space</code> ），以确保系统有足够的可用内存。</li>
+</ul>
+<p><code>kswapd</code> 进程是由内核自动启动的，不需要用户手动启动。它的代码位于 Linux 内核源代码的内存管理部分，主要文件包括：</p>
+<ul>
+<li><code>mm/vmscan.c</code> ： <code>kswapd</code> 相关功能的实现。</li>
+<li><code>mm/page_alloc.c</code> ：内存分配和回收的相关代码。</li>
+</ul>
+<p>目前大多数内核使用 <a href="https://0920811.xyz/202405311003/#Page-Relpacement">Page Replacement Algorithm（页面置换算法）</a>，常用算法实现包括：</p>
+<ul>
+<li>LRU (Least Recently Used) ： 最常用的算法，基于页面最近使用的时间进行置换。</li>
+<li>FIFO (First In, First Out) ： 基于页面进入内存的顺序进行置换。</li>
+<li>Clock Algorithm ： 一种改进的 LRU 算法，使用一个 ‘时钟’ 指针循环扫描页面。</li>
+</ul>
+<h3 id="kswapd-相关配置"><a href="#kswapd-相关配置" class="headerlink" title="kswapd 相关配置"></a>kswapd 相关配置</h3><ul>
+<li><p><code>swappiness</code> 参数 <strong>控制系统在内存不足时使用交换空间的频率，值越高，系统越倾向于使用交换空间。默认值通常为 60，取值范围是 0 到 100</strong> 。</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 60 &gt; /proc/sys/vm/swappiness</span><br></pre></td></tr></table></figure>
+
+<p>持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
+  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.swappiness = 60</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><code>min_free_kbytes</code> 参数 <strong>设置内核保持的最小空闲内存量</strong> ，该值确保系统始终有一定的空闲内存，防止内存耗尽</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 65536 &gt; /proc/sys/vm/min_free_kbytes</span><br></pre></td></tr></table></figure>
+
+<p>  持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
+  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.min_free_kbytes = 65536</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux 压缩解压缩</title>
+    <url>/202209301257/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
+
+<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
+
+<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>cp 命令用法</title>
     <url>/202210281406/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>常用选项</p>
@@ -33171,251 +33836,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Amazon AWS 概念及相关操作步骤</title>
-    <url>/20260207135211/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="AWS-虚拟私有云-VPC"><a href="#AWS-虚拟私有云-VPC" class="headerlink" title="AWS 虚拟私有云 VPC"></a>AWS 虚拟私有云 VPC</h1><p>在进入具体的网络配置前，必须理解 AWS 的地理隔离：</p>
-<ul>
-<li><p><strong>区域 (Region)</strong> ：地理上的独立区域（如新加坡、弗吉尼亚）。区域之间完全隔离。</p>
-</li>
-<li><p><strong>可用区 (Availability Zone, AZ)</strong> ：一个区域内由多个物理机房组成。AZ 之间通过高速、低延迟光纤连接。高可用架构必须跨 AZ 部署。跨 AZ 之间的流量需要付费。</p>
-</li>
-</ul>
-<p>VPC 是你在 AWS 云中的逻辑隔离网络。你可以完全控制其 IP 地址范围、子网、路由表和网络网关。</p>
-<p>核心组件：</p>
-<ul>
-<li><p><strong>CIDR 范围</strong> ：你为 VPC 定义的私有 IP 地址块（如 <code>10.0.0.0/16</code> ）。</p>
-</li>
-<li><p><strong>子网 (Subnets)</strong> ：将 VPC 划分为更小的网段。子网必须位于特定的可用区内。</p>
-</li>
-<li><p><strong>公有子网 (Public Subnet)</strong> ：路由指向互联网网关 (IGW)，实例可以有公网 IP。</p>
-</li>
-<li><p><strong>私有子网 (Private Subnet)</strong> ：没有指向 IGW 的直接路由，通常通过 <strong>NAT 网关 访问外网</strong> 。</p>
-</li>
-</ul>
-<blockquote>
-<p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
-<ul>
-<li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
-<li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现“能出不能进”的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
-</ul>
-</blockquote>
-<ul>
-<li><strong>路由表（Route Tables）</strong> 分为主路由表和自定义路由表<ul>
-<li><strong>主路由表（Main route table）</strong> 随 VPC 自动生成，它控制未与任何其他路由表显式关联的所有子网的路由，也就是 VPC 中的默认路由。</li>
-<li><strong>自定义路由表</strong> 为新建的路由表。</li>
-<li>一个子网只能关联一个路由表，一个路由表可以关联多个子网</li>
-</ul>
-</li>
-</ul>
-<p><strong>流量如何进出</strong></p>
-<p>VPC 与外界互联网通信可以使用以下方式：</p>
-<table>
-<thead>
-<tr>
-<th>组件</th>
-<th>作用</th>
-<th>流量方向</th>
-<th>用法说明｜</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Internet Gateway (IGW，互联网网关)</td>
-<td>允许 VPC 连接互联网。</td>
-<td>双向 (In&#x2F;Out)</td>
-<td>实例必须分配公网 IP 或弹性 IP (EIP)</td>
-</tr>
-<tr>
-<td>NAT Gateway (NAT 网关)</td>
-<td>允许私有实例上外网，但防止外部主动连接。</td>
-<td>单向 (Outbound only)</td>
-<td>仅需私有 IP</td>
-</tr>
-<tr>
-<td>VPC Peering （对等连接）</td>
-<td>连接两个不同的 VPC，使其像在一个网络内通信。</td>
-<td>跨 VPC</td>
-<td></td>
-</tr>
-<tr>
-<td>Transit Gateway</td>
-<td>充当“中央枢纽”，连接数千个 VPC 和本地网络。</td>
-<td>复杂网络拓扑</td>
-<td></td>
-</tr>
-<tr>
-<td>Virtual Private Gateway</td>
-<td>用于建立 VPN 连接。</td>
-<td>混合云</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="部署-NAT-Gateway-网关并关联子网"><a href="#部署-NAT-Gateway-网关并关联子网" class="headerlink" title="部署 NAT Gateway 网关并关联子网"></a>部署 NAT Gateway 网关并关联子网</h2><p>通过 NAT Gateway 可以实现子网中的实例的对外互联网出口 IP 都是 NAT Gateway 绑定的 EIP，子网中的实例对互联网不可见。NAT Gateway 典型使用场景：</p>
-<ul>
-<li>为了安全，生产环境通常将 <strong>EKS 工作节点、RDS 数据库</strong> 或 <strong>缓存服务器（Redis）</strong> 放在私有子网中，这些资源不需要（也不应该）被互联网直接访问。</li>
-<li>应用需要调用外部服务（如支付网关、银行接口或第三方 API）时，对方的防火墙通常需要你提供一个白名单 IP。由于 EKS 节点是动态变化的，IP 并不固定。</li>
-<li>减少受攻击面，防止外部扫描。</li>
-</ul>
-<p>以下为创建 NAT Gateway 并关联子网的相关步骤：</p>
-<figure class="highlight shell"><figcaption><span>正确的整体架构</span></figcaption><table><tr><td class="code"><pre><span class="line">VPC</span><br><span class="line">├── Public Subnet</span><br><span class="line">│   ├── NAT Gateway（有 EIP）</span><br><span class="line">│   └── Route Table (Public RT)</span><br><span class="line">│       └── 0.0.0.0/0 → Internet Gateway</span><br><span class="line">│</span><br><span class="line">└── Private Subnet</span><br><span class="line">    ├── EC2 / ECS / EKS Node</span><br><span class="line">    └── Route Table (Private RT)</span><br><span class="line">        └── 0.0.0.0/0 → NAT Gateway</span><br></pre></td></tr></table></figure>
-<p>关键点：</p>
-<ul>
-<li><strong>NAT Gateway 必须在公有子网</strong></li>
-<li><strong>私有子网的默认路由指向 NAT Gateway</strong></li>
-</ul>
-<ol>
-<li><p><strong>确认 Public Subnet 存在</strong></p>
-<p> VPC 默认的 Main Route Table 已经满足这个条件，其默认网关为 Internet Gateway<br> <img src="https://i.0920811.xyz/img_390.png"></p>
-</li>
-<li><p><strong>创建 NAT Gateway</strong></p>
-<p> 在 <strong>NAT gateways</strong> 标签页面中，点击 <strong>Create NAT gateway</strong> ， <strong>Connectivity type</strong> 选择 <strong>Public</strong> ， <strong>Elastic IP (EIP) association</strong> 选择 <strong>手动分配 EIP（Manual）</strong><br> <img src="https://i.0920811.xyz/img_391.png"><br> 创建完成后，状态应为 <strong>Available</strong> 。在路由表（Route Tables）中，这时会多一个路由表，其 <strong>Edge associations（边缘关联）</strong> 关联到了刚刚创建的 NAT Gateway<br> <img src="https://i.0920811.xyz/img_392.png"></p>
-</li>
-<li><p><strong>创建一个新的子网（私有、Private Subnet）</strong></p>
-<p> 在 <strong>VPC → Subnets → Create subnet</strong> 标签页面中创建新的子网， <strong>不要勾选 Auto-assign public IPv4</strong> ，如此处于此子网中的实例，不会为其分配公网地址<br> <img src="https://i.0920811.xyz/img_394.png"></p>
-</li>
-<li><p><strong>创建 Private Route Table</strong></p>
-<p> 在 <strong>VPC → Route tables → Create route table</strong> 标签页面中创建新的路由表，本示例名为 <code>private-rt</code></p>
-</li>
-<li><p><strong>配置路由规则</strong></p>
-<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Routes</strong> 中 <strong>编辑路由（Edit Routes）</strong> ，添加一条路由规则： </p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| Destination | Target          |</span><br><span class="line">| ----------- | --------------- |</span><br><span class="line">| 0.0.0.0/0   | NAT Gateway |</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p> <img src="https://i.0920811.xyz/img_395.png"></p>
-</li>
-<li><p><strong>关联 Private Subnet</strong></p>
-<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Subnet associations(子网关联)</strong> 中 <strong>Edit subnet associations（编辑子网关联）</strong> ，选择目标子网进行关联<br> <img src="https://i.0920811.xyz/img_396.png"></p>
-</li>
-<li><p><strong>最终的 VPC 整体路由可以在 VPC 的 Resource map 中进行检查</strong><br> <img src="https://i.0920811.xyz/img_397.png"></p>
-</li>
-</ol>
-<h1 id="EKS-中的授权机制"><a href="#EKS-中的授权机制" class="headerlink" title="EKS 中的授权机制"></a>EKS 中的授权机制</h1><p>Kubernetes 原生提供 <strong>RBAC（Role-Based Access Control）</strong> 来控制集群中的 <strong>用户和服务账户（ServiceAccount）</strong> 对资源的访问权限。</p>
-<table>
-<thead>
-<tr>
-<th>对象</th>
-<th>描述</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Role</strong></td>
-<td>命名空间级别（Namespace）权限，指定某个命名空间内允许的操作和资源类型。</td>
-</tr>
-<tr>
-<td><strong>ClusterRole</strong></td>
-<td>集群级别权限，可以跨命名空间使用。</td>
-</tr>
-<tr>
-<td><strong>RoleBinding</strong></td>
-<td>将 Role 绑定到一个用户或 ServiceAccount。</td>
-</tr>
-<tr>
-<td><strong>ClusterRoleBinding</strong></td>
-<td>将 ClusterRole 绑定到一个用户或 ServiceAccount。</td>
-</tr>
-</tbody></table>
-<p><strong>核心字段</strong></p>
-<ul>
-<li><p><code>apiGroups</code> ：资源所属 API 组，例如 <code>&quot;&quot;</code> 代表 <strong>core API</strong> 。</p>
-</li>
-<li><p><code>resources</code> ：允许访问的资源类型，如 pods、deployments。</p>
-</li>
-<li><p><code>verbs</code> ：允许的操作，如 <code>get, list, create, delete</code> 。</p>
-</li>
-</ul>
-<p>RBAC 示例：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">apiGroups:</span> [<span class="string">&quot;&quot;</span>]</span><br><span class="line">    <span class="attr">resources:</span> [<span class="string">&quot;pods&quot;</span>]</span><br><span class="line">    <span class="attr">verbs:</span> [<span class="string">&quot;get&quot;</span>, <span class="string">&quot;list&quot;</span>]</span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">RoleBinding</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">read-pods</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">subjects:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">kind:</span> <span class="string">ServiceAccount</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">my-serviceaccount</span></span><br><span class="line"><span class="attr">roleRef:</span></span><br><span class="line">  <span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">apiGroup:</span> <span class="string">rbac.authorization.k8s.io</span></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><p><strong>RBAC 控制的是 Kubernetes 资源访问权限</strong> 。</p>
-</li>
-<li><p><strong>RBAC 对象绑定的是 Kubernetes 用户或 ServiceAccount，而不是 AWS IAM 用户</strong> 。</p>
-</li>
-</ul>
-<table>
-<thead>
-<tr>
-<th>概念</th>
-<th>全称</th>
-<th>解决的问题</th>
-<th>作用范围</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>RBAC</strong></td>
-<td>Role-Based Access Control</td>
-<td>决定 “用户&#x2F;进程” 在 K8s 集群内能做什么（如：查看 Pod）</td>
-<td>K8s 集群内部</td>
-</tr>
-<tr>
-<td><strong>Role</strong></td>
-<td>Kubernetes Role</td>
-<td>RBAC 的一部分，定义一组具体的集群内操作权限</td>
-<td>命名空间 (Namespace)</td>
-</tr>
-<tr>
-<td><strong>IRSA</strong></td>
-<td>IAM Roles for Service Accounts</td>
-<td>决定 “Pod 里的应用” 对 AWS 外部资源（如 S3&#x2F;RDS）的访问权限</td>
-<td>AWS 云环境</td>
-</tr>
-</tbody></table>
-<p><strong>AWS IAM Role</strong> 是 AWS 层面的权限机制，用于授权 AWS 资源访问，例如 S3、DynamoDB、Secrets Manager 等。</p>
-<p>AWS IAM Role 的特点：</p>
-<ul>
-<li><p>可以被 IAM 用户、服务或 EC2&#x2F;EKS Pod 假设（Assume）。</p>
-</li>
-<li><p>权限通过 IAM Policy 定义。</p>
-</li>
-</ul>
-<p><strong>AWS IAM Role</strong> 在 EKS 中的应用:</p>
-<ul>
-<li><p>管理集群本身访问 AWS 资源，例如节点组（NodeGroup）访问 S3。</p>
-</li>
-<li><p>可以通过 IAM 用户&#x2F;Role 管理集群级别的操作权限，例如 <code>eks:DescribeCluster</code> 。</p>
-</li>
-</ul>
-<blockquote>
-<p>💡 核心点：IAM Role 本身无法直接控制 Kubernetes 资源，它管理的是 AWS 资源访问。</p>
-</blockquote>
-<p><strong>IRSA（IAM Roles for Service Accounts）</strong> 是 AWS EKS 引入的将 Kubernetes ServiceAccount 与 AWS IAM Role 绑定，实现 Pod 级别的 AWS 权限控制的机制。其大致原理如下：</p>
-<ul>
-<li><strong>EKS 集群开启 OIDC Provider</strong></li>
-<li><strong>创建 IAM Role 并信任该 OIDC Provider</strong></li>
-<li><strong>Role 上定义 IAM Policy（如访问 S3）</strong></li>
-<li><strong>Kubernetes ServiceAccount 指定注解 <code>eks.amazonaws.com/role-arn</code>。</strong></li>
-<li><strong>Pod 使用该 ServiceAccount 时自动获取 Role 权限</strong></li>
-</ul>
-<p><strong>实践建议：</strong></p>
-<ul>
-<li><p>不要在 Pod 内放 AWS AccessKey，使用 IRSA。</p>
-</li>
-<li><p>最小权限原则：</p>
-<ul>
-<li><p>RBAC：只给 Pod 或用户真正需要的 Kubernetes 权限。</p>
-</li>
-<li><p>IAM Role &#x2F; IRSA：只给访问 AWS 资源的最小权限。</p>
-</li>
-</ul>
-</li>
-<li><p>多集群管理：可以通过 ClusterRole + RoleBinding 管理跨命名空间权限。</p>
-</li>
-<li><p>审计：</p>
-<ul>
-<li><p>使用 CloudTrail 监控 IRSA 调用。</p>
-</li>
-<li><p>Kubernetes API Server 日志审计 RBAC 权限。</p>
-</li>
-</ul>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Aws</category>
-      </categories>
-      <tags>
-        <tag>Aws</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Terraform 使用说明</title>
     <url>/20260507220030/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>理解 Terraform 的核心工作模型，Terraform 的三大核心要素</strong></p>
@@ -34381,266 +34801,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Shadowsocks VPN 使用</title>
-    <url>/20240924092814/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://shadowsocks.org/doc/what-is-shadowsocks.html">Shadowsocks 官网简介</a></p>
-<h1 id="基于-Python3-环境的-Shadowsocks-部署"><a href="#基于-Python3-环境的-Shadowsocks-部署" class="headerlink" title="基于 Python3 环境的 Shadowsocks 部署"></a>基于 Python3 环境的 Shadowsocks 部署</h1><p>执行以下命令之一安装 Shadowsocks (Python3 版本)</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip3 install git+https://github.com/shadowsocks/shadowsocks.git@master</span><br><span class="line"></span><br><span class="line">pip3 install shadowsocks</span><br></pre></td></tr></table></figure>
-
-<h1 id="配置-Shadowsocks"><a href="#配置-Shadowsocks" class="headerlink" title="配置 Shadowsocks"></a>配置 Shadowsocks</h1><p>创建一个配置文件，比如放在 <code>/etc/shadowsocks/config.json</code> 目录下。配置文件的内容如下：</p>
-<figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;server&quot;</span><span class="punctuation">:</span> <span class="string">&quot;0.0.0.0&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;server_port&quot;</span><span class="punctuation">:</span> <span class="number">8388</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_address&quot;</span><span class="punctuation">:</span> <span class="string">&quot;127.0.0.1&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_port&quot;</span><span class="punctuation">:</span> <span class="number">1080</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;password&quot;</span><span class="punctuation">:</span> <span class="string">&quot;your_password&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;timeout&quot;</span><span class="punctuation">:</span> <span class="number">300</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;method&quot;</span><span class="punctuation">:</span> <span class="string">&quot;aes-256-cfb&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;fast_open&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>配置选项说明</strong> ：</p>
-<ul>
-<li><code>server</code> ： 服务器监听的 IP 地址， <code>0.0.0.0</code> 表示监听所有接口。</li>
-<li><code>server_port</code> ： 服务器监听的端口，客户端连接到这个端口。</li>
-<li><code>password</code> ： 用于加密流量的密码，请设置一个强密码。</li>
-<li><code>method</code> ： 加密方法。<a href="https://shadowsocks.org/doc/configs.html">其他加密算法请参考官网</a></li>
-<li><code>timeout</code> ： 超时时间（秒）。</li>
-<li><code>fast_open</code> ： 如果启用 TCP Fast Open，请将其设置为 <code>true</code> ，但需要内核支持。</li>
-</ul>
-<h1 id="启动-Shadowsocks-服务"><a href="#启动-Shadowsocks-服务" class="headerlink" title="启动 Shadowsocks 服务"></a>启动 Shadowsocks 服务</h1><p>使用以下命令启动 Shadowsocks 服务，该命令会以后台进程的方式启动 Shadowsocks：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssserver -c /etc/shadowsocks/config.json -d start</span><br></pre></td></tr></table></figure>
-
-<p><strong>常用选项</strong> ：</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-h, --help</code></td>
-<td>打印帮助信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-d [start / stop / restart ]</code></td>
-<td>以 Daemon 方式（后台）运行</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--pid-file</code></td>
-<td>Daemon 模式启动时的 PID 文件路径</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--log-file</code></td>
-<td>Daemon 模式启动时日志文件路径</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--user</code></td>
-<td>运行服务的用户</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-v, -vv</code></td>
-<td><code>verbose</code> 模式</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-q, -qq</code></td>
-<td><code>quite</code> 模式</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-c</code></td>
-<td>配置文件路径</td>
-<td><code>ssserver -c /etc/shadowsocks/config.json -d start</code></td>
-</tr>
-<tr>
-<td><code>-s</code></td>
-<td>指定服务端监听地址，默认为 <code>0.0.0.0</code> 。等同于配置文件中的 <code>server</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-p</code></td>
-<td>指定服务端监听端口，默认为 <code>8388</code> 。等同于配置文件中的 <code>server_port</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-k</code></td>
-<td>指定密码 。等同于配置文件中的 <code>password</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-m</code></td>
-<td>加密方法，默认为 <code>aes-256-cfb</code>   。 等同于配置文件中的 <code>method</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t</code></td>
-<td>超时时间（单位为 <code>秒</code> ），默认 300s 。 等同于配置文件中的 <code>timeout</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>--fast-open</code></td>
-<td>启用 <code>TCP_FASTOPEN</code> ，需要 <code>Linux 3.7+</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>--workers</code></td>
-<td><code>workers</code> 数量，Linux&#x2F;Unix 可用</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--forbidden-ip</code></td>
-<td><code>,</code> 分割的 IP 列表，在此列表中的 IP 禁止连接，即黑名单</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--manager-address</code></td>
-<td>服务端 UDP 管理地址</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="为-Shadowsocks-配置-systemd-services-文件"><a href="#为-Shadowsocks-配置-systemd-services-文件" class="headerlink" title="为 Shadowsocks 配置 systemd services 文件"></a>为 Shadowsocks 配置 systemd services 文件</h2><p>参考以下内容，为 Shadowsocks 配置 systemd services 文件</p>
-<figure class="highlight ini"><figcaption><span>/etc/systemd/system/shadowsocks.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=Shadowsocks Proxy Server</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStart</span>=/usr/local/bin/ssserver -c /etc/shadowsocks/config.json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启用并启动 Shadowsocks 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl enable shadowsocks</span><br><span class="line">sudo systemctl start shadowsocks</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>在客户端（如 Windows、macOS、iOS 或 Android）上，使用 Shadowsocks 客户端进行连接。</p>
-<p><strong>客户端配置</strong> ：</p>
-<ul>
-<li><code>服务器地址</code> ： 填写你服务器的公网 IP。</li>
-<li><code>服务器端口</code> ：填写 <code>config.json</code> 中的 <code>server_port</code> ，如 <code>8388</code> 。</li>
-<li><code>密码</code> ： 填写配置文件中的 <code>password</code> 。</li>
-<li><code>加密方法</code> ： 选择 <code>method</code> 中配置的加密方法，如 <code>aes-256-cfb</code> 。</li>
-</ul>
-<p>如果需要调试或查看运行日志，可以通过以下命令查看 Shadowsocks 的日志：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -u shadowsocks</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>SoftEther VPN 使用</title>
-    <url>/202302070928/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.softether.org/4-docs">SoftEther VPN 官网手册</a></p>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos7 5.4.221</li>
-<li>SoftEther VPN Server 4.41</li>
-<li>iptables</li>
-</ul>
-<p>SoftEther VPN Server 有两种模式， <code>Service Mode</code> 和 <code>User Mode</code> ，本文档安装使用 <code>Service Mode</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Operating Modes](https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.2_Operating_Modes)">[1]</span></a></sup></p>
-<ul>
-<li><code>Service Mode</code> - 安装之后以系统服务的形式存在（被管理）</li>
-<li><code>User Mode</code> - 安装之后不存在对应的服务，（管理员）用户直接通过进程管理，程序启动停止需要（管理员）用户手动停止相应进程</li>
-</ul>
-<h1 id="安装配置过程"><a href="#安装配置过程" class="headerlink" title="安装配置过程"></a>安装配置过程</h1><h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><p>安装依赖包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y install gcc zlib-devel openssl-devel readline-devel ncurses-devel</span><br></pre></td></tr></table></figure>
-
-<p><a href="https://www.softether.org/">参考链接</a> 下载最新的安装包，本文档使用版本 4.41 版本 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Install on Linux and Initial Configurations](https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.3_Install_on_Linux_and_Initial_Configurations)">[2]</span></a></sup></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.41-9782-beta/softether-vpnserver-v4.41-9782-beta-2022.11.17-linux-x64-64bit.tar.gz</span><br><span class="line"></span><br><span class="line">tar -xf softether-vpnserver-v4.41-9782-beta-2022.11.17-linux-x64-64bit.tar.gz</span><br><span class="line"></span><br><span class="line">cd vpnserver/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>使用以下命令编译生成可执行文件</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">make</span><br></pre></td></tr></table></figure>
-
-<p>将编译后的目录移动到 <code>/usr/local/</code> 下，并修改权限</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd ..</span><br><span class="line">mv vpnserver /usr/local/</span><br><span class="line"></span><br><span class="line">cd /usr/local/vpnserver/</span><br><span class="line"></span><br><span class="line">chmod 600 *</span><br><span class="line"></span><br><span class="line">chmod 700 vpncmd</span><br><span class="line">chmod 700 vpnserver</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<p>使用 <code>vpncmd check</code> 命令检查 vpn server 是否可以正常运行。在 <code>/usr/local/vpnserver/</code> 目录下执行 <code>./vpncmd</code> ，根据提示选择 3 ( <code>3. Use of VPN Tools (certificate creation and Network Traffic Speed Test Tool)</code> )， 然后执行 <code>check</code> 命令进行检查。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./vpncmd</span></span><br><span class="line">By using vpncmd program, the following can be achieved. </span><br><span class="line"></span><br><span class="line">1. Management of VPN Server or VPN Bridge </span><br><span class="line">2. Management of VPN Client</span><br><span class="line">3. Use of VPN Tools (certificate creation and Network Traffic Speed Test Tool)</span><br><span class="line"></span><br><span class="line">Select 1, 2 or 3: 3</span><br><span class="line"></span><br><span class="line">VPN Tools&gt;check</span><br><span class="line">Check command - Check whether SoftEther VPN Operation is Possible</span><br><span class="line">---------------------------------------------------</span><br><span class="line">SoftEther VPN Operation Environment Check Tool</span><br><span class="line"></span><br><span class="line">Copyright (c) SoftEther VPN Project.</span><br><span class="line">All Rights Reserved.</span><br><span class="line"></span><br><span class="line">If this operation environment check tool is run on a system and that system passes, it is most likely that SoftEther VPN software can operate on that system. This check may take a while. Please wait...</span><br><span class="line"></span><br><span class="line">Checking &#x27;Kernel System&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;Memory Operation System&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;ANSI / Unicode string processing system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;File system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;Thread processing system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;Network system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line"></span><br><span class="line">All checks passed. It is most likely that SoftEther VPN Server / Bridge can operate normally on this system.</span><br><span class="line"></span><br><span class="line">The command completed successfully.</span><br></pre></td></tr></table></figure>
-
-<p>执行检查后输出 <code>All checks passed. It is most likely that SoftEther VPN Server / Bridge can operate normally on this system.</code> ，说明系统可正常满足 vpn server 运行的条件。</p>
-<p>根据以下内容生成服务启动脚本，将 vpn server 以 service 的形式运行</p>
-<figure class="highlight shell"><figcaption><span>/etc/init.d/softether-vpn-server</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">chkconfig: 2345 99 01</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">description: SoftEther VPN Server</span></span><br><span class="line">DAEMON=/usr/local/vpnserver/vpnserver</span><br><span class="line">LOCK=/var/lock/subsys/vpnserver</span><br><span class="line">test -x $DAEMON || exit 0</span><br><span class="line">case &quot;$1&quot; in</span><br><span class="line">start)</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON start</span></span><br><span class="line">touch $LOCK</span><br><span class="line">;;</span><br><span class="line">stop)</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON stop</span></span><br><span class="line">rm $LOCK</span><br><span class="line">;;</span><br><span class="line">restart)</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON stop</span></span><br><span class="line">sleep 3</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON start</span></span><br><span class="line">;;</span><br><span class="line">*)</span><br><span class="line">echo &quot;Usage: $0 &#123;start|stop|restart&#125;&quot;</span><br><span class="line">exit 1</span><br><span class="line">esac</span><br><span class="line">exit 0</span><br></pre></td></tr></table></figure>
-
-<p>给服务脚本添加可执行权限，并配置开机启动，之后可以通过 <code>systemctl</code> 管理服务状态。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">chmod</span> 755 /etc/init.d/softether-vpn-server</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl status softether-vpn-server</span></span><br><span class="line">● softether-vpn-server.service - SYSV: SoftEther VPN Server</span><br><span class="line">   Loaded: loaded (/etc/rc.d/init.d/softether-vpn-server; bad; vendor preset: disabled)</span><br><span class="line">   Active: inactive (dead)</span><br><span class="line">     Docs: man:systemd-sysv-generator(8)</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl <span class="built_in">enable</span> softether-vpn-server</span></span><br><span class="line">softether-vpn-server.service is not a native service, redirecting to /sbin/chkconfig.</span><br><span class="line">Executing /sbin/chkconfig softether-vpn-server on</span><br></pre></td></tr></table></figure>
-
-<p>防火墙添加以下配置 <sup id="fnref:4"><a href="#fn:4" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Listener Ports](https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.3_VPN_Server_Administration)">[4]</span></a></sup></p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -m comment --comment &quot;vpn&quot; -m multiport -p tcp --dports 443,1194,5555,992 -j ACCEPT</span><br><span class="line">-A INPUT -m comment --comment &quot;vpn&quot; -m multiport -p udp --dports 4500,500 -j ACCEPT</span><br></pre></td></tr></table></figure>
-
-<p>启动服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl start softether-vpn-server</span><br></pre></td></tr></table></figure>
-
-<h2 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h2><p>安装完 vpn server 之后，可以通过 <code>SoftEther VPN Server Manager</code> 管理 VPN Server。windows 上下载 <a href="https://www.softether-download.com/en.aspx?product=softether"><code>SoftEther VPN Server Manager for Windows</code></a> <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Initial Configurations](https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.4_Initial_Configurations)
-">[5]</span></a></sup></p>
-<p>初次登陆后，建议设置管理员密码<br><img src="https://i.0920811.xyz/img_116.png"></p>
-<p>默认情况下，只存在一个名为 <code>DEFAULT</code> 的 Virtual Hub 注册到了 VPN Server，可以使用此 Virtual Hub，或者删除它重新创建自己的 Virtual Hub。</p>
-<p>根据提示选择要创建的的 VPN Server 的类型，普通 VPN 选择 <code>Remote Access VPN Server</code><br><img src="https://i.0920811.xyz/img_117.png"><br>根据提示，配置要创建的 Virtual Hub 的名称，接着会弹出 <code>Dynamic DNS Function</code> 配置界面。 <code>Dynamic DNS Function</code> 的功能，会提供一个 <code>softether.net</code> 域的子域名，通过这个域名，可以解析到 VPN Server 的 IP 地址，如果服务器使用的是动态 IP，此解析会跟着变化。如果服务器只有内网 IP（云主机），此解析会自动解析到公网 IP。<br><img src="https://i.0920811.xyz/img_118.png"></p>
-<p><code>Dynamic DNS Function</code> 配置完成后退出（ <code>exit</code> ），进入协议配置界面，此处启用所有协议(手机连接 VPN 需要)<br><img src="https://i.0920811.xyz/img_122.png"></p>
-<p>创建 VPN 用户<br><img src="https://i.0920811.xyz/img_120.png"></p>
-<p>回到管理界面后，选择刚刚创建的 Virtual Hub，点击 <code>Manage Virtual Hub</code> 按钮管理配置，选择 <code>Virtual NAT and Virtual DHCP Server(SecureNAT)</code> ，启用 <code>SecureNAT</code> ，否则客户端可以连接到 VPN Server，但是 VPN Server 不会分配 IP 地址给客户端。<br><img src="https://i.0920811.xyz/img_121.png"></p>
-<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><h2 id="android-自带-VPN-客户端连接"><a href="#android-自带-VPN-客户端连接" class="headerlink" title="android 自带 VPN 客户端连接"></a>android 自带 VPN 客户端连接</h2><p>打开手机 VPN 设置，添加 VPN 配置，主要配置以下项：</p>
-<ul>
-<li><code>Type</code> : <code>L2TP/IPSec PSK</code></li>
-<li><code>Server address</code> : 填写 VPN 服务器 IP 或域名</li>
-<li><code>IPSec pre-shared key</code> : 填写协议配置界面中配置的 <code>IPsec Pre-shared Key</code> 对应的值，本文档中为 <code>vpn</code></li>
-<li><code>Username</code> : 填写 VPN 的用户名</li>
-<li><code>Password</code> : 填写 VPN 用户密码</li>
-</ul>
-<h2 id="ios-自带的-VPN-客户端连接"><a href="#ios-自带的-VPN-客户端连接" class="headerlink" title="ios 自带的 VPN 客户端连接"></a>ios 自带的 VPN 客户端连接</h2><p>在 IOS 的 <code>通用</code> –&gt; <code>VPN 与 设备管理</code> –&gt; <code>VPN</code> 中添加 VPN 配置，主要配置以下项：</p>
-<ul>
-<li><code>类型</code> ： <code>L2TP</code></li>
-<li><code>服务器</code> : 填写 VPN 服务器 IP 或域名</li>
-<li><code>账户</code> : 填写 VPN 的用户名</li>
-<li><code>密码</code> : 填写 VPN 用户密码</li>
-<li><code>密钥</code> : 填写协议配置界面中配置的 <code>IPsec Pre-shared Key</code> 对应的值，本文档中为 <code>vpn</code></li>
-</ul>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="VPN-Client-可以连接到-VPN-Server，但是-client-的出口-IP-未变"><a href="#VPN-Client-可以连接到-VPN-Server，但是-client-的出口-IP-未变" class="headerlink" title="VPN Client 可以连接到 VPN Server，但是 client 的出口 IP 未变"></a>VPN Client 可以连接到 VPN Server，但是 client 的出口 IP 未变</h2><p><strong>问题现象</strong></p>
-<p>windows 使用 VPN Client 可以正常连接到 VPN Server，但是检查客户端系统的出口 IP，不是 VPN Server 的 IP。检查客户端系统的 IP 地址信息</p>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">$ ipconfig /all</span><br><span class="line">未知适配器 VPN - VPN Client:</span><br><span class="line"></span><br><span class="line">   连接特定的 DNS 后缀 . . . . . . . :</span><br><span class="line">   描述. . . . . . . . . . . . . . . : VPN Client Adapter - VPN</span><br><span class="line">   物理地址. . . . . . . . . . . . . : 5E-7F-99-71-74-AF</span><br><span class="line">   DHCP 已启用 . . . . . . . . . . . : 是</span><br><span class="line">   自动配置已启用. . . . . . . . . . : 是</span><br><span class="line">   本地链接 IPv6 地址. . . . . . . . : fe80::7674:9039:eaca:5976%52(首选)</span><br><span class="line">   自动配置 IPv4 地址  . . . . . . . : 169.254.160.75(首选)</span><br><span class="line">   子网掩码  . . . . . . . . . . . . : 255.255.0.0</span><br><span class="line">   默认网关. . . . . . . . . . . . . :</span><br><span class="line">   DHCPv6 IAID . . . . . . . . . . . : 878608281</span><br><span class="line">   DHCPv6 客户端 DUID  . . . . . . . : 00-01-00-01-29-5D-CA-62-F4-39-09-4B-1C-6A</span><br><span class="line">   DNS 服务器  . . . . . . . . . . . : fec0:0:0:ffff::1%1</span><br><span class="line">                                       fec0:0:0:ffff::2%1</span><br><span class="line">                                       fec0:0:0:ffff::3%1</span><br><span class="line">   TCPIP 上的 NetBIOS  . . . . . . . : 已启用</span><br></pre></td></tr></table></figure>
-
-<p>VPN 适配器的 IP 地址为 <code>169.254.160.75</code> ，说明客户端未获取 VPN 相应的 IP 地址。检查 VPN Server 配置的 <code>Virtual NAT and Virtual DHCP Server(SecureNAT)</code> 部分，看是否启用了 <code>SecureNAT</code> 。启用后重新连接，查看 Windows 系统 IP 地址，看到已经正常分配到 VPN 的 IP，测试公网，变成了 VPN Server 的 IP。</p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.2_Operating_Modes">Operating Modes</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.3_Install_on_Linux_and_Initial_Configurations">Install on Linux and Initial Configurations</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.4_Initial_Configurations">Initial Configurations</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.3_VPN_Server_Administration">Listener Ports</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.4_Initial_Configurations">Initial Configurations</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>vsftpd 服务常见错误</title>
-    <url>/202207261304/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="530-Login-incorrect"><a href="#530-Login-incorrect" class="headerlink" title="530 Login incorrect"></a>530 Login incorrect</h3><p><strong>报错信息</strong> ： 登录时报错 <code>530 Login incorrect</code><br><strong>错误原因</strong> ：</p>
-<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth  required pam_listfile.so item=user sense=deny file=/etc/vsftpd/ftpusers onerr=succeed </span><br></pre></td></tr></table></figure>
-
-<p>默认情况下，&#x2F;etc&#x2F;vsftpd&#x2F;ftpusers 里面的用户是被拒绝登录的，确保要登录的用户不在此文件中</p>
-<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth       required    pam_shells.so  </span><br></pre></td></tr></table></figure>
-
-<p>此配置指定，只允许登录 shell 为 <code>/etc/shells</code> 中的 shell 的用户登录<br>如果用户 shell 为 <code>/sbin/nologin</code> ，则不允许登录，可改为 <code>pam_nologin.so</code></p>
-<span id="more"></span>
-
-<h3 id="500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot"><a href="#500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot" class="headerlink" title="500 OOPS: vsftpd: refusing to run with writable root inside chroot()"></a>500 OOPS: vsftpd: refusing to run with writable root inside chroot()</h3><p><strong>错误原因</strong> : 从 2.3.5 之后，vsftpd 增强了安全检查，如果用户被限定在了其主目录下，则该用户的主目录不能再具有写权限了！如果检查发现还有写权限，就会报该错误。<br><strong>解决方法 1</strong> ： 用户主目录取消写权限</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod a-w /data/ftpdir</span><br></pre></td></tr></table></figure>
-
-<p><strong>解决方法 2</strong> ： 配置文件中增加以下配置</p>
-<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">allow_writeable_chroot=YES</span><br></pre></td></tr></table></figure>
-
-<h3 id="500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp"><a href="#500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp" class="headerlink" title="500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp"></a>500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp</h3><p><strong>错误原因</strong> : 配置文件中启用了匿名用户登录，系统中没有 ftp 的匿名用户 ftp<br><strong>解决方法 1</strong> ：<br>配置文件中禁用匿名用户登录，同时指定用户</p>
-<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">anonymous_enable=NO</span><br><span class="line">ftp_username=nobody</span><br></pre></td></tr></table></figure>
-
-<h3 id="550-Create-directory-operation-failed"><a href="#550-Create-directory-operation-failed" class="headerlink" title="550 Create directory operation failed"></a>550 Create directory operation failed</h3><p><strong>错误原因</strong> : 匿名登录的用户不允许在 ftp 根目录下面新建对象，可以在根目录下面创建文件夹，如 pub，并给 ftp 为属主，在 pub 下面新建文件</p>
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><ul>
-<li><a href="/202207231311/" title="vsftpd 服务常用配置说明">vsftpd 服务常用配置说明</a>  
-</li>
-<li><a href="/202207251638/" title="vsftpd 虚拟用户配置说明">vsftpd 虚拟用户配置说明</a></li>
-</ul>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Vsftpd</tag>
       </tags>
   </entry>
   <entry>
@@ -41599,423 +41759,263 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>linux 常用目录和文件说明</title>
-    <url>/202208180923/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="常用目录和文件说明"><a href="#常用目录和文件说明" class="headerlink" title="常用目录和文件说明"></a>常用目录和文件说明</h1><h2 id="etc-目录常用文件说明"><a href="#etc-目录常用文件说明" class="headerlink" title="etc 目录常用文件说明"></a>etc 目录常用文件说明</h2><table>
-<thead>
-<tr>
-<th>文件路径</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>&#x2F;etc&#x2F;motd</td>
-<td>登录成功后的欢迎信息，ssh 登录和 console 登录成功后都会显示</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;issue</td>
-<td>在登录系统输入用户名之前显示的信息，远程 ssh 连接的时候并不会显示此信息</td>
-<td><a href="#x2F-etc-x2F-issue">说明示例</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;services</td>
-<td>记录网络服务名和它们对应使用的端口号及协议</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;protocols</td>
-<td>该文件是网络协议定义文件，里面记录了 <code>TCP/IP</code> 协议族的所有协议类型。文件中的每一行对应一个协议类型，它有 3 个字段，分别表示 <code>协议名称</code> 、 <code>协议号</code> 和 <code>协议别名</code></td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;vimrc<br/>~&#x2F;.vimrc</td>
-<td><code>vim</code> 启动时会读取 <code>/etc/vimrc</code> （全局配置） 和 <code>~/.vimrc</code> （用户配置）</td>
-<td><a href="/202208181117/" title="vim">vim</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;passwd<br/>&#x2F;etc&#x2F;shadow<br/>&#x2F;etc&#x2F;group</td>
-<td>用户数据库，其中记录了 <code>用户名</code> ， <code>id</code> ， <code>用户家目录</code> ， <code>shell</code> 等<br/>用户密码文件<br/>组信息</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;fstab</td>
-<td>系统启动时需要自动挂载的文件系统列表</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;mtab</td>
-<td>当前系统已挂载的文件系统，并由 <code>mount</code> 命令自动更新。当需要当前挂载的文件系统的列表时使用(例如 df 命令)</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;shells</td>
-<td>系统可使用的 <code>shell</code></td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;filesystems</td>
-<td>系统可使用的 <code>文件系统</code></td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;hostname</td>
-<td>存放这主机名</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;hosts</td>
-<td>主机名查询静态表，域名和 ip 本地静态表</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;nsswitch.conf</td>
-<td>它规定通过哪些途径以及按照什么顺序以及通过这些途径来查找特定类型的信息，还可以指定某个方法奏效或失效时系统将采取什么动作</td>
-<td><code>hosts:      files dns myhostname</code> <br/>此配置设定：在查找域名解析的时候，先查找本地 <code>/etc/hosts</code> ，再发送给 DNS 服务器查询</td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;rsyslog.conf</td>
-<td><code>rsyslog</code> 服务的配置文件，用来托管其他服务的日志</td>
-<td><a href="/202208191014/" title="linux rsyslog 服务">linux rsyslog 服务</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;logrotate.conf</td>
-<td>linux 日志切割工具</td>
-<td><a href="/202208191317/" title="linux logrotate 服务">linux logrotate 服务</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;rsyncd.conf</td>
-<td><code>rsync</code> 服务的配置文件</td>
-<td><a href="/36f703dc/" title="rsyncd 服务">rsyncd 服务</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;sysctl.conf<br/>&#x2F;etc&#x2F;sysctl.d&#x2F;</td>
-<td>内核的运行参数配置文件， <code>sysctl</code> 命令对内核参数的修改仅在当前生效，重启系统后参数丢失，如果希望参数永久生效可以修改此配置文件</td>
-<td><a href="/202302131009/" title="Linux 常用内核参数说明">Linux 常用内核参数说明</a></td>
-</tr>
-</tbody></table>
-<span id="more"></span>
+    <title>Shadowsocks VPN 使用</title>
+    <url>/20240924092814/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://shadowsocks.org/doc/what-is-shadowsocks.html">Shadowsocks 官网简介</a></p>
+<h1 id="基于-Python3-环境的-Shadowsocks-部署"><a href="#基于-Python3-环境的-Shadowsocks-部署" class="headerlink" title="基于 Python3 环境的 Shadowsocks 部署"></a>基于 Python3 环境的 Shadowsocks 部署</h1><p>执行以下命令之一安装 Shadowsocks (Python3 版本)</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip3 install git+https://github.com/shadowsocks/shadowsocks.git@master</span><br><span class="line"></span><br><span class="line">pip3 install shadowsocks</span><br></pre></td></tr></table></figure>
 
-<h2 id="x2F-usr-x2F-src-x2F"><a href="#x2F-usr-x2F-src-x2F" class="headerlink" title="&#x2F;usr&#x2F;src&#x2F;"></a>&#x2F;usr&#x2F;src&#x2F;</h2><p><code>/usr/src/</code> 目录下面一般会放置 Linux 发行版所使用的 <strong>内核源代码</strong> ，具体路径可能类似 <code>/usr/src/kernels/3.10.0-1160.11.1.el7.x86_64</code></p>
-<h2 id="x2F-proc-x2F-目录"><a href="#x2F-proc-x2F-目录" class="headerlink" title="&#x2F;proc&#x2F; 目录"></a>&#x2F;proc&#x2F; 目录</h2><p><code>/proc/</code> 目录是一个 <code>虚假的（pseudo）</code> 的仅存在于内存中的文件系统， 存储了系统运行时的内核状态统计信息。大多数检测系统运行指标的工具（如 <code>top</code> 、 <code>vmstat</code> 等）都是从此接口中读取统计数据。</p>
-<p>其中的大多数内容都是 <em>只读</em> 的，是进程在内核中的相关数据结构的映射和统计数据。部分是 <em>可写</em> 的，用于控制进程状态或者是内核的行为（如 <code>sysctl</code> ）。</p>
-<p><code>/proc/</code> 中包括的内容取决于具体的内核版本。关于 <code>/proc/</code> 的帮助文档，请查看 <code>man 5 proc</code> 。</p>
-<p>以下内容为全局（System Wide）范围的统计数据接口</p>
+<h1 id="配置-Shadowsocks"><a href="#配置-Shadowsocks" class="headerlink" title="配置 Shadowsocks"></a>配置 Shadowsocks</h1><p>创建一个配置文件，比如放在 <code>/etc/shadowsocks/config.json</code> 目录下。配置文件的内容如下：</p>
+<figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;server&quot;</span><span class="punctuation">:</span> <span class="string">&quot;0.0.0.0&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;server_port&quot;</span><span class="punctuation">:</span> <span class="number">8388</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_address&quot;</span><span class="punctuation">:</span> <span class="string">&quot;127.0.0.1&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_port&quot;</span><span class="punctuation">:</span> <span class="number">1080</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;password&quot;</span><span class="punctuation">:</span> <span class="string">&quot;your_password&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;timeout&quot;</span><span class="punctuation">:</span> <span class="number">300</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;method&quot;</span><span class="punctuation">:</span> <span class="string">&quot;aes-256-cfb&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;fast_open&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>配置选项说明</strong> ：</p>
+<ul>
+<li><code>server</code> ： 服务器监听的 IP 地址， <code>0.0.0.0</code> 表示监听所有接口。</li>
+<li><code>server_port</code> ： 服务器监听的端口，客户端连接到这个端口。</li>
+<li><code>password</code> ： 用于加密流量的密码，请设置一个强密码。</li>
+<li><code>method</code> ： 加密方法。<a href="https://shadowsocks.org/doc/configs.html">其他加密算法请参考官网</a></li>
+<li><code>timeout</code> ： 超时时间（秒）。</li>
+<li><code>fast_open</code> ： 如果启用 TCP Fast Open，请将其设置为 <code>true</code> ，但需要内核支持。</li>
+</ul>
+<h1 id="启动-Shadowsocks-服务"><a href="#启动-Shadowsocks-服务" class="headerlink" title="启动 Shadowsocks 服务"></a>启动 Shadowsocks 服务</h1><p>使用以下命令启动 Shadowsocks 服务，该命令会以后台进程的方式启动 Shadowsocks：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssserver -c /etc/shadowsocks/config.json -d start</span><br></pre></td></tr></table></figure>
+
+<p><strong>常用选项</strong> ：</p>
 <table>
 <thead>
 <tr>
-<th>文件路径</th>
+<th>选项</th>
 <th>说明</th>
 <th>示例</th>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>/proc/cmdline</code></td>
-<td>全局统计数据。存储了系统启动时使用的内核及选项（参数）<br/> <code>BOOT_IMAGE</code> 是系统加载的内核镜像<br/> <code>root</code> 是 <code>root file system</code> 的 UID</td>
-<td><code># cat /proc/cmdline</code> <br/> <code>BOOT_IMAGE=/boot/vmlinuz-6.8.9-1.el7.elrepo.x86_64 root=UUID=44a6a613-4e21-478b-a909-ab653c9d39df ro console=tty0 crashkernel=auto net.ifnames=0 console=ttyS0</code></td>
-</tr>
-<tr>
-<td><code>/proc/cpuinfo</code></td>
-<td>物理 CPU 处理器信息（Physical Processors），包括 Virtual CPU、Model Name、Clock Speed、Cache Sizes 等</td>
-<td><code>lscpu</code></td>
-</tr>
-<tr>
-<td><code>/proc/diskstatus</code></td>
-<td>所有存储设备的 Disk I&#x2F;O 统计信息</td>
+<td><code>-h, --help</code></td>
+<td>打印帮助信息</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/interrupts</code></td>
-<td>每个 CPU 的中断计数器信息</td>
+<td><code>-d [start / stop / restart ]</code></td>
+<td>以 Daemon 方式（后台）运行</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/loadavg</code></td>
-<td>系统的负载信息</td>
+<td><code>--pid-file</code></td>
+<td>Daemon 模式启动时的 PID 文件路径</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/meminfo</code></td>
-<td>系统内存使用统计</td>
+<td><code>--log-file</code></td>
+<td>Daemon 模式启动时日志文件路径</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/net/dev</code></td>
-<td>Network Interface 统计数据</td>
+<td><code>--user</code></td>
+<td>运行服务的用户</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/net/netstat</code></td>
-<td>网络统计数据</td>
+<td><code>-v, -vv</code></td>
+<td><code>verbose</code> 模式</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/net/tcp</code> <br/> <code>/proc/net/udp</code></td>
-<td>Active TCP&#x2F;UDP Socket 信息</td>
+<td><code>-q, -qq</code></td>
+<td><code>quite</code> 模式</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/pressure</code></td>
-<td>Pressure stall information (PSI) files</td>
+<td><code>-c</code></td>
+<td>配置文件路径</td>
+<td><code>ssserver -c /etc/shadowsocks/config.json -d start</code></td>
+</tr>
+<tr>
+<td><code>-s</code></td>
+<td>指定服务端监听地址，默认为 <code>0.0.0.0</code> 。等同于配置文件中的 <code>server</code></td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/schedstat</code></td>
-<td>全局范围的 CPU 调度统计</td>
+<td><code>-p</code></td>
+<td>指定服务端监听端口，默认为 <code>8388</code> 。等同于配置文件中的 <code>server_port</code></td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/self</code></td>
-<td>链接到当前 Process ID 目录</td>
+<td><code>-k</code></td>
+<td>指定密码 。等同于配置文件中的 <code>password</code></td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/slabinfo</code></td>
-<td>内核 Slab 分配器缓存（Slab Allocator Cache）  统计信息</td>
+<td><code>-m</code></td>
+<td>加密方法，默认为 <code>aes-256-cfb</code>   。 等同于配置文件中的 <code>method</code></td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/stat</code></td>
-<td>内核和系统资源的简略统计，包括： CPUs, Disks, Paging, Swap, Processes</td>
+<td><code>-t</code></td>
+<td>超时时间（单位为 <code>秒</code> ），默认 300s 。 等同于配置文件中的 <code>timeout</code></td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/zoneinfo</code></td>
-<td>内存区域信息（Memory Zone Information）</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>以下是针对 Process 的统计数据接口</p>
-<table>
-<thead>
-<tr>
-<th>文件路径</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/proc/&lt;PID&gt;/cmdline</code></td>
-<td>存储了程启动时的命令行参数。 <code>ps</code> 命令显示的 <code>command</code> 内容来自此处</td>
-<td><code># cat /proc/1/cmdline</code> <br/> <code>/usr/lib/systemd/systemd --switched-root --system--deserialize 21</code></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/comm</code></td>
-<td>存储了进程的名称，一般为进程启动的 <strong>文件名</strong> ，如 <code>systemd</code></td>
+<td><code>--fast-open</code></td>
+<td>启用 <code>TCP_FASTOPEN</code> ，需要 <code>Linux 3.7+</code></td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/&lt;PID&gt;/status</code></td>
-<td>进程的详细状态信息,包括进程的基本属性、内存使用情况、权限和调度策略等</td>
+<td><code>--workers</code></td>
+<td><code>workers</code> 数量，Linux&#x2F;Unix 可用</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/&lt;PID&gt;/stat</code></td>
-<td>进程的状态以及使用的 CPU 和 Memory 统计数据</td>
+<td><code>--forbidden-ip</code></td>
+<td><code>,</code> 分割的 IP 列表，在此列表中的 IP 禁止连接，即黑名单</td>
 <td></td>
 </tr>
 <tr>
-<td><code>/proc/&lt;PID&gt;/statm</code></td>
-<td>进程使用的内存统计，基于 Pages 为单位</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/task/</code></td>
-<td>进程的子任务（Per-task）相关的统计数据目录</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/limits</code></td>
-<td>进程使用的资源限制</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/maps</code></td>
-<td>映射的内存区域</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/sched</code></td>
-<td>CPU 调度统计数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/schedstat</code></td>
-<td>CPU 运行时（Runtime） 、延迟（Latency）和时间分片（Time Slices）数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/smaps</code></td>
-<td>映射的内存区域（Mapped Memroy Regions）以及使用的内存统计</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/fd/</code> <br/> <code>/proc/&lt;PID&gt;/fdinfo/</code></td>
-<td>包含文件描述符的目录</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/cgroup</code></td>
-<td>Cgroup 信息</td>
+<td><code>--manager-address</code></td>
+<td>服务端 UDP 管理地址</td>
 <td></td>
 </tr>
 </tbody></table>
-<p><code>/proc/&lt;PID&gt;/status</code> 记录内容</p>
-<table>
-<thead>
-<tr>
-<th>记录字段</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>voluntary_ctxt_switches</code> <br/> <code>nonvoluntary_ctxt_switches</code></td>
-<td>Context Switch 的次数，包括 <code>voluntary</code> 和 <code>nonvoluntary</code> 类型的 Context Switch</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="说明示例"><a href="#说明示例" class="headerlink" title="说明示例"></a>说明示例</h1><h2 id="x2F-etc-x2F-issue"><a href="#x2F-etc-x2F-issue" class="headerlink" title="&#x2F;etc&#x2F;issue"></a>&#x2F;etc&#x2F;issue</h2><p><img src="https://i.0920811.xyz/img_40.png"></p>
-<p>文件内容可使用的各个变量说明如下</p>
-<table>
-<thead>
-<tr>
-<th>变量</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>\d</td>
-<td>显示当前日期</td>
-</tr>
-<tr>
-<td>\l</td>
-<td>显示虚拟控制台号</td>
-</tr>
-<tr>
-<td>\m</td>
-<td>显示机器类型，即 CPU 架构，如 i386 或 x86_64 等（相当于 uname -m）</td>
-</tr>
-<tr>
-<td>\n</td>
-<td>显示主机的网络名（相当于 uname -n）</td>
-</tr>
-<tr>
-<td>\o</td>
-<td>显示域名</td>
-</tr>
-<tr>
-<td>\r</td>
-<td>显示 Kernel 内核版本号（相当于 uname -r）</td>
-</tr>
-<tr>
-<td>\t</td>
-<td>显示当前时间</td>
-</tr>
-<tr>
-<td>\s</td>
-<td>显示当前操作系统名称</td>
-</tr>
-<tr>
-<td>\u</td>
-<td>显示当前登录用户的编号</td>
-</tr>
-<tr>
-<td>\U</td>
-<td>显示当前登录用户的编号和用户</td>
-</tr>
-<tr>
-<td>\v</td>
-<td>显示当前操作系统的版本日期</td>
-</tr>
-</tbody></table>
+<h2 id="为-Shadowsocks-配置-systemd-services-文件"><a href="#为-Shadowsocks-配置-systemd-services-文件" class="headerlink" title="为 Shadowsocks 配置 systemd services 文件"></a>为 Shadowsocks 配置 systemd services 文件</h2><p>参考以下内容，为 Shadowsocks 配置 systemd services 文件</p>
+<figure class="highlight ini"><figcaption><span>/etc/systemd/system/shadowsocks.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=Shadowsocks Proxy Server</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStart</span>=/usr/local/bin/ssserver -c /etc/shadowsocks/config.json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启用并启动 Shadowsocks 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl enable shadowsocks</span><br><span class="line">sudo systemctl start shadowsocks</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>在客户端（如 Windows、macOS、iOS 或 Android）上，使用 Shadowsocks 客户端进行连接。</p>
+<p><strong>客户端配置</strong> ：</p>
+<ul>
+<li><code>服务器地址</code> ： 填写你服务器的公网 IP。</li>
+<li><code>服务器端口</code> ：填写 <code>config.json</code> 中的 <code>server_port</code> ，如 <code>8388</code> 。</li>
+<li><code>密码</code> ： 填写配置文件中的 <code>password</code> 。</li>
+<li><code>加密方法</code> ： 选择 <code>method</code> 中配置的加密方法，如 <code>aes-256-cfb</code> 。</li>
+</ul>
+<p>如果需要调试或查看运行日志，可以通过以下命令查看 Shadowsocks 的日志：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -u shadowsocks</span><br></pre></td></tr></table></figure>
 ]]></content>
       <categories>
-        <category>Linux</category>
+        <category>Tools</category>
+        <category>VPN</category>
       </categories>
       <tags>
-        <tag>Linux</tag>
+        <tag>VPN</tag>
       </tags>
   </entry>
   <entry>
-    <title>Linux 常见系统进程及参数说明</title>
-    <url>/20240718134326/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h1><p>内存管理相关的系统关键进程</p>
-<table>
-<thead>
-<tr>
-<th>Name</th>
-<th>Path</th>
-<th>Info</th>
-<th>Demonstrate</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>[kswapd0]</code></td>
-<td><strong>由内核启动</strong></td>
-<td>Linux 内核中的一个内存管理守护进程，负责内存交换（ <code>swap</code> ）.当系统内存不足时，触发内存回收机制，释放不常用的内存页。<br/>内存回收使用 Page Replacement 算法（新版本使用）</td>
-<td><a href="#kswapd">kswapd</a></td>
-</tr>
-</tbody></table>
+    <title>SoftEther VPN 使用</title>
+    <url>/202302070928/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.softether.org/4-docs">SoftEther VPN 官网手册</a></p>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos7 5.4.221</li>
+<li>SoftEther VPN Server 4.41</li>
+<li>iptables</li>
+</ul>
+<p>SoftEther VPN Server 有两种模式， <code>Service Mode</code> 和 <code>User Mode</code> ，本文档安装使用 <code>Service Mode</code> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Operating Modes](https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.2_Operating_Modes)">[1]</span></a></sup></p>
+<ul>
+<li><code>Service Mode</code> - 安装之后以系统服务的形式存在（被管理）</li>
+<li><code>User Mode</code> - 安装之后不存在对应的服务，（管理员）用户直接通过进程管理，程序启动停止需要（管理员）用户手动停止相应进程</li>
+</ul>
+<h1 id="安装配置过程"><a href="#安装配置过程" class="headerlink" title="安装配置过程"></a>安装配置过程</h1><h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><p>安装依赖包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum -y install gcc zlib-devel openssl-devel readline-devel ncurses-devel</span><br></pre></td></tr></table></figure>
+
+<p><a href="https://www.softether.org/">参考链接</a> 下载最新的安装包，本文档使用版本 4.41 版本 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Install on Linux and Initial Configurations](https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.3_Install_on_Linux_and_Initial_Configurations)">[2]</span></a></sup></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.41-9782-beta/softether-vpnserver-v4.41-9782-beta-2022.11.17-linux-x64-64bit.tar.gz</span><br><span class="line"></span><br><span class="line">tar -xf softether-vpnserver-v4.41-9782-beta-2022.11.17-linux-x64-64bit.tar.gz</span><br><span class="line"></span><br><span class="line">cd vpnserver/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>使用以下命令编译生成可执行文件</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">make</span><br></pre></td></tr></table></figure>
+
+<p>将编译后的目录移动到 <code>/usr/local/</code> 下，并修改权限</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">cd ..</span><br><span class="line">mv vpnserver /usr/local/</span><br><span class="line"></span><br><span class="line">cd /usr/local/vpnserver/</span><br><span class="line"></span><br><span class="line">chmod 600 *</span><br><span class="line"></span><br><span class="line">chmod 700 vpncmd</span><br><span class="line">chmod 700 vpnserver</span><br></pre></td></tr></table></figure>
+
 <span id="more"></span>
 
-<h2 id="kswapd"><a href="#kswapd" class="headerlink" title="kswapd"></a>kswapd</h2><p><code>kswapd</code> 是 Linux 内核中的一个内存管理守护进程，负责系统内存不足时进行页面回收（即将不活跃的页面移至内存交换（Swap）空间）。它确保系统有足够的可用内存，以维持系统稳定性和性能。主要功能包括：</p>
-<ul>
-<li>监控系统的内存使用情况。</li>
-<li>当系统内存不足时（低于设定的阈值），触发内存回收机制，释放不常用的内存页。</li>
-<li>将内存页交换到交换分区（ <code>swap space</code> ），以确保系统有足够的可用内存。</li>
-</ul>
-<p><code>kswapd</code> 进程是由内核自动启动的，不需要用户手动启动。它的代码位于 Linux 内核源代码的内存管理部分，主要文件包括：</p>
-<ul>
-<li><code>mm/vmscan.c</code> ： <code>kswapd</code> 相关功能的实现。</li>
-<li><code>mm/page_alloc.c</code> ：内存分配和回收的相关代码。</li>
-</ul>
-<p>目前大多数内核使用 <a href="https://0920811.xyz/202405311003/#Page-Relpacement">Page Replacement Algorithm（页面置换算法）</a>，常用算法实现包括：</p>
-<ul>
-<li>LRU (Least Recently Used) ： 最常用的算法，基于页面最近使用的时间进行置换。</li>
-<li>FIFO (First In, First Out) ： 基于页面进入内存的顺序进行置换。</li>
-<li>Clock Algorithm ： 一种改进的 LRU 算法，使用一个 ‘时钟’ 指针循环扫描页面。</li>
-</ul>
-<h3 id="kswapd-相关配置"><a href="#kswapd-相关配置" class="headerlink" title="kswapd 相关配置"></a>kswapd 相关配置</h3><ul>
-<li><p><code>swappiness</code> 参数 <strong>控制系统在内存不足时使用交换空间的频率，值越高，系统越倾向于使用交换空间。默认值通常为 60，取值范围是 0 到 100</strong> 。</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 60 &gt; /proc/sys/vm/swappiness</span><br></pre></td></tr></table></figure>
+<p>使用 <code>vpncmd check</code> 命令检查 vpn server 是否可以正常运行。在 <code>/usr/local/vpnserver/</code> 目录下执行 <code>./vpncmd</code> ，根据提示选择 3 ( <code>3. Use of VPN Tools (certificate creation and Network Traffic Speed Test Tool)</code> )， 然后执行 <code>check</code> 命令进行检查。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">./vpncmd</span></span><br><span class="line">By using vpncmd program, the following can be achieved. </span><br><span class="line"></span><br><span class="line">1. Management of VPN Server or VPN Bridge </span><br><span class="line">2. Management of VPN Client</span><br><span class="line">3. Use of VPN Tools (certificate creation and Network Traffic Speed Test Tool)</span><br><span class="line"></span><br><span class="line">Select 1, 2 or 3: 3</span><br><span class="line"></span><br><span class="line">VPN Tools&gt;check</span><br><span class="line">Check command - Check whether SoftEther VPN Operation is Possible</span><br><span class="line">---------------------------------------------------</span><br><span class="line">SoftEther VPN Operation Environment Check Tool</span><br><span class="line"></span><br><span class="line">Copyright (c) SoftEther VPN Project.</span><br><span class="line">All Rights Reserved.</span><br><span class="line"></span><br><span class="line">If this operation environment check tool is run on a system and that system passes, it is most likely that SoftEther VPN software can operate on that system. This check may take a while. Please wait...</span><br><span class="line"></span><br><span class="line">Checking &#x27;Kernel System&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;Memory Operation System&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;ANSI / Unicode string processing system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;File system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;Thread processing system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line">Checking &#x27;Network system&#x27;... </span><br><span class="line">              Pass</span><br><span class="line"></span><br><span class="line">All checks passed. It is most likely that SoftEther VPN Server / Bridge can operate normally on this system.</span><br><span class="line"></span><br><span class="line">The command completed successfully.</span><br></pre></td></tr></table></figure>
 
-<p>持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
-  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.swappiness = 60</span><br></pre></td></tr></table></figure>
+<p>执行检查后输出 <code>All checks passed. It is most likely that SoftEther VPN Server / Bridge can operate normally on this system.</code> ，说明系统可正常满足 vpn server 运行的条件。</p>
+<p>根据以下内容生成服务启动脚本，将 vpn server 以 service 的形式运行</p>
+<figure class="highlight shell"><figcaption><span>/etc/init.d/softether-vpn-server</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/sh</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">chkconfig: 2345 99 01</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">description: SoftEther VPN Server</span></span><br><span class="line">DAEMON=/usr/local/vpnserver/vpnserver</span><br><span class="line">LOCK=/var/lock/subsys/vpnserver</span><br><span class="line">test -x $DAEMON || exit 0</span><br><span class="line">case &quot;$1&quot; in</span><br><span class="line">start)</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON start</span></span><br><span class="line">touch $LOCK</span><br><span class="line">;;</span><br><span class="line">stop)</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON stop</span></span><br><span class="line">rm $LOCK</span><br><span class="line">;;</span><br><span class="line">restart)</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON stop</span></span><br><span class="line">sleep 3</span><br><span class="line"><span class="meta prompt_">$</span><span class="language-bash">DAEMON start</span></span><br><span class="line">;;</span><br><span class="line">*)</span><br><span class="line">echo &quot;Usage: $0 &#123;start|stop|restart&#125;&quot;</span><br><span class="line">exit 1</span><br><span class="line">esac</span><br><span class="line">exit 0</span><br></pre></td></tr></table></figure>
+
+<p>给服务脚本添加可执行权限，并配置开机启动，之后可以通过 <code>systemctl</code> 管理服务状态。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">chmod</span> 755 /etc/init.d/softether-vpn-server</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl daemon-reload</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl status softether-vpn-server</span></span><br><span class="line">● softether-vpn-server.service - SYSV: SoftEther VPN Server</span><br><span class="line">   Loaded: loaded (/etc/rc.d/init.d/softether-vpn-server; bad; vendor preset: disabled)</span><br><span class="line">   Active: inactive (dead)</span><br><span class="line">     Docs: man:systemd-sysv-generator(8)</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">systemctl <span class="built_in">enable</span> softether-vpn-server</span></span><br><span class="line">softether-vpn-server.service is not a native service, redirecting to /sbin/chkconfig.</span><br><span class="line">Executing /sbin/chkconfig softether-vpn-server on</span><br></pre></td></tr></table></figure>
+
+<p>防火墙添加以下配置 <sup id="fnref:4"><a href="#fn:4" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Listener Ports](https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.3_VPN_Server_Administration)">[4]</span></a></sup></p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -m comment --comment &quot;vpn&quot; -m multiport -p tcp --dports 443,1194,5555,992 -j ACCEPT</span><br><span class="line">-A INPUT -m comment --comment &quot;vpn&quot; -m multiport -p udp --dports 4500,500 -j ACCEPT</span><br></pre></td></tr></table></figure>
+
+<p>启动服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl start softether-vpn-server</span><br></pre></td></tr></table></figure>
+
+<h2 id="初始化配置"><a href="#初始化配置" class="headerlink" title="初始化配置"></a>初始化配置</h2><p>安装完 vpn server 之后，可以通过 <code>SoftEther VPN Server Manager</code> 管理 VPN Server。windows 上下载 <a href="https://www.softether-download.com/en.aspx?product=softether"><code>SoftEther VPN Server Manager for Windows</code></a> <sup id="fnref:5"><a href="#fn:5" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Initial Configurations](https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.4_Initial_Configurations)
+">[5]</span></a></sup></p>
+<p>初次登陆后，建议设置管理员密码<br><img src="https://i.0920811.xyz/img_116.png"></p>
+<p>默认情况下，只存在一个名为 <code>DEFAULT</code> 的 Virtual Hub 注册到了 VPN Server，可以使用此 Virtual Hub，或者删除它重新创建自己的 Virtual Hub。</p>
+<p>根据提示选择要创建的的 VPN Server 的类型，普通 VPN 选择 <code>Remote Access VPN Server</code><br><img src="https://i.0920811.xyz/img_117.png"><br>根据提示，配置要创建的 Virtual Hub 的名称，接着会弹出 <code>Dynamic DNS Function</code> 配置界面。 <code>Dynamic DNS Function</code> 的功能，会提供一个 <code>softether.net</code> 域的子域名，通过这个域名，可以解析到 VPN Server 的 IP 地址，如果服务器使用的是动态 IP，此解析会跟着变化。如果服务器只有内网 IP（云主机），此解析会自动解析到公网 IP。<br><img src="https://i.0920811.xyz/img_118.png"></p>
+<p><code>Dynamic DNS Function</code> 配置完成后退出（ <code>exit</code> ），进入协议配置界面，此处启用所有协议(手机连接 VPN 需要)<br><img src="https://i.0920811.xyz/img_122.png"></p>
+<p>创建 VPN 用户<br><img src="https://i.0920811.xyz/img_120.png"></p>
+<p>回到管理界面后，选择刚刚创建的 Virtual Hub，点击 <code>Manage Virtual Hub</code> 按钮管理配置，选择 <code>Virtual NAT and Virtual DHCP Server(SecureNAT)</code> ，启用 <code>SecureNAT</code> ，否则客户端可以连接到 VPN Server，但是 VPN Server 不会分配 IP 地址给客户端。<br><img src="https://i.0920811.xyz/img_121.png"></p>
+<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><h2 id="android-自带-VPN-客户端连接"><a href="#android-自带-VPN-客户端连接" class="headerlink" title="android 自带 VPN 客户端连接"></a>android 自带 VPN 客户端连接</h2><p>打开手机 VPN 设置，添加 VPN 配置，主要配置以下项：</p>
+<ul>
+<li><code>Type</code> : <code>L2TP/IPSec PSK</code></li>
+<li><code>Server address</code> : 填写 VPN 服务器 IP 或域名</li>
+<li><code>IPSec pre-shared key</code> : 填写协议配置界面中配置的 <code>IPsec Pre-shared Key</code> 对应的值，本文档中为 <code>vpn</code></li>
+<li><code>Username</code> : 填写 VPN 的用户名</li>
+<li><code>Password</code> : 填写 VPN 用户密码</li>
+</ul>
+<h2 id="ios-自带的-VPN-客户端连接"><a href="#ios-自带的-VPN-客户端连接" class="headerlink" title="ios 自带的 VPN 客户端连接"></a>ios 自带的 VPN 客户端连接</h2><p>在 IOS 的 <code>通用</code> –&gt; <code>VPN 与 设备管理</code> –&gt; <code>VPN</code> 中添加 VPN 配置，主要配置以下项：</p>
+<ul>
+<li><code>类型</code> ： <code>L2TP</code></li>
+<li><code>服务器</code> : 填写 VPN 服务器 IP 或域名</li>
+<li><code>账户</code> : 填写 VPN 的用户名</li>
+<li><code>密码</code> : 填写 VPN 用户密码</li>
+<li><code>密钥</code> : 填写协议配置界面中配置的 <code>IPsec Pre-shared Key</code> 对应的值，本文档中为 <code>vpn</code></li>
+</ul>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="VPN-Client-可以连接到-VPN-Server，但是-client-的出口-IP-未变"><a href="#VPN-Client-可以连接到-VPN-Server，但是-client-的出口-IP-未变" class="headerlink" title="VPN Client 可以连接到 VPN Server，但是 client 的出口 IP 未变"></a>VPN Client 可以连接到 VPN Server，但是 client 的出口 IP 未变</h2><p><strong>问题现象</strong></p>
+<p>windows 使用 VPN Client 可以正常连接到 VPN Server，但是检查客户端系统的出口 IP，不是 VPN Server 的 IP。检查客户端系统的 IP 地址信息</p>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">$ ipconfig /all</span><br><span class="line">未知适配器 VPN - VPN Client:</span><br><span class="line"></span><br><span class="line">   连接特定的 DNS 后缀 . . . . . . . :</span><br><span class="line">   描述. . . . . . . . . . . . . . . : VPN Client Adapter - VPN</span><br><span class="line">   物理地址. . . . . . . . . . . . . : 5E-7F-99-71-74-AF</span><br><span class="line">   DHCP 已启用 . . . . . . . . . . . : 是</span><br><span class="line">   自动配置已启用. . . . . . . . . . : 是</span><br><span class="line">   本地链接 IPv6 地址. . . . . . . . : fe80::7674:9039:eaca:5976%52(首选)</span><br><span class="line">   自动配置 IPv4 地址  . . . . . . . : 169.254.160.75(首选)</span><br><span class="line">   子网掩码  . . . . . . . . . . . . : 255.255.0.0</span><br><span class="line">   默认网关. . . . . . . . . . . . . :</span><br><span class="line">   DHCPv6 IAID . . . . . . . . . . . : 878608281</span><br><span class="line">   DHCPv6 客户端 DUID  . . . . . . . : 00-01-00-01-29-5D-CA-62-F4-39-09-4B-1C-6A</span><br><span class="line">   DNS 服务器  . . . . . . . . . . . : fec0:0:0:ffff::1%1</span><br><span class="line">                                       fec0:0:0:ffff::2%1</span><br><span class="line">                                       fec0:0:0:ffff::3%1</span><br><span class="line">   TCPIP 上的 NetBIOS  . . . . . . . : 已启用</span><br></pre></td></tr></table></figure>
+
+<p>VPN 适配器的 IP 地址为 <code>169.254.160.75</code> ，说明客户端未获取 VPN 相应的 IP 地址。检查 VPN Server 配置的 <code>Virtual NAT and Virtual DHCP Server(SecureNAT)</code> 部分，看是否启用了 <code>SecureNAT</code> 。启用后重新连接，查看 Windows 系统 IP 地址，看到已经正常分配到 VPN 的 IP，测试公网，变成了 VPN Server 的 IP。</p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.2_Operating_Modes">Operating Modes</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.3_Install_on_Linux_and_Initial_Configurations">Install on Linux and Initial Configurations</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.4_Initial_Configurations">Initial Configurations</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/3._SoftEther_VPN_Server_Manual/3.3_VPN_Server_Administration">Listener Ports</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://www.softether.org/4-docs/1-manual/7._Installing_SoftEther_VPN_Server/7.4_Initial_Configurations">Initial Configurations</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>vsftpd 服务常见错误</title>
+    <url>/202207261304/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="530-Login-incorrect"><a href="#530-Login-incorrect" class="headerlink" title="530 Login incorrect"></a>530 Login incorrect</h3><p><strong>报错信息</strong> ： 登录时报错 <code>530 Login incorrect</code><br><strong>错误原因</strong> ：</p>
+<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth  required pam_listfile.so item=user sense=deny file=/etc/vsftpd/ftpusers onerr=succeed </span><br></pre></td></tr></table></figure>
+
+<p>默认情况下，&#x2F;etc&#x2F;vsftpd&#x2F;ftpusers 里面的用户是被拒绝登录的，确保要登录的用户不在此文件中</p>
+<figure class="highlight shell"><figcaption><span>/etc/pam.d/vsftpd</span></figcaption><table><tr><td class="code"><pre><span class="line">auth       required    pam_shells.so  </span><br></pre></td></tr></table></figure>
+
+<p>此配置指定，只允许登录 shell 为 <code>/etc/shells</code> 中的 shell 的用户登录<br>如果用户 shell 为 <code>/sbin/nologin</code> ，则不允许登录，可改为 <code>pam_nologin.so</code></p>
+<span id="more"></span>
+
+<h3 id="500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot"><a href="#500-OOPS-vsftpd-refusing-to-run-with-writable-root-inside-chroot" class="headerlink" title="500 OOPS: vsftpd: refusing to run with writable root inside chroot()"></a>500 OOPS: vsftpd: refusing to run with writable root inside chroot()</h3><p><strong>错误原因</strong> : 从 2.3.5 之后，vsftpd 增强了安全检查，如果用户被限定在了其主目录下，则该用户的主目录不能再具有写权限了！如果检查发现还有写权限，就会报该错误。<br><strong>解决方法 1</strong> ： 用户主目录取消写权限</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">chmod a-w /data/ftpdir</span><br></pre></td></tr></table></figure>
+
+<p><strong>解决方法 2</strong> ： 配置文件中增加以下配置</p>
+<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">allow_writeable_chroot=YES</span><br></pre></td></tr></table></figure>
+
+<h3 id="500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp"><a href="#500-OOPS-vsftpd-cannot-locate-user-specified-in-‘guest-username’-ftp" class="headerlink" title="500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp"></a>500 OOPS: vsftpd: cannot locate user specified in ‘guest_username’:ftp</h3><p><strong>错误原因</strong> : 配置文件中启用了匿名用户登录，系统中没有 ftp 的匿名用户 ftp<br><strong>解决方法 1</strong> ：<br>配置文件中禁用匿名用户登录，同时指定用户</p>
+<figure class="highlight shell"><figcaption><span>vsftpd.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">anonymous_enable=NO</span><br><span class="line">ftp_username=nobody</span><br></pre></td></tr></table></figure>
+
+<h3 id="550-Create-directory-operation-failed"><a href="#550-Create-directory-operation-failed" class="headerlink" title="550 Create directory operation failed"></a>550 Create directory operation failed</h3><p><strong>错误原因</strong> : 匿名登录的用户不允许在 ftp 根目录下面新建对象，可以在根目录下面创建文件夹，如 pub，并给 ftp 为属主，在 pub 下面新建文件</p>
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><ul>
+<li><a href="/202207231311/" title="vsftpd 服务常用配置说明">vsftpd 服务常用配置说明</a>  
 </li>
-<li><p><code>min_free_kbytes</code> 参数 <strong>设置内核保持的最小空闲内存量</strong> ，该值确保系统始终有一定的空闲内存，防止内存耗尽</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 65536 &gt; /proc/sys/vm/min_free_kbytes</span><br></pre></td></tr></table></figure>
-
-<p>  持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
-  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.min_free_kbytes = 65536</span><br></pre></td></tr></table></figure></li>
+<li><a href="/202207251638/" title="vsftpd 虚拟用户配置说明">vsftpd 虚拟用户配置说明</a></li>
 </ul>
 ]]></content>
       <categories>
         <category>Linux</category>
+        <category>常用服务</category>
       </categories>
       <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 压缩解压缩</title>
-    <url>/202209301257/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
-
-<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
-
-<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
+        <tag>Vsftpd</tag>
       </tags>
   </entry>
 </search>
