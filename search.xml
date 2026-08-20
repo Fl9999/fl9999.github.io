@@ -33385,186 +33385,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>sftp 服务常用配置说明</title>
-    <url>/202207301332/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认 ssh 启用了 sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置 sshd 以限制 sftp 登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
-<span id="more"></span>
-
-<h3 id="基本配置"><a href="#基本配置" class="headerlink" title="基本配置"></a>基本配置</h3><p><strong><code>ChrootDirectory</code> 配置前提</strong> :<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，属主和属组必须是 root；<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，只有属主能拥有写权限，权限最大设置只能是 755。</p>
-<blockquote>
-<p><strong>如果权限配置不对，会导致无法登录</strong>  </p>
-<p>如果上级目录无法设置为 root 权限，可以通过 <code>ln</code> 链接的方式实现</p>
-<p>限制后的用户无法 <code>ssh</code> 登录系统</p>
-</blockquote>
-<p>创建相关用户和组</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd sftp</span><br><span class="line">useradd -g sftp -d /data/sftp/sftpuser1 -s /sbin/nologin sftpuser1</span><br><span class="line">echo 123456 | passwd --stdin sftpuser1</span><br><span class="line"></span><br><span class="line">chown root:root /data/sftp/sftpuser1</span><br><span class="line">chmod 755 /data/sftp/sftpuser1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">因为 /data/sftp/sftpuser1 属主和属组都为root，其他用户无写入权限，需要创建sftpuser1可写入的目录</span></span><br><span class="line">mkdir -p /data/sftp/sftpuser1/upload</span><br><span class="line">chown sftpuser1:sftp /data/sftp/sftpuser/upload</span><br><span class="line">chmod 755 /data/sftp/sftpuser1/upload</span><br></pre></td></tr></table></figure>
-
-<p>修改 <code>sshd_config</code> 配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">Subsystem      sftp    /usr/libexec/openssh/sftp-server</span></span><br><span class="line">Subsystem sftp internal-sftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">拒绝指定用户登录,不能放在Match user中</span></span><br><span class="line">DenyUsers user1 user2</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">maxsessions 10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户配置sftp, 多个用户可重复配置以下内容，或者通过针对组配置sftp</span></span><br><span class="line">Match user sftpuser1,sftpuser2</span><br><span class="line">    # 该行强制执行内部 sftp，并忽略任何 ~/.ssh/rc 文件中的命令。</span><br><span class="line">   ForceCommand internal-sftp</span><br><span class="line">	</span><br><span class="line">   ChrootDirectory /data/sftp/sftpuser1</span><br><span class="line">	</span><br><span class="line"><span class="meta prompt_">   # </span><span class="language-bash">下面两项是与安全有关</span></span><br><span class="line">    AllowTcpForwarding no</span><br><span class="line">    X11Forwarding no</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户组配置sftp</span></span><br><span class="line">Match Group sftp,sftp1</span><br><span class="line">    ForceCommand internal-sftp</span><br><span class="line">    </span><br><span class="line">    # %h 代表用户 home 目录，%u 代表用户名。</span><br><span class="line">    ChrootDirectory /data/sftp/%u</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>修改配置后，重启 <code>sshd</code> 服务生效<br><code>systemctl restart sshd</code></p>
-</blockquote>
-<h3 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h3><h4 id="Unable-to-open-permission-denied"><a href="#Unable-to-open-permission-denied" class="headerlink" title="Unable to open .: permission denied"></a>Unable to open .: permission denied</h4><p><strong>解决方法</strong> ： 如果启动了 <code>selinux</code> ， 关闭 <code>selinux</code></p>
-<h4 id="Couldn’t-read-packet-Connection-reset-by-peer"><a href="#Couldn’t-read-packet-Connection-reset-by-peer" class="headerlink" title="Couldn’t read packet: Connection reset by peer"></a>Couldn’t read packet: Connection reset by peer</h4><p><strong>问题原因</strong> : <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录及所有上级目录的用户和组必须为 <code>root</code> ，权限最多为 755, <a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
-<h4 id="remote-readdir-“-x2F-“-Permission-denied"><a href="#remote-readdir-“-x2F-“-Permission-denied" class="headerlink" title="remote readdir(“&#x2F;“): Permission denied"></a>remote readdir(“&#x2F;“): Permission denied</h4><p><strong>问题原因</strong> : sftp 用户对 <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录要有读取权限，<a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
-<h3 id="禁用-sftp-功能"><a href="#禁用-sftp-功能" class="headerlink" title="禁用 sftp 功能"></a>禁用 sftp 功能</h3><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code> ,注释以下内容</p>
-<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Subsystem sftp /usr/libexec/openssh/sftp-server</span></span><br></pre></td></tr></table></figure>
-
-<p>修改配置文件后重启 <code>sshd</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>sftp</code> 登录时会报错 ： <code>Error:	Could not connect to server</code></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>sftp</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>spinnaker 常见用法</title>
-    <url>/202211101344/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Spinnaker 1.29.0</li>
-<li>Kubernetes 1.24.7</li>
-</ul>
-<h1 id="Spinnaker-引用-Kubernetes-中的-Namespace"><a href="#Spinnaker-引用-Kubernetes-中的-Namespace" class="headerlink" title="Spinnaker 引用 Kubernetes 中的 Namespace"></a>Spinnaker 引用 Kubernetes 中的 Namespace</h1><p>Kubernetes 中的 Namespace，对应 Spinnaker 中的 Application，当 <strong>在 Kubernetes 中创建 Namespace ，并在此 Namespace 创建资源后</strong> ，Spinnaker 会自动读取到此 Namespace，并显示在 Applications 中。</p>
-<h1 id="Pipelines-中引用-Docker-Registry-类型的触发器"><a href="#Pipelines-中引用-Docker-Registry-类型的触发器" class="headerlink" title="Pipelines 中引用 Docker Registry 类型的触发器"></a>Pipelines 中引用 Docker Registry 类型的触发器</h1><p>在 Pipelines 中配置 Docker Registry 类型的触发器，并在后面的 Stage 中自动引用。</p>
-<ol>
-<li><p>在要配置的 Pipeline 的 <code>Configuration</code> 部分，配置 <code>Automated Triggers</code> ，选择 <code>type</code> 为 <code>Docker Registry</code><br> <img src="https://i.0920811.xyz/img_85.png"></p>
-<ul>
-<li>Registry Name - 为 <a href="https://0920811.xyz/202210121639/#添加自建的私有-docker-镜像源">Halyard 中配置的 Docker Registry 的认证信息</a> 的名称</li>
-<li>Organization - 对应 Docker Registry （如 Harbor） 中的 Projects</li>
-</ul>
-</li>
-<li><p>Stage 中使用以下方式引用镜像</p>
-<p> <code>image: &#39;$&#123;trigger.artifacts[0].reference&#125;&#39;</code></p>
-<p> <code>$&#123;trigger&#125;</code> 为镜像名称，当一个镜像名下有多个不同标签的镜像时， <code>$&#123;trigger.artifacts[0]</code> 表示第一个镜像，依此类推。 <code>$&#123;trigger.artifacts[0].reference&#125;</code> 值为第一个镜像的完整镜像名加标签。<br> <img src="https://i.0920811.xyz/img_86.png"></p>
-</li>
-</ol>
-<span id="more"></span>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Spinnaker</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>ssh 常见配置</title>
-    <url>/202208171033/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="ssh-免密登陆"><a href="#ssh-免密登陆" class="headerlink" title="ssh 免密登陆"></a>ssh 免密登陆</h1><p>在需要免密码登陆的场景下，可以配置 ssh 密钥登陆。配置步骤如下</p>
-<ol>
-<li><p>在本地服务器上面执行命令生成密钥对</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ssh-keygen</span> </span><br><span class="line">Generating public/private rsa key pair.</span><br><span class="line">Enter file in which to save the key (/home/testuser/.ssh/id_rsa): </span><br><span class="line">Enter passphrase (empty for no passphrase): </span><br><span class="line">Enter same passphrase again: </span><br><span class="line">Your identification has been saved in /home/testuser/.ssh/id_rsa.</span><br><span class="line">Your public key has been saved in /home/testuser/.ssh/id_rsa.pub.</span><br><span class="line">The key fingerprint is:</span><br><span class="line">SHA256:Lzvl8GbOQETBVcTf8lf0Qk9KUQAESs9h8wARud+iQrk testuser@k8s-uat-master1.148962587001</span><br><span class="line">The key&#x27;s randomart image is:</span><br><span class="line">+---[RSA 2048]----+</span><br><span class="line">|       .BBB*=.o+.|</span><br><span class="line">|       oo= =. o o|</span><br><span class="line">|        o.o .+ *.|</span><br><span class="line">|       ..     = =|</span><br><span class="line">|       .S. .   +.|</span><br><span class="line">|      o...+ .   o|</span><br><span class="line">|     . .o*..    .|</span><br><span class="line">|      E o==      |</span><br><span class="line">|       ..=o      |</span><br><span class="line">+----[SHA256]-----+</span><br></pre></td></tr></table></figure>
-
-<p> 以上命令生成了公私密钥对，分别存储在了 <code>/home/testuser/.ssh/id_rsa.pub</code> 和 <code>/home/testuser/.ssh/id_rsa</code> 中。</p>
-</li>
-<li><p>在本地服务器上面执行命令将其公钥添加到目标主机的 <code>/home/testuser/.ssh/authorized_keys</code> 。或者手动拷贝公钥追加到目标主机的 <code>.ssh/authorized_keys</code></p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ssh-copy-id -p 30000 testuser@172.31.30.115</span></span><br><span class="line">/bin/ssh-copy-id: INFO: Source of key(s) to be installed: &quot;/home/testuser/.ssh/id_rsa.pub&quot;</span><br><span class="line">The authenticity of host &#x27;[172.31.30.115]:30000 ([172.31.30.115]:30000)&#x27; can&#x27;t be established.</span><br><span class="line">ECDSA key fingerprint is SHA256:vKD5th2QpWYv/hmt+180BsENDHWNcJdKiEBOH06h/K8.</span><br><span class="line">ECDSA key fingerprint is MD5:bf:8c:b9:e6:31:92:1f:a9:b6:7b:8f:50:d7:10:9e:fd.</span><br><span class="line">Are you sure you want to continue connecting (yes/no)? yes</span><br><span class="line">/bin/ssh-copy-id: INFO: attempting to log in with the new key(s), to filter out any that are already installed</span><br><span class="line">/bin/ssh-copy-id: INFO: 1 key(s) remain to be installed -- if you are prompted now it is to install the new keystestuser@172.31.30.115&#x27;s password: </span><br><span class="line"></span><br><span class="line">Number of key(s) added: 1</span><br><span class="line"></span><br><span class="line">Now try logging into the machine, with:   &quot;ssh -p &#x27;30000&#x27; &#x27;testuser@172.31.30.115&#x27;&quot;</span><br><span class="line">and check to make sure that only the key(s) you wanted were added.</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>在本地服务器上面验证可以免密登陆到目标服务器。</p>
-</li>
-</ol>
-<p><strong>如果要配置双向免密，将以上步骤反过来操作一遍即可</strong></p>
-<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><p>登录服务器，经常遇见以下提示信息，说明有主机一直在尝试暴力破解用户名密码</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">There were 696 failed login attempts since the last successful login.</span><br></pre></td></tr></table></figure>
-
-<p>查看登录失败的用户名和 ip 地址</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">grep <span class="string">&quot;Failed password for invalid user &quot;</span> /var/log/secure | awk <span class="string">&#x27;&#123;print $11,$13&#125;&#x27;</span> | <span class="built_in">sort</span> | <span class="built_in">uniq</span> -c | <span class="built_in">sort</span> -k1 -n</span></span><br><span class="line">      3 wangli 47.74.0.77</span><br><span class="line">      3 work 47.74.0.77</span><br><span class="line">      3 yt 47.74.0.77</span><br><span class="line">      3 yx 47.74.0.77</span><br><span class="line">      3 yyz 47.74.0.77</span><br><span class="line">      3 zabbix 47.74.0.77</span><br><span class="line">      3 zd 47.74.0.77</span><br><span class="line">      3 zhangfan 47.74.0.77</span><br><span class="line">      3 zxy 47.74.0.77</span><br><span class="line">      4 client003 47.74.0.77</span><br><span class="line">      4 client004 47.74.0.77</span><br><span class="line">      4 dell 47.74.0.77</span><br><span class="line">      4 ftpuser 47.74.0.77</span><br><span class="line">      4 inspur 47.74.0.77</span><br><span class="line">      4 wang 47.74.0.77</span><br><span class="line">      5 git 47.74.0.77</span><br><span class="line">      5 nagios 47.74.0.77</span><br><span class="line">      5 testuser 47.74.0.77</span><br><span class="line">      6 omnisky 47.74.0.77</span><br><span class="line">      7 oracle 47.74.0.77</span><br><span class="line">      8 jenkins 47.74.0.77</span><br><span class="line">     10 hadoop 47.74.0.77</span><br><span class="line">     10 postgres 47.74.0.77</span><br><span class="line">     11 ubuntu 47.74.0.77</span><br><span class="line">     11 user 47.74.0.77</span><br><span class="line">     12 admin 47.74.0.77</span><br><span class="line">     15 test 47.74.0.77</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h2 id="sshd-加固配置建议"><a href="#sshd-加固配置建议" class="headerlink" title="sshd 加固配置建议"></a>sshd 加固配置建议</h2><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code> ，更改以下配置</p>
-<ul>
-<li><code>sshd</code> 默认端口 22 改为其他端口</li>
-<li>禁止 <code>root</code> 用户登录，创建其他普通用户以登录系统，普通用户登录后有需要再切换到 <code>root</code></li>
-</ul>
-<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line">Port 30000</span><br><span class="line">PermitRootLogin no</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
-
-<p>修改配置后重启 <code>sshd</code> 服务生效</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
-
-<p>如果可以安全的保存秘钥，也可以使用秘钥登录，禁止用户名密码登录，具体配置可参考：<a href="https://blog.51cto.com/u_15061935/2652298">ssh 秘钥登录</a></p>
-<p>若使用密码登陆，建议 <a href="/202208171501/" title="配置 fail2ban 防止暴力破解">配置 fail2ban 防止暴力破解</a></p>
-<h1 id="SSH-隧道"><a href="#SSH-隧道" class="headerlink" title="SSH 隧道"></a>SSH 隧道</h1><p><strong>SSH 隧道（SSH Tunneling），也叫 SSH 端口转发</strong> ，是一种通过加密的 SSH 连接来传输其他协议数据（如 HTTP、MySQL、VNC 等）的技术。SSH 隧道（SSH Tunneling），也叫 SSH 端口转发，是一种通过加密的 SSH 连接来传输其他协议数据（如 HTTP、MySQL、VNC 等）的技术。</p>
-<p>SSH 隧道主要解决以下三大核心痛点：</p>
-<ul>
-<li><p><strong>数据加密（安全性）</strong> ： 许多老旧协议（如 Telnet 或某些数据库连接）是明文传输的。通过隧道传输，可以为这些协议提供端到端的加密。</p>
-</li>
-<li><p><strong>突破防火墙限制（内网穿透）</strong> ： 比如你在家里想访问公司内网的某个服务，或者公司防火墙封锁了 8080 端口，但允许 22 (SSH) 端口，你就可以通过隧道绕过去。</p>
-</li>
-<li><p><strong>隐藏真实服务</strong> ： 很多服务器为了安全，只开放 SSH 端口。你可以关闭数据库（如 MySQL 3306）的公网访问，只允许通过 SSH 隧道进行本地连接。</p>
-</li>
-</ul>
-<p><strong>SSH 隧道的三种模式</strong></p>
-<ul>
-<li><p><strong>本地端口转发 (Local Forwarding)</strong></p>
-<ul>
-<li><strong>原理</strong> ： 把发往你本地机器 A 端口的数据，通过 SSH 隧道转发到远程机器 B 的端口。 <strong>是你通过 SSH Server 去访问别人（目标服务器）</strong></li>
-<li><strong>命令</strong> ： <code>ssh -L [本地端口]:[目标服务器IP]:[目标端口] [SSH用户名]@[REMOTE_IP]</code></li>
-</ul>
-</li>
-<li><p><strong>远程端口转发 (Remote Forwarding)</strong></p>
-<ul>
-<li><p><strong>原理</strong> ：把发往远程服务器 A 端口（可以被外部访问）的数据，通过 SSH 隧道转发到你本地机器 B 的端口（无法被外部访问）。 <strong>是别人通过在 SSH Server 上启动的（远程）端口（转发流量）访问你的 本地 IP:端口</strong> ，主要用于本地是内网，外网无法直接访问的场景中。</p>
-</li>
-<li><p><strong>命令</strong> ： <code>ssh -R [远程端口]:[本地IP]:[本地端口] [SSH用户名]@[远程服务器IP]</code></p>
-<blockquote>
-<p>这条命令在远程服务器上（拥有公网 IP，别人可以访问）开启了 <strong>远程端口</strong> ，这个远程端口可以被外部访问，当外部流量访问此端口时，流量会通过 SSH 连接转发到（不能被外部直接访问）本地端口，从而实现内网访问能被外网访问的效果。</p>
-</blockquote>
-</li>
-</ul>
-</li>
-<li><p><strong>动态端口转发 (Dynamic Forwarding)</strong></p>
-<ul>
-<li><strong>原理</strong> ：不绑定固定端口，而是开启一个 SOCKS 代理，根据应用协议动态转发。</li>
-<li><strong>命令</strong> ： <code>ssh -D [本地代理端口] [SSH用户名]@[远程服务器IP]</code></li>
-</ul>
-</li>
-</ul>
-<p>SSH 隧道模式经常配合使用的其他选项：</p>
-<ul>
-<li><code>-N</code> : 告诉 SSH 不要执行远程命令（只用于转发端口）。</li>
-<li><code>-f</code> : 让 SSH 在后台运行。</li>
-<li><code>-C</code> : 压缩数据，适合带宽较慢的情况。</li>
-</ul>
-<p><strong>SSH 隧道相关配置（ <code>/etc/ssh/sshd_config</code> ）</strong></p>
-<ul>
-<li><p><code>GatewayPorts yes</code></p>
-</li>
-<li></li>
-</ul>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Could-not-load-host-key"><a href="#Could-not-load-host-key" class="headerlink" title="Could not load host key"></a>Could not load host key</h2><p>docker 容器中安装 <code>openssh-server</code> 后，使用命令 <code>/usr/sbin/sshd -D</code> 启动 <code>sshd</code> 服务，通常会报以下错误</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/usr/sbin/sshd</span></span><br><span class="line">Could not load host key: /etc/ssh/ssh_host_rsa_key</span><br><span class="line">Could not load host key: /etc/ssh/ssh_host_ecdsa_key</span><br><span class="line">Could not load host key: /etc/ssh/ssh_host_ed25519_key</span><br></pre></td></tr></table></figure>
-
-<p>执行以下命令解决:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssh-keygen -q -t rsa -b 2048 -f /etc/ssh/ssh_host_rsa_key -N &#x27;&#x27; </span><br><span class="line">ssh-keygen -q -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N &#x27;&#x27;</span><br><span class="line">ssh-keygen -t dsa -f /etc/ssh/ssh_host_ed25519_key  -N &#x27;&#x27;</span><br></pre></td></tr></table></figure>
-
-<h2 id="配置-ssh-公私钥免密登录后提示输入密码登陆"><a href="#配置-ssh-公私钥免密登录后提示输入密码登陆" class="headerlink" title="配置 ssh 公私钥免密登录后提示输入密码登陆"></a>配置 ssh 公私钥免密登录后提示输入密码登陆</h2><p>在使用了 <code>ssh-copy-id root@192.168.81.12</code> 配置免密钥登录之后，发现 ssh 到机器上还是需要密码。在目标服务器上面查看 <code>ssh</code> 日志</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /var/log/secure</span></span><br><span class="line">sshd[14034]: pam_unix(sshd:session): session closed for user testuser</span><br><span class="line">sshd[14133]: Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</span><br><span class="line">sshd[14133]: Connection closed by 172.31.30.123 port 44164 [preauth]</span><br><span class="line">sshd[14313]: Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</span><br><span class="line">sshd[14313]: Connection closed by 172.31.30.123 port 15928 [preauth]</span><br><span class="line">sshd[16213]: Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</span><br></pre></td></tr></table></figure>
-
-<p>看到登陆报错： <code>Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</code> ，检查文件 <code>/home/testuser/.ssh/authorized_keys</code> 权限，看到文件权限为 <code>-rw-rw-r--</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /home/testuser/.ssh/</span></span><br><span class="line">total 4</span><br><span class="line">-rw-rw-r-- 1 testuser testuser 2815 Aug 31 14:15 authorized_keys</span><br></pre></td></tr></table></figure>
-
-<p>修改文件权限为 <code>600</code> ，重新登陆，可以免密码登陆。</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>ssh</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>SSL Certbot 使用方法汇总</title>
     <url>/202404241336/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Certbot 是 Let’s Encrypt SSL 官方推荐的 ACME 协议客户端，它是一个 Python 程序，且包含模块化插件支持。Let’s Encrypt 的根证书浏览器支持广泛，且支持泛域名。但单个证书的有效期为 90 天，以防止滥用。</p>
@@ -42016,6 +41836,186 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>sftp 服务常用配置说明</title>
+    <url>/202207301332/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认 ssh 启用了 sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置 sshd 以限制 sftp 登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
+<span id="more"></span>
+
+<h3 id="基本配置"><a href="#基本配置" class="headerlink" title="基本配置"></a>基本配置</h3><p><strong><code>ChrootDirectory</code> 配置前提</strong> :<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，属主和属组必须是 root；<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，只有属主能拥有写权限，权限最大设置只能是 755。</p>
+<blockquote>
+<p><strong>如果权限配置不对，会导致无法登录</strong>  </p>
+<p>如果上级目录无法设置为 root 权限，可以通过 <code>ln</code> 链接的方式实现</p>
+<p>限制后的用户无法 <code>ssh</code> 登录系统</p>
+</blockquote>
+<p>创建相关用户和组</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd sftp</span><br><span class="line">useradd -g sftp -d /data/sftp/sftpuser1 -s /sbin/nologin sftpuser1</span><br><span class="line">echo 123456 | passwd --stdin sftpuser1</span><br><span class="line"></span><br><span class="line">chown root:root /data/sftp/sftpuser1</span><br><span class="line">chmod 755 /data/sftp/sftpuser1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">因为 /data/sftp/sftpuser1 属主和属组都为root，其他用户无写入权限，需要创建sftpuser1可写入的目录</span></span><br><span class="line">mkdir -p /data/sftp/sftpuser1/upload</span><br><span class="line">chown sftpuser1:sftp /data/sftp/sftpuser/upload</span><br><span class="line">chmod 755 /data/sftp/sftpuser1/upload</span><br></pre></td></tr></table></figure>
+
+<p>修改 <code>sshd_config</code> 配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">Subsystem      sftp    /usr/libexec/openssh/sftp-server</span></span><br><span class="line">Subsystem sftp internal-sftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">拒绝指定用户登录,不能放在Match user中</span></span><br><span class="line">DenyUsers user1 user2</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">maxsessions 10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户配置sftp, 多个用户可重复配置以下内容，或者通过针对组配置sftp</span></span><br><span class="line">Match user sftpuser1,sftpuser2</span><br><span class="line">    # 该行强制执行内部 sftp，并忽略任何 ~/.ssh/rc 文件中的命令。</span><br><span class="line">   ForceCommand internal-sftp</span><br><span class="line">	</span><br><span class="line">   ChrootDirectory /data/sftp/sftpuser1</span><br><span class="line">	</span><br><span class="line"><span class="meta prompt_">   # </span><span class="language-bash">下面两项是与安全有关</span></span><br><span class="line">    AllowTcpForwarding no</span><br><span class="line">    X11Forwarding no</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户组配置sftp</span></span><br><span class="line">Match Group sftp,sftp1</span><br><span class="line">    ForceCommand internal-sftp</span><br><span class="line">    </span><br><span class="line">    # %h 代表用户 home 目录，%u 代表用户名。</span><br><span class="line">    ChrootDirectory /data/sftp/%u</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>修改配置后，重启 <code>sshd</code> 服务生效<br><code>systemctl restart sshd</code></p>
+</blockquote>
+<h3 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h3><h4 id="Unable-to-open-permission-denied"><a href="#Unable-to-open-permission-denied" class="headerlink" title="Unable to open .: permission denied"></a>Unable to open .: permission denied</h4><p><strong>解决方法</strong> ： 如果启动了 <code>selinux</code> ， 关闭 <code>selinux</code></p>
+<h4 id="Couldn’t-read-packet-Connection-reset-by-peer"><a href="#Couldn’t-read-packet-Connection-reset-by-peer" class="headerlink" title="Couldn’t read packet: Connection reset by peer"></a>Couldn’t read packet: Connection reset by peer</h4><p><strong>问题原因</strong> : <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录及所有上级目录的用户和组必须为 <code>root</code> ，权限最多为 755, <a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
+<h4 id="remote-readdir-“-x2F-“-Permission-denied"><a href="#remote-readdir-“-x2F-“-Permission-denied" class="headerlink" title="remote readdir(“&#x2F;“): Permission denied"></a>remote readdir(“&#x2F;“): Permission denied</h4><p><strong>问题原因</strong> : sftp 用户对 <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录要有读取权限，<a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
+<h3 id="禁用-sftp-功能"><a href="#禁用-sftp-功能" class="headerlink" title="禁用 sftp 功能"></a>禁用 sftp 功能</h3><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code> ,注释以下内容</p>
+<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Subsystem sftp /usr/libexec/openssh/sftp-server</span></span><br></pre></td></tr></table></figure>
+
+<p>修改配置文件后重启 <code>sshd</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>sftp</code> 登录时会报错 ： <code>Error:	Could not connect to server</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>sftp</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>spinnaker 常见用法</title>
+    <url>/202211101344/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Spinnaker 1.29.0</li>
+<li>Kubernetes 1.24.7</li>
+</ul>
+<h1 id="Spinnaker-引用-Kubernetes-中的-Namespace"><a href="#Spinnaker-引用-Kubernetes-中的-Namespace" class="headerlink" title="Spinnaker 引用 Kubernetes 中的 Namespace"></a>Spinnaker 引用 Kubernetes 中的 Namespace</h1><p>Kubernetes 中的 Namespace，对应 Spinnaker 中的 Application，当 <strong>在 Kubernetes 中创建 Namespace ，并在此 Namespace 创建资源后</strong> ，Spinnaker 会自动读取到此 Namespace，并显示在 Applications 中。</p>
+<h1 id="Pipelines-中引用-Docker-Registry-类型的触发器"><a href="#Pipelines-中引用-Docker-Registry-类型的触发器" class="headerlink" title="Pipelines 中引用 Docker Registry 类型的触发器"></a>Pipelines 中引用 Docker Registry 类型的触发器</h1><p>在 Pipelines 中配置 Docker Registry 类型的触发器，并在后面的 Stage 中自动引用。</p>
+<ol>
+<li><p>在要配置的 Pipeline 的 <code>Configuration</code> 部分，配置 <code>Automated Triggers</code> ，选择 <code>type</code> 为 <code>Docker Registry</code><br> <img src="https://i.0920811.xyz/img_85.png"></p>
+<ul>
+<li>Registry Name - 为 <a href="https://0920811.xyz/202210121639/#添加自建的私有-docker-镜像源">Halyard 中配置的 Docker Registry 的认证信息</a> 的名称</li>
+<li>Organization - 对应 Docker Registry （如 Harbor） 中的 Projects</li>
+</ul>
+</li>
+<li><p>Stage 中使用以下方式引用镜像</p>
+<p> <code>image: &#39;$&#123;trigger.artifacts[0].reference&#125;&#39;</code></p>
+<p> <code>$&#123;trigger&#125;</code> 为镜像名称，当一个镜像名下有多个不同标签的镜像时， <code>$&#123;trigger.artifacts[0]</code> 表示第一个镜像，依此类推。 <code>$&#123;trigger.artifacts[0].reference&#125;</code> 值为第一个镜像的完整镜像名加标签。<br> <img src="https://i.0920811.xyz/img_86.png"></p>
+</li>
+</ol>
+<span id="more"></span>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Spinnaker</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>ssh 常见配置</title>
+    <url>/202208171033/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="ssh-免密登陆"><a href="#ssh-免密登陆" class="headerlink" title="ssh 免密登陆"></a>ssh 免密登陆</h1><p>在需要免密码登陆的场景下，可以配置 ssh 密钥登陆。配置步骤如下</p>
+<ol>
+<li><p>在本地服务器上面执行命令生成密钥对</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ssh-keygen</span> </span><br><span class="line">Generating public/private rsa key pair.</span><br><span class="line">Enter file in which to save the key (/home/testuser/.ssh/id_rsa): </span><br><span class="line">Enter passphrase (empty for no passphrase): </span><br><span class="line">Enter same passphrase again: </span><br><span class="line">Your identification has been saved in /home/testuser/.ssh/id_rsa.</span><br><span class="line">Your public key has been saved in /home/testuser/.ssh/id_rsa.pub.</span><br><span class="line">The key fingerprint is:</span><br><span class="line">SHA256:Lzvl8GbOQETBVcTf8lf0Qk9KUQAESs9h8wARud+iQrk testuser@k8s-uat-master1.148962587001</span><br><span class="line">The key&#x27;s randomart image is:</span><br><span class="line">+---[RSA 2048]----+</span><br><span class="line">|       .BBB*=.o+.|</span><br><span class="line">|       oo= =. o o|</span><br><span class="line">|        o.o .+ *.|</span><br><span class="line">|       ..     = =|</span><br><span class="line">|       .S. .   +.|</span><br><span class="line">|      o...+ .   o|</span><br><span class="line">|     . .o*..    .|</span><br><span class="line">|      E o==      |</span><br><span class="line">|       ..=o      |</span><br><span class="line">+----[SHA256]-----+</span><br></pre></td></tr></table></figure>
+
+<p> 以上命令生成了公私密钥对，分别存储在了 <code>/home/testuser/.ssh/id_rsa.pub</code> 和 <code>/home/testuser/.ssh/id_rsa</code> 中。</p>
+</li>
+<li><p>在本地服务器上面执行命令将其公钥添加到目标主机的 <code>/home/testuser/.ssh/authorized_keys</code> 。或者手动拷贝公钥追加到目标主机的 <code>.ssh/authorized_keys</code></p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ssh-copy-id -p 30000 testuser@172.31.30.115</span></span><br><span class="line">/bin/ssh-copy-id: INFO: Source of key(s) to be installed: &quot;/home/testuser/.ssh/id_rsa.pub&quot;</span><br><span class="line">The authenticity of host &#x27;[172.31.30.115]:30000 ([172.31.30.115]:30000)&#x27; can&#x27;t be established.</span><br><span class="line">ECDSA key fingerprint is SHA256:vKD5th2QpWYv/hmt+180BsENDHWNcJdKiEBOH06h/K8.</span><br><span class="line">ECDSA key fingerprint is MD5:bf:8c:b9:e6:31:92:1f:a9:b6:7b:8f:50:d7:10:9e:fd.</span><br><span class="line">Are you sure you want to continue connecting (yes/no)? yes</span><br><span class="line">/bin/ssh-copy-id: INFO: attempting to log in with the new key(s), to filter out any that are already installed</span><br><span class="line">/bin/ssh-copy-id: INFO: 1 key(s) remain to be installed -- if you are prompted now it is to install the new keystestuser@172.31.30.115&#x27;s password: </span><br><span class="line"></span><br><span class="line">Number of key(s) added: 1</span><br><span class="line"></span><br><span class="line">Now try logging into the machine, with:   &quot;ssh -p &#x27;30000&#x27; &#x27;testuser@172.31.30.115&#x27;&quot;</span><br><span class="line">and check to make sure that only the key(s) you wanted were added.</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>在本地服务器上面验证可以免密登陆到目标服务器。</p>
+</li>
+</ol>
+<p><strong>如果要配置双向免密，将以上步骤反过来操作一遍即可</strong></p>
+<h1 id="常见配置"><a href="#常见配置" class="headerlink" title="常见配置"></a>常见配置</h1><p>登录服务器，经常遇见以下提示信息，说明有主机一直在尝试暴力破解用户名密码</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">There were 696 failed login attempts since the last successful login.</span><br></pre></td></tr></table></figure>
+
+<p>查看登录失败的用户名和 ip 地址</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">grep <span class="string">&quot;Failed password for invalid user &quot;</span> /var/log/secure | awk <span class="string">&#x27;&#123;print $11,$13&#125;&#x27;</span> | <span class="built_in">sort</span> | <span class="built_in">uniq</span> -c | <span class="built_in">sort</span> -k1 -n</span></span><br><span class="line">      3 wangli 47.74.0.77</span><br><span class="line">      3 work 47.74.0.77</span><br><span class="line">      3 yt 47.74.0.77</span><br><span class="line">      3 yx 47.74.0.77</span><br><span class="line">      3 yyz 47.74.0.77</span><br><span class="line">      3 zabbix 47.74.0.77</span><br><span class="line">      3 zd 47.74.0.77</span><br><span class="line">      3 zhangfan 47.74.0.77</span><br><span class="line">      3 zxy 47.74.0.77</span><br><span class="line">      4 client003 47.74.0.77</span><br><span class="line">      4 client004 47.74.0.77</span><br><span class="line">      4 dell 47.74.0.77</span><br><span class="line">      4 ftpuser 47.74.0.77</span><br><span class="line">      4 inspur 47.74.0.77</span><br><span class="line">      4 wang 47.74.0.77</span><br><span class="line">      5 git 47.74.0.77</span><br><span class="line">      5 nagios 47.74.0.77</span><br><span class="line">      5 testuser 47.74.0.77</span><br><span class="line">      6 omnisky 47.74.0.77</span><br><span class="line">      7 oracle 47.74.0.77</span><br><span class="line">      8 jenkins 47.74.0.77</span><br><span class="line">     10 hadoop 47.74.0.77</span><br><span class="line">     10 postgres 47.74.0.77</span><br><span class="line">     11 ubuntu 47.74.0.77</span><br><span class="line">     11 user 47.74.0.77</span><br><span class="line">     12 admin 47.74.0.77</span><br><span class="line">     15 test 47.74.0.77</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h2 id="sshd-加固配置建议"><a href="#sshd-加固配置建议" class="headerlink" title="sshd 加固配置建议"></a>sshd 加固配置建议</h2><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code> ，更改以下配置</p>
+<ul>
+<li><code>sshd</code> 默认端口 22 改为其他端口</li>
+<li>禁止 <code>root</code> 用户登录，创建其他普通用户以登录系统，普通用户登录后有需要再切换到 <code>root</code></li>
+</ul>
+<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line">Port 30000</span><br><span class="line">PermitRootLogin no</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>修改配置后重启 <code>sshd</code> 服务生效</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
+
+<p>如果可以安全的保存秘钥，也可以使用秘钥登录，禁止用户名密码登录，具体配置可参考：<a href="https://blog.51cto.com/u_15061935/2652298">ssh 秘钥登录</a></p>
+<p>若使用密码登陆，建议 <a href="/202208171501/" title="配置 fail2ban 防止暴力破解">配置 fail2ban 防止暴力破解</a></p>
+<h1 id="SSH-隧道"><a href="#SSH-隧道" class="headerlink" title="SSH 隧道"></a>SSH 隧道</h1><p><strong>SSH 隧道（SSH Tunneling），也叫 SSH 端口转发</strong> ，是一种通过加密的 SSH 连接来传输其他协议数据（如 HTTP、MySQL、VNC 等）的技术。SSH 隧道（SSH Tunneling），也叫 SSH 端口转发，是一种通过加密的 SSH 连接来传输其他协议数据（如 HTTP、MySQL、VNC 等）的技术。</p>
+<p>SSH 隧道主要解决以下三大核心痛点：</p>
+<ul>
+<li><p><strong>数据加密（安全性）</strong> ： 许多老旧协议（如 Telnet 或某些数据库连接）是明文传输的。通过隧道传输，可以为这些协议提供端到端的加密。</p>
+</li>
+<li><p><strong>突破防火墙限制（内网穿透）</strong> ： 比如你在家里想访问公司内网的某个服务，或者公司防火墙封锁了 8080 端口，但允许 22 (SSH) 端口，你就可以通过隧道绕过去。</p>
+</li>
+<li><p><strong>隐藏真实服务</strong> ： 很多服务器为了安全，只开放 SSH 端口。你可以关闭数据库（如 MySQL 3306）的公网访问，只允许通过 SSH 隧道进行本地连接。</p>
+</li>
+</ul>
+<p><strong>SSH 隧道的三种模式</strong></p>
+<ul>
+<li><p><strong>本地端口转发 (Local Forwarding)</strong></p>
+<ul>
+<li><strong>原理</strong> ： 把发往你本地机器 A 端口的数据，通过 SSH 隧道转发到远程机器 B 的端口。 <strong>是你通过 SSH Server 去访问别人（目标服务器）</strong></li>
+<li><strong>命令</strong> ： <code>ssh -L [本地端口]:[目标服务器IP]:[目标端口] [SSH用户名]@[REMOTE_IP]</code></li>
+</ul>
+</li>
+<li><p><strong>远程端口转发 (Remote Forwarding)</strong></p>
+<ul>
+<li><p><strong>原理</strong> ：把发往远程服务器 A 端口（可以被外部访问）的数据，通过 SSH 隧道转发到你本地机器 B 的端口（无法被外部访问）。 <strong>是别人通过在 SSH Server 上启动的（远程）端口（转发流量）访问你的 本地 IP:端口</strong> ，主要用于本地是内网，外网无法直接访问的场景中。</p>
+</li>
+<li><p><strong>命令</strong> ： <code>ssh -R [远程端口]:[本地IP]:[本地端口] [SSH用户名]@[远程服务器IP]</code></p>
+<blockquote>
+<p>这条命令在远程服务器上（拥有公网 IP，别人可以访问）开启了 <strong>远程端口</strong> ，这个远程端口可以被外部访问，当外部流量访问此端口时，流量会通过 SSH 连接转发到（不能被外部直接访问）本地端口，从而实现内网访问能被外网访问的效果。</p>
+</blockquote>
+</li>
+</ul>
+</li>
+<li><p><strong>动态端口转发 (Dynamic Forwarding)</strong></p>
+<ul>
+<li><strong>原理</strong> ：不绑定固定端口，而是开启一个 SOCKS 代理，根据应用协议动态转发。</li>
+<li><strong>命令</strong> ： <code>ssh -D [本地代理端口] [SSH用户名]@[远程服务器IP]</code></li>
+</ul>
+</li>
+</ul>
+<p>SSH 隧道模式经常配合使用的其他选项：</p>
+<ul>
+<li><code>-N</code> : 告诉 SSH 不要执行远程命令（只用于转发端口）。</li>
+<li><code>-f</code> : 让 SSH 在后台运行。</li>
+<li><code>-C</code> : 压缩数据，适合带宽较慢的情况。</li>
+</ul>
+<p><strong>SSH 隧道相关配置（ <code>/etc/ssh/sshd_config</code> ）</strong></p>
+<ul>
+<li><p><code>GatewayPorts yes</code></p>
+</li>
+<li></li>
+</ul>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Could-not-load-host-key"><a href="#Could-not-load-host-key" class="headerlink" title="Could not load host key"></a>Could not load host key</h2><p>docker 容器中安装 <code>openssh-server</code> 后，使用命令 <code>/usr/sbin/sshd -D</code> 启动 <code>sshd</code> 服务，通常会报以下错误</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">/usr/sbin/sshd</span></span><br><span class="line">Could not load host key: /etc/ssh/ssh_host_rsa_key</span><br><span class="line">Could not load host key: /etc/ssh/ssh_host_ecdsa_key</span><br><span class="line">Could not load host key: /etc/ssh/ssh_host_ed25519_key</span><br></pre></td></tr></table></figure>
+
+<p>执行以下命令解决:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssh-keygen -q -t rsa -b 2048 -f /etc/ssh/ssh_host_rsa_key -N &#x27;&#x27; </span><br><span class="line">ssh-keygen -q -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N &#x27;&#x27;</span><br><span class="line">ssh-keygen -t dsa -f /etc/ssh/ssh_host_ed25519_key  -N &#x27;&#x27;</span><br></pre></td></tr></table></figure>
+
+<h2 id="配置-ssh-公私钥免密登录后提示输入密码登陆"><a href="#配置-ssh-公私钥免密登录后提示输入密码登陆" class="headerlink" title="配置 ssh 公私钥免密登录后提示输入密码登陆"></a>配置 ssh 公私钥免密登录后提示输入密码登陆</h2><p>在使用了 <code>ssh-copy-id root@192.168.81.12</code> 配置免密钥登录之后，发现 ssh 到机器上还是需要密码。在目标服务器上面查看 <code>ssh</code> 日志</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> /var/log/secure</span></span><br><span class="line">sshd[14034]: pam_unix(sshd:session): session closed for user testuser</span><br><span class="line">sshd[14133]: Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</span><br><span class="line">sshd[14133]: Connection closed by 172.31.30.123 port 44164 [preauth]</span><br><span class="line">sshd[14313]: Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</span><br><span class="line">sshd[14313]: Connection closed by 172.31.30.123 port 15928 [preauth]</span><br><span class="line">sshd[16213]: Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</span><br></pre></td></tr></table></figure>
+
+<p>看到登陆报错： <code>Authentication refused: bad ownership or modes for file /home/testuser/.ssh/authorized_keys</code> ，检查文件 <code>/home/testuser/.ssh/authorized_keys</code> 权限，看到文件权限为 <code>-rw-rw-r--</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">ll /home/testuser/.ssh/</span></span><br><span class="line">total 4</span><br><span class="line">-rw-rw-r-- 1 testuser testuser 2815 Aug 31 14:15 authorized_keys</span><br></pre></td></tr></table></figure>
+
+<p>修改文件权限为 <code>600</code> ，重新登陆，可以免密码登陆。</p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ssh</tag>
       </tags>
   </entry>
 </search>
