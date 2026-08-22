@@ -33385,6 +33385,46 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>sftp 服务常用配置说明</title>
+    <url>/202207301332/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认 ssh 启用了 sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置 sshd 以限制 sftp 登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
+<span id="more"></span>
+
+<h3 id="基本配置"><a href="#基本配置" class="headerlink" title="基本配置"></a>基本配置</h3><p><strong><code>ChrootDirectory</code> 配置前提</strong> :<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，属主和属组必须是 root；<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，只有属主能拥有写权限，权限最大设置只能是 755。</p>
+<blockquote>
+<p><strong>如果权限配置不对，会导致无法登录</strong>  </p>
+<p>如果上级目录无法设置为 root 权限，可以通过 <code>ln</code> 链接的方式实现</p>
+<p>限制后的用户无法 <code>ssh</code> 登录系统</p>
+</blockquote>
+<p>创建相关用户和组</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd sftp</span><br><span class="line">useradd -g sftp -d /data/sftp/sftpuser1 -s /sbin/nologin sftpuser1</span><br><span class="line">echo 123456 | passwd --stdin sftpuser1</span><br><span class="line"></span><br><span class="line">chown root:root /data/sftp/sftpuser1</span><br><span class="line">chmod 755 /data/sftp/sftpuser1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">因为 /data/sftp/sftpuser1 属主和属组都为root，其他用户无写入权限，需要创建sftpuser1可写入的目录</span></span><br><span class="line">mkdir -p /data/sftp/sftpuser1/upload</span><br><span class="line">chown sftpuser1:sftp /data/sftp/sftpuser/upload</span><br><span class="line">chmod 755 /data/sftp/sftpuser1/upload</span><br></pre></td></tr></table></figure>
+
+<p>修改 <code>sshd_config</code> 配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">Subsystem      sftp    /usr/libexec/openssh/sftp-server</span></span><br><span class="line">Subsystem sftp internal-sftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">拒绝指定用户登录,不能放在Match user中</span></span><br><span class="line">DenyUsers user1 user2</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">maxsessions 10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户配置sftp, 多个用户可重复配置以下内容，或者通过针对组配置sftp</span></span><br><span class="line">Match user sftpuser1,sftpuser2</span><br><span class="line">    # 该行强制执行内部 sftp，并忽略任何 ~/.ssh/rc 文件中的命令。</span><br><span class="line">   ForceCommand internal-sftp</span><br><span class="line">	</span><br><span class="line">   ChrootDirectory /data/sftp/sftpuser1</span><br><span class="line">	</span><br><span class="line"><span class="meta prompt_">   # </span><span class="language-bash">下面两项是与安全有关</span></span><br><span class="line">    AllowTcpForwarding no</span><br><span class="line">    X11Forwarding no</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户组配置sftp</span></span><br><span class="line">Match Group sftp,sftp1</span><br><span class="line">    ForceCommand internal-sftp</span><br><span class="line">    </span><br><span class="line">    # %h 代表用户 home 目录，%u 代表用户名。</span><br><span class="line">    ChrootDirectory /data/sftp/%u</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>修改配置后，重启 <code>sshd</code> 服务生效<br><code>systemctl restart sshd</code></p>
+</blockquote>
+<h3 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h3><h4 id="Unable-to-open-permission-denied"><a href="#Unable-to-open-permission-denied" class="headerlink" title="Unable to open .: permission denied"></a>Unable to open .: permission denied</h4><p><strong>解决方法</strong> ： 如果启动了 <code>selinux</code> ， 关闭 <code>selinux</code></p>
+<h4 id="Couldn’t-read-packet-Connection-reset-by-peer"><a href="#Couldn’t-read-packet-Connection-reset-by-peer" class="headerlink" title="Couldn’t read packet: Connection reset by peer"></a>Couldn’t read packet: Connection reset by peer</h4><p><strong>问题原因</strong> : <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录及所有上级目录的用户和组必须为 <code>root</code> ，权限最多为 755, <a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
+<h4 id="remote-readdir-“-x2F-“-Permission-denied"><a href="#remote-readdir-“-x2F-“-Permission-denied" class="headerlink" title="remote readdir(“&#x2F;“): Permission denied"></a>remote readdir(“&#x2F;“): Permission denied</h4><p><strong>问题原因</strong> : sftp 用户对 <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录要有读取权限，<a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
+<h3 id="禁用-sftp-功能"><a href="#禁用-sftp-功能" class="headerlink" title="禁用 sftp 功能"></a>禁用 sftp 功能</h3><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code> ,注释以下内容</p>
+<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Subsystem sftp /usr/libexec/openssh/sftp-server</span></span><br></pre></td></tr></table></figure>
+
+<p>修改配置文件后重启 <code>sshd</code> 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>sftp</code> 登录时会报错 ： <code>Error:	Could not connect to server</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>sftp</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>spinnaker 常见用法</title>
     <url>/202211101344/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -33674,46 +33714,6 @@ width: 20%;
       <tags>
         <tag>Python</tag>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>sftp 服务常用配置说明</title>
-    <url>/202207301332/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认 ssh 启用了 sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置 sshd 以限制 sftp 登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
-<span id="more"></span>
-
-<h3 id="基本配置"><a href="#基本配置" class="headerlink" title="基本配置"></a>基本配置</h3><p><strong><code>ChrootDirectory</code> 配置前提</strong> :<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，属主和属组必须是 root；<br><code>ChrootDirectory</code> 设置的目录权限及其所有的上级文件夹权限，只有属主能拥有写权限，权限最大设置只能是 755。</p>
-<blockquote>
-<p><strong>如果权限配置不对，会导致无法登录</strong>  </p>
-<p>如果上级目录无法设置为 root 权限，可以通过 <code>ln</code> 链接的方式实现</p>
-<p>限制后的用户无法 <code>ssh</code> 登录系统</p>
-</blockquote>
-<p>创建相关用户和组</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">groupadd sftp</span><br><span class="line">useradd -g sftp -d /data/sftp/sftpuser1 -s /sbin/nologin sftpuser1</span><br><span class="line">echo 123456 | passwd --stdin sftpuser1</span><br><span class="line"></span><br><span class="line">chown root:root /data/sftp/sftpuser1</span><br><span class="line">chmod 755 /data/sftp/sftpuser1</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">因为 /data/sftp/sftpuser1 属主和属组都为root，其他用户无写入权限，需要创建sftpuser1可写入的目录</span></span><br><span class="line">mkdir -p /data/sftp/sftpuser1/upload</span><br><span class="line">chown sftpuser1:sftp /data/sftp/sftpuser/upload</span><br><span class="line">chmod 755 /data/sftp/sftpuser1/upload</span><br></pre></td></tr></table></figure>
-
-<p>修改 <code>sshd_config</code> 配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">Subsystem      sftp    /usr/libexec/openssh/sftp-server</span></span><br><span class="line">Subsystem sftp internal-sftp</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">拒绝指定用户登录,不能放在Match user中</span></span><br><span class="line">DenyUsers user1 user2</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">maxsessions 10</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户配置sftp, 多个用户可重复配置以下内容，或者通过针对组配置sftp</span></span><br><span class="line">Match user sftpuser1,sftpuser2</span><br><span class="line">    # 该行强制执行内部 sftp，并忽略任何 ~/.ssh/rc 文件中的命令。</span><br><span class="line">   ForceCommand internal-sftp</span><br><span class="line">	</span><br><span class="line">   ChrootDirectory /data/sftp/sftpuser1</span><br><span class="line">	</span><br><span class="line"><span class="meta prompt_">   # </span><span class="language-bash">下面两项是与安全有关</span></span><br><span class="line">    AllowTcpForwarding no</span><br><span class="line">    X11Forwarding no</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">针对用户组配置sftp</span></span><br><span class="line">Match Group sftp,sftp1</span><br><span class="line">    ForceCommand internal-sftp</span><br><span class="line">    </span><br><span class="line">    # %h 代表用户 home 目录，%u 代表用户名。</span><br><span class="line">    ChrootDirectory /data/sftp/%u</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>修改配置后，重启 <code>sshd</code> 服务生效<br><code>systemctl restart sshd</code></p>
-</blockquote>
-<h3 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h3><h4 id="Unable-to-open-permission-denied"><a href="#Unable-to-open-permission-denied" class="headerlink" title="Unable to open .: permission denied"></a>Unable to open .: permission denied</h4><p><strong>解决方法</strong> ： 如果启动了 <code>selinux</code> ， 关闭 <code>selinux</code></p>
-<h4 id="Couldn’t-read-packet-Connection-reset-by-peer"><a href="#Couldn’t-read-packet-Connection-reset-by-peer" class="headerlink" title="Couldn’t read packet: Connection reset by peer"></a>Couldn’t read packet: Connection reset by peer</h4><p><strong>问题原因</strong> : <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录及所有上级目录的用户和组必须为 <code>root</code> ，权限最多为 755, <a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
-<h4 id="remote-readdir-“-x2F-“-Permission-denied"><a href="#remote-readdir-“-x2F-“-Permission-denied" class="headerlink" title="remote readdir(“&#x2F;“): Permission denied"></a>remote readdir(“&#x2F;“): Permission denied</h4><p><strong>问题原因</strong> : sftp 用户对 <code>ChrootDirectory (/data/sftp/sftpuser1)</code> 目录要有读取权限，<a href="#%E5%9F%BA%E6%9C%AC%E9%85%8D%E7%BD%AE">参考说明</a></p>
-<h3 id="禁用-sftp-功能"><a href="#禁用-sftp-功能" class="headerlink" title="禁用 sftp 功能"></a>禁用 sftp 功能</h3><p>修改 <code>sshd</code> 配置文件 <code>/etc/ssh/sshd_config</code> ,注释以下内容</p>
-<figure class="highlight shell"><figcaption><span>/etc/ssh/sshd_config</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Subsystem sftp /usr/libexec/openssh/sftp-server</span></span><br></pre></td></tr></table></figure>
-
-<p>修改配置文件后重启 <code>sshd</code> 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl restart sshd</span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>sftp</code> 登录时会报错 ： <code>Error:	Could not connect to server</code></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>sftp</tag>
       </tags>
   </entry>
   <entry>
@@ -34658,148 +34658,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Shadowsocks VPN 使用</title>
-    <url>/20240924092814/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://shadowsocks.org/doc/what-is-shadowsocks.html">Shadowsocks 官网简介</a></p>
-<h1 id="基于-Python3-环境的-Shadowsocks-部署"><a href="#基于-Python3-环境的-Shadowsocks-部署" class="headerlink" title="基于 Python3 环境的 Shadowsocks 部署"></a>基于 Python3 环境的 Shadowsocks 部署</h1><p>执行以下命令之一安装 Shadowsocks (Python3 版本)</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip3 install git+https://github.com/shadowsocks/shadowsocks.git@master</span><br><span class="line"></span><br><span class="line">pip3 install shadowsocks</span><br></pre></td></tr></table></figure>
-
-<h1 id="配置-Shadowsocks"><a href="#配置-Shadowsocks" class="headerlink" title="配置 Shadowsocks"></a>配置 Shadowsocks</h1><p>创建一个配置文件，比如放在 <code>/etc/shadowsocks/config.json</code> 目录下。配置文件的内容如下：</p>
-<figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;server&quot;</span><span class="punctuation">:</span> <span class="string">&quot;0.0.0.0&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;server_port&quot;</span><span class="punctuation">:</span> <span class="number">8388</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_address&quot;</span><span class="punctuation">:</span> <span class="string">&quot;127.0.0.1&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_port&quot;</span><span class="punctuation">:</span> <span class="number">1080</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;password&quot;</span><span class="punctuation">:</span> <span class="string">&quot;your_password&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;timeout&quot;</span><span class="punctuation">:</span> <span class="number">300</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;method&quot;</span><span class="punctuation">:</span> <span class="string">&quot;aes-256-cfb&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;fast_open&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>配置选项说明</strong> ：</p>
-<ul>
-<li><code>server</code> ： 服务器监听的 IP 地址， <code>0.0.0.0</code> 表示监听所有接口。</li>
-<li><code>server_port</code> ： 服务器监听的端口，客户端连接到这个端口。</li>
-<li><code>password</code> ： 用于加密流量的密码，请设置一个强密码。</li>
-<li><code>method</code> ： 加密方法。<a href="https://shadowsocks.org/doc/configs.html">其他加密算法请参考官网</a></li>
-<li><code>timeout</code> ： 超时时间（秒）。</li>
-<li><code>fast_open</code> ： 如果启用 TCP Fast Open，请将其设置为 <code>true</code> ，但需要内核支持。</li>
-</ul>
-<h1 id="启动-Shadowsocks-服务"><a href="#启动-Shadowsocks-服务" class="headerlink" title="启动 Shadowsocks 服务"></a>启动 Shadowsocks 服务</h1><p>使用以下命令启动 Shadowsocks 服务，该命令会以后台进程的方式启动 Shadowsocks：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssserver -c /etc/shadowsocks/config.json -d start</span><br></pre></td></tr></table></figure>
-
-<p><strong>常用选项</strong> ：</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-h, --help</code></td>
-<td>打印帮助信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-d [start / stop / restart ]</code></td>
-<td>以 Daemon 方式（后台）运行</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--pid-file</code></td>
-<td>Daemon 模式启动时的 PID 文件路径</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--log-file</code></td>
-<td>Daemon 模式启动时日志文件路径</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--user</code></td>
-<td>运行服务的用户</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-v, -vv</code></td>
-<td><code>verbose</code> 模式</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-q, -qq</code></td>
-<td><code>quite</code> 模式</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-c</code></td>
-<td>配置文件路径</td>
-<td><code>ssserver -c /etc/shadowsocks/config.json -d start</code></td>
-</tr>
-<tr>
-<td><code>-s</code></td>
-<td>指定服务端监听地址，默认为 <code>0.0.0.0</code> 。等同于配置文件中的 <code>server</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-p</code></td>
-<td>指定服务端监听端口，默认为 <code>8388</code> 。等同于配置文件中的 <code>server_port</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-k</code></td>
-<td>指定密码 。等同于配置文件中的 <code>password</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-m</code></td>
-<td>加密方法，默认为 <code>aes-256-cfb</code>   。 等同于配置文件中的 <code>method</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t</code></td>
-<td>超时时间（单位为 <code>秒</code> ），默认 300s 。 等同于配置文件中的 <code>timeout</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>--fast-open</code></td>
-<td>启用 <code>TCP_FASTOPEN</code> ，需要 <code>Linux 3.7+</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>--workers</code></td>
-<td><code>workers</code> 数量，Linux&#x2F;Unix 可用</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--forbidden-ip</code></td>
-<td><code>,</code> 分割的 IP 列表，在此列表中的 IP 禁止连接，即黑名单</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--manager-address</code></td>
-<td>服务端 UDP 管理地址</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="为-Shadowsocks-配置-systemd-services-文件"><a href="#为-Shadowsocks-配置-systemd-services-文件" class="headerlink" title="为 Shadowsocks 配置 systemd services 文件"></a>为 Shadowsocks 配置 systemd services 文件</h2><p>参考以下内容，为 Shadowsocks 配置 systemd services 文件</p>
-<figure class="highlight ini"><figcaption><span>/etc/systemd/system/shadowsocks.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=Shadowsocks Proxy Server</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStart</span>=/usr/local/bin/ssserver -c /etc/shadowsocks/config.json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启用并启动 Shadowsocks 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl enable shadowsocks</span><br><span class="line">sudo systemctl start shadowsocks</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>在客户端（如 Windows、macOS、iOS 或 Android）上，使用 Shadowsocks 客户端进行连接。</p>
-<p><strong>客户端配置</strong> ：</p>
-<ul>
-<li><code>服务器地址</code> ： 填写你服务器的公网 IP。</li>
-<li><code>服务器端口</code> ：填写 <code>config.json</code> 中的 <code>server_port</code> ，如 <code>8388</code> 。</li>
-<li><code>密码</code> ： 填写配置文件中的 <code>password</code> 。</li>
-<li><code>加密方法</code> ： 选择 <code>method</code> 中配置的加密方法，如 <code>aes-256-cfb</code> 。</li>
-</ul>
-<p>如果需要调试或查看运行日志，可以通过以下命令查看 Shadowsocks 的日志：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -u shadowsocks</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Outline VPN 使用</title>
     <url>/20240926135814/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://getoutline.org/">Outline 官网</a></p>
@@ -34936,6 +34794,148 @@ width: 20%;
 <li><p>检查防火墙规则，确保能从外网访问 Server。输出相关信息。部署完成。</p>
 </li>
 </ol>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Shadowsocks VPN 使用</title>
+    <url>/20240924092814/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://shadowsocks.org/doc/what-is-shadowsocks.html">Shadowsocks 官网简介</a></p>
+<h1 id="基于-Python3-环境的-Shadowsocks-部署"><a href="#基于-Python3-环境的-Shadowsocks-部署" class="headerlink" title="基于 Python3 环境的 Shadowsocks 部署"></a>基于 Python3 环境的 Shadowsocks 部署</h1><p>执行以下命令之一安装 Shadowsocks (Python3 版本)</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip3 install git+https://github.com/shadowsocks/shadowsocks.git@master</span><br><span class="line"></span><br><span class="line">pip3 install shadowsocks</span><br></pre></td></tr></table></figure>
+
+<h1 id="配置-Shadowsocks"><a href="#配置-Shadowsocks" class="headerlink" title="配置 Shadowsocks"></a>配置 Shadowsocks</h1><p>创建一个配置文件，比如放在 <code>/etc/shadowsocks/config.json</code> 目录下。配置文件的内容如下：</p>
+<figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;server&quot;</span><span class="punctuation">:</span> <span class="string">&quot;0.0.0.0&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;server_port&quot;</span><span class="punctuation">:</span> <span class="number">8388</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_address&quot;</span><span class="punctuation">:</span> <span class="string">&quot;127.0.0.1&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_port&quot;</span><span class="punctuation">:</span> <span class="number">1080</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;password&quot;</span><span class="punctuation">:</span> <span class="string">&quot;your_password&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;timeout&quot;</span><span class="punctuation">:</span> <span class="number">300</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;method&quot;</span><span class="punctuation">:</span> <span class="string">&quot;aes-256-cfb&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;fast_open&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>配置选项说明</strong> ：</p>
+<ul>
+<li><code>server</code> ： 服务器监听的 IP 地址， <code>0.0.0.0</code> 表示监听所有接口。</li>
+<li><code>server_port</code> ： 服务器监听的端口，客户端连接到这个端口。</li>
+<li><code>password</code> ： 用于加密流量的密码，请设置一个强密码。</li>
+<li><code>method</code> ： 加密方法。<a href="https://shadowsocks.org/doc/configs.html">其他加密算法请参考官网</a></li>
+<li><code>timeout</code> ： 超时时间（秒）。</li>
+<li><code>fast_open</code> ： 如果启用 TCP Fast Open，请将其设置为 <code>true</code> ，但需要内核支持。</li>
+</ul>
+<h1 id="启动-Shadowsocks-服务"><a href="#启动-Shadowsocks-服务" class="headerlink" title="启动 Shadowsocks 服务"></a>启动 Shadowsocks 服务</h1><p>使用以下命令启动 Shadowsocks 服务，该命令会以后台进程的方式启动 Shadowsocks：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssserver -c /etc/shadowsocks/config.json -d start</span><br></pre></td></tr></table></figure>
+
+<p><strong>常用选项</strong> ：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-h, --help</code></td>
+<td>打印帮助信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-d [start / stop / restart ]</code></td>
+<td>以 Daemon 方式（后台）运行</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--pid-file</code></td>
+<td>Daemon 模式启动时的 PID 文件路径</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--log-file</code></td>
+<td>Daemon 模式启动时日志文件路径</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--user</code></td>
+<td>运行服务的用户</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-v, -vv</code></td>
+<td><code>verbose</code> 模式</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-q, -qq</code></td>
+<td><code>quite</code> 模式</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-c</code></td>
+<td>配置文件路径</td>
+<td><code>ssserver -c /etc/shadowsocks/config.json -d start</code></td>
+</tr>
+<tr>
+<td><code>-s</code></td>
+<td>指定服务端监听地址，默认为 <code>0.0.0.0</code> 。等同于配置文件中的 <code>server</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td>指定服务端监听端口，默认为 <code>8388</code> 。等同于配置文件中的 <code>server_port</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-k</code></td>
+<td>指定密码 。等同于配置文件中的 <code>password</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-m</code></td>
+<td>加密方法，默认为 <code>aes-256-cfb</code>   。 等同于配置文件中的 <code>method</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-t</code></td>
+<td>超时时间（单位为 <code>秒</code> ），默认 300s 。 等同于配置文件中的 <code>timeout</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>--fast-open</code></td>
+<td>启用 <code>TCP_FASTOPEN</code> ，需要 <code>Linux 3.7+</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>--workers</code></td>
+<td><code>workers</code> 数量，Linux&#x2F;Unix 可用</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--forbidden-ip</code></td>
+<td><code>,</code> 分割的 IP 列表，在此列表中的 IP 禁止连接，即黑名单</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--manager-address</code></td>
+<td>服务端 UDP 管理地址</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="为-Shadowsocks-配置-systemd-services-文件"><a href="#为-Shadowsocks-配置-systemd-services-文件" class="headerlink" title="为 Shadowsocks 配置 systemd services 文件"></a>为 Shadowsocks 配置 systemd services 文件</h2><p>参考以下内容，为 Shadowsocks 配置 systemd services 文件</p>
+<figure class="highlight ini"><figcaption><span>/etc/systemd/system/shadowsocks.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=Shadowsocks Proxy Server</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStart</span>=/usr/local/bin/ssserver -c /etc/shadowsocks/config.json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启用并启动 Shadowsocks 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl enable shadowsocks</span><br><span class="line">sudo systemctl start shadowsocks</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>在客户端（如 Windows、macOS、iOS 或 Android）上，使用 Shadowsocks 客户端进行连接。</p>
+<p><strong>客户端配置</strong> ：</p>
+<ul>
+<li><code>服务器地址</code> ： 填写你服务器的公网 IP。</li>
+<li><code>服务器端口</code> ：填写 <code>config.json</code> 中的 <code>server_port</code> ，如 <code>8388</code> 。</li>
+<li><code>密码</code> ： 填写配置文件中的 <code>password</code> 。</li>
+<li><code>加密方法</code> ： 选择 <code>method</code> 中配置的加密方法，如 <code>aes-256-cfb</code> 。</li>
+</ul>
+<p>如果需要调试或查看运行日志，可以通过以下命令查看 Shadowsocks 的日志：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -u shadowsocks</span><br></pre></td></tr></table></figure>
 ]]></content>
       <categories>
         <category>Tools</category>
@@ -35405,6 +35405,244 @@ width: 20%;
       </categories>
       <tags>
         <tag>Windows</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>wireshark 抓包工具使用</title>
+    <url>/202211251613/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="wiresark-显示过滤器使用方法"><a href="#wiresark-显示过滤器使用方法" class="headerlink" title="wiresark 显示过滤器使用方法"></a>wiresark 显示过滤器使用方法</h1><p>Wireshark 提供了两种过滤器</p>
+<ul>
+<li><strong>捕获过滤器</strong> ：在抓包之前就设定好过滤条件，然后只抓取符合条件的数据包。</li>
+<li><strong>显示过滤器</strong> ：在已捕获的数据包集合中设置过滤条件，隐藏不想显示的数据包，只显示符合条件的数据包。</li>
+</ul>
+<p>这两种过滤器所使用的语法是完全不同的，捕捉网卡数据的其实并不是 Wireshark，而是 WinPcap，要按 WinPcap 的规则来，显示过滤器就是 Wireshark 对已捕捉的数据进行筛选。</p>
+<h2 id="显示过滤器中常用的关系计算符号"><a href="#显示过滤器中常用的关系计算符号" class="headerlink" title="显示过滤器中常用的关系计算符号"></a>显示过滤器中常用的关系计算符号</h2><table>
+<thead>
+<tr>
+<th>符号</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>eq</code> <br/> <code>==</code></td>
+<td>等于</td>
+<td><code>ip.src==10.10.10.10</code> <br/> <code>ip.src eq 10.10.10.10</code></td>
+</tr>
+<tr>
+<td><code>ne</code> <br/> <code>!=</code></td>
+<td>不等于</td>
+<td><code>ip.src!=10.10.10.10</code> <br/> <code>ip.src ne 10.10.10.10</code></td>
+</tr>
+<tr>
+<td><code>gt</code> <br/> <code>&gt;</code></td>
+<td>大于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>lt</code> <br/> <code>&lt;</code></td>
+<td>小于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ge</code> <br/> <code>&gt;=</code></td>
+<td>大于等于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>le</code> <br/> <code>&lt;=</code></td>
+<td>小于等于</td>
+<td></td>
+</tr>
+<tr>
+<td><code>contains</code></td>
+<td>包含</td>
+<td><code>http.host contains com</code></td>
+</tr>
+</tbody></table>
+<h2 id="显示过滤器中常用的逻辑计算符号"><a href="#显示过滤器中常用的逻辑计算符号" class="headerlink" title="显示过滤器中常用的逻辑计算符号"></a>显示过滤器中常用的逻辑计算符号</h2><table>
+<thead>
+<tr>
+<th>符号</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>and</code> <br/> <code>&amp;&amp;</code></td>
+<td>与</td>
+<td><code>http.host contains com &amp;&amp; ip.src == 44.199.163.86</code> <br/> <code>http.host contains com and ip.src == 44.199.163.86</code></td>
+</tr>
+<tr>
+<td><code>or</code> <br/> <code>||</code></td>
+<td>或</td>
+<td></td>
+</tr>
+<tr>
+<td><code>not</code> <br/> <code>!</code></td>
+<td>非</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="常用示例"><a href="#常用示例" class="headerlink" title="常用示例"></a>常用示例</h2><h3 id="针对-IP-过滤"><a href="#针对-IP-过滤" class="headerlink" title="针对 IP 过滤"></a>针对 IP 过滤</h3><ul>
+<li>对源地址进行过滤</li>
+</ul>
+<p><code>ip.src == 192.168.0.1</code></p>
+<ul>
+<li>对目的地址进行过滤</li>
+</ul>
+<p><code>ip.dst == 192.168.0.1</code></p>
+<ul>
+<li>对源地址或者目的地址进行过滤</li>
+</ul>
+<p><code>ip.addr == 192.168.0.1</code></p>
+<ul>
+<li>如果想排除以上的数据包，只需要将其用括号囊括，然后使用 <code>!</code> 即可</li>
+</ul>
+<p><code>!(ip.addr == 192.168.0.1)</code></p>
+<h3 id="针对协议过滤"><a href="#针对协议过滤" class="headerlink" title="针对协议过滤"></a>针对协议过滤</h3><p>针对某种协议的数据包，表达式很简单仅仅需要把协议的名字（必须小写）输入即可</p>
+<p>常见协议：<br><code>tcp</code><br><code>udp</code><br><code>arp</code><br><code>icmp</code><br><code>http</code><br><code>smtp</code><br><code>ftp</code><br><code>dns</code><br><code>msnms</code><br><code>ip</code><br><code>ssl</code><br><code>oicq</code><br><code>bootp</code></p>
+<h3 id="针对端口过滤"><a href="#针对端口过滤" class="headerlink" title="针对端口过滤"></a>针对端口过滤</h3><ul>
+<li>捕获某一端口的数据包（以 tcp 协议为例）</li>
+</ul>
+<p><code>tcp.port == 80</code></p>
+<ul>
+<li>捕获多端口的数据包，可以使用 <code>and</code> 来连接，下面是捕获高于某端口的表达式（以 udp 协议为例）</li>
+</ul>
+<p><code>udp.port &gt;= 2048</code></p>
+<h3 id="针对-http-请求的一些过滤实例"><a href="#针对-http-请求的一些过滤实例" class="headerlink" title="针对 http 请求的一些过滤实例"></a>针对 http 请求的一些过滤实例</h3><ul>
+<li>过滤出请求地址中包含 <code>user</code> 的请求，不包括域名</li>
+</ul>
+<p><code>http.request.uri contains &quot;User&quot;</code></p>
+<ul>
+<li>精确过滤域名</li>
+</ul>
+<p><code>http.host==baidu.com</code></p>
+<ul>
+<li>模糊过滤域名</li>
+</ul>
+<p><code>http.host contains &quot;baidu&quot;</code></p>
+<ul>
+<li>过滤请求的 content_type 类型</li>
+</ul>
+<p><code>http.content_type ==&quot;text/html&quot;</code><br>-过滤 http 请求方法<br><code>http.request.method==&quot;POST&quot;</code></p>
+<ul>
+<li>过滤 tcp 端口</li>
+</ul>
+<p><code>tcp.port==80</code><br><code>http &amp;&amp; tcp.port==80 or tcp.port==5566</code></p>
+<ul>
+<li>过滤 http 响应状态码</li>
+</ul>
+<p><code>http.response.code==302</code></p>
+<ul>
+<li>过滤含有指定 cookie 的 http 数据包</li>
+</ul>
+<p><code>http.cookie contains &quot;userid&quot;</code></p>
+]]></content>
+      <categories>
+        <category>TCPIP</category>
+      </categories>
+      <tags>
+        <tag>wireshark</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>xray 部署使用</title>
+    <url>/20260303033711/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Docker-部署步骤"><a href="#Docker-部署步骤" class="headerlink" title="Docker 部署步骤"></a>Docker 部署步骤</h1><p>创建配置文件 <code>config.json</code></p>
+<figure class="highlight json"><figcaption><span>config.json</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;log&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;loglevel&quot;</span><span class="punctuation">:</span> <span class="string">&quot;debug&quot;</span><span class="punctuation">,</span>    <span class="comment">/* 为了观察运行情况或者定位问题，可以开启debug 日志 */</span></span><br><span class="line">    <span class="attr">&quot;access&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;error&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">,</span>    </span><br><span class="line">  <span class="attr">&quot;inbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;port&quot;</span><span class="punctuation">:</span> <span class="number">443</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;vless&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;settings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;clients&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">         <span class="punctuation">&#123;</span></span><br><span class="line">           <span class="attr">&quot;id&quot;</span><span class="punctuation">:</span> <span class="string">&quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</span><span class="punctuation">,</span> </span><br><span class="line">           <span class="attr">&quot;flow&quot;</span><span class="punctuation">:</span> <span class="string">&quot;xtls-rprx-vision&quot;</span></span><br><span class="line">         <span class="punctuation">&#125;</span></span><br><span class="line">        <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;decryption&quot;</span><span class="punctuation">:</span> <span class="string">&quot;none&quot;</span></span><br><span class="line">    <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;streamSettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;network&quot;</span><span class="punctuation">:</span> <span class="string">&quot;tcp&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;security&quot;</span><span class="punctuation">:</span> <span class="string">&quot;reality&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;realitySettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">        <span class="attr">&quot;show&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;dest&quot;</span><span class="punctuation">:</span> <span class="string">&quot;www.microsoft.com:443&quot;</span><span class="punctuation">,</span>   </span><br><span class="line">        <span class="attr">&quot;xver&quot;</span><span class="punctuation">:</span> <span class="number">0</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;serverNames&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;www.microsoft.com&quot;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;privateKey&quot;</span><span class="punctuation">:</span> <span class="string">&quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;shortIds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;a1b2c3d4&quot;</span><span class="punctuation">]</span></span><br><span class="line">      <span class="punctuation">&#125;</span></span><br><span class="line">    <span class="punctuation">&#125;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;outbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span><span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;freedom&quot;</span><span class="punctuation">&#125;</span><span class="punctuation">]</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><p><code>&quot;id&quot;: &quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</code> 可以自行生成</p>
+</li>
+<li><p><code>&quot;dest&quot;: &quot;www.microsoft.com:443&quot;</code> 伪装的网站地址</p>
+</li>
+<li><p><code>&quot;privateKey&quot;: &quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</code> 私钥，公司钥对可以使用如下命令生成</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">docker run --<span class="built_in">rm</span> teddysun/xray xray x25519</span></span><br><span class="line">PrivateKey: iBKDmvNMfFOAzNPOLRlnJLzoaYbHKs9RFatpW1ELeks</span><br><span class="line">Password: OV_SMIonfy1cEzxnDGZff9x0HeuhuqLyrIj0dLqAaHw</span><br><span class="line">Hash32: 1fEp1041YBnLfSvQYVsRfvGJEA8ZV_LjqFGtQKwaWG0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>PrivateKey</code> 对应私钥（ <code>privateKey</code> ）</li>
+<li><code>Password</code> 对应公钥（ Public Key ），要发送给客户端使用</li>
+</ul>
+</li>
+</ul>
+<p><code>docker-compose.yaml</code> 配置如下：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">xray:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">teddysun/xray:latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">xray</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">always</span></span><br><span class="line">    <span class="attr">network_mode:</span> <span class="string">&quot;host&quot;</span> <span class="comment"># 使用 host 模式性能更佳，且直接映射 443 端口</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/config.json:/etc/xray/config.json</span></span><br><span class="line">    <span class="attr">logging:</span></span><br><span class="line">      <span class="attr">driver:</span> <span class="string">&quot;json-file&quot;</span></span><br><span class="line">      <span class="attr">options:</span></span><br><span class="line">        <span class="attr">max-size:</span> <span class="string">&quot;10m&quot;</span></span><br><span class="line">        <span class="attr">max-file:</span> <span class="string">&quot;3&quot;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>正常启动后，在客户端如下配置：</p>
+<ul>
+<li><p>类型： <code>VLESS</code></p>
+</li>
+<li><p>地址（Address）： <code>&lt;SERVER IP&gt;</code></p>
+</li>
+<li><p>端口（Port）： <code>443</code> # 对应配置文件中的 <code>inbounds.port</code></p>
+</li>
+<li><p>UUID： <code>&lt;UID&gt;</code>  # 对应配置文件中的 <code>inbounds.settings.clients.id</code></p>
+</li>
+<li><p>流（Flow）： <code>xtls-rprx-vision</code>  # 对应配置文件中的 <code>inbounds.settings.clients.flow</code></p>
+</li>
+<li><p>传输协议(Transport protocol(network))： <code>TCP</code>   # 对应配置文件中的 <code>inbounds.streamSettings.network</code></p>
+</li>
+<li><p>TLS&#x2F;安全： <code>Reality</code>   # 对应配置文件中的 <code>inbounds.streamSettings.security</code></p>
+</li>
+<li><p>加密(Encryption): <code>none</code>  # 对应配置文件中的 <code>inbounds.settings.decryption</code></p>
+</li>
+<li><p>SNI： <code>www.microsoft.com</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.dest</code></p>
+</li>
+<li><p>短 ID（Short ID）： <code>a1b2c3d4</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.shortIds</code></p>
+</li>
+<li><p>公钥（Public key、密码、Password）： <code>&lt;公钥&gt;</code>  # <code>docker run --rm teddysun/xray xray x25519</code> 命令生成的 <code>Password</code></p>
+</li>
+</ul>
+<p>为了方便客户端导入，可以为配置生成以下链接，其中包含了客户端链接所需的参数：</p>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</span><br></pre></td></tr></table></figure>
+
+<p>大多数客户端都支持从粘贴板复制以上内容自动导入配置。</p>
+<h1 id="Windows-中使用-v2rayN-连接-xray-server"><a href="#Windows-中使用-v2rayN-连接-xray-server" class="headerlink" title="Windows 中使用 v2rayN 连接 xray server"></a>Windows 中使用 v2rayN 连接 xray server</h1><ul>
+<li><strong>v2rayN</strong> 版本： v7.18.0</li>
+</ul>
+<p>Windows 下载 <strong>v2rayN</strong> ，将其解压后，运行程序 <code>v2rayN.exe</code> 即可打开程序。复制配置链接（ <code>vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</code> ），在 <strong>v2rayN</strong> 主界面点击 <strong>Configuration -&gt; Import Share Links from clipboard</strong> 即可自动导入配置<br><img src="https://i.0920811.xyz/img_429.png"><br><img src="https://i.0920811.xyz/img_428.png"></p>
+<p>默认情况下， <strong>v2rayN</strong> 会测试到 <code>google.com</code> 的连接来验证服务端是否正常，国内服务器此测试必定失败，因此可以修改此测试目标。参考以下步骤：</p>
+<ol>
+<li>导航到 <strong>Settings -&gt; v2rayN settings: Speed Ping Test URL</strong> ，此处默认值为 <code>google.com</code> ，将其改为国内服务器可以访问的地址如 <code>https://www.baidu.com</code></li>
+</ol>
+<p><img src="https://i.0920811.xyz/img_430.png"></p>
+<p>要验证 <strong>xray server</strong> 工作正常，可以在 <strong>v2rayN</strong> 客户端进行 <strong>延迟检测（Test real delay）</strong> 。右键要检测的 <strong>xray server</strong> 选择 <strong>Test real delay</strong></p>
+<p><img src="https://i.0920811.xyz/img_433.png"></p>
+<p>如果能够获取到延迟数据，说明 xray 工作正常，如果未获取到延迟数据，可以登陆服务器，通过命令 <code>docker logs</code> 检查服务端日志<br><img src="https://i.0920811.xyz/img_434.png"></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>xshell 常用配置</title>
+    <url>/202208101059/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>xshell7</li>
+</ul>
+<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="字体配置"><a href="#字体配置" class="headerlink" title="字体配置"></a>字体配置</h2><p>(菜单栏)查看 &gt; 工具栏 &gt; 标准按钮  </p>
+<p><img src="https://i.0920811.xyz/img_36.png"></p>
+<p>中文字体和英文字体需要单独配置，建议配置默认会话属性</p>
+<p>(菜单栏)文件 &gt; 默认会话属性，找到 <code>外观</code> 分别配置 <code>字体</code> 以及 <code>亚洲字体</code> :</p>
+<p><img src="https://i.0920811.xyz/img_225.png"></p>
+<span id="more"></span>
+
+<h2 id="Meta-键配置"><a href="#Meta-键配置" class="headerlink" title="Meta 键配置"></a>Meta 键配置</h2><p>(菜单栏)文件 &gt; 当前会话属性:<br><img src="https://i.0920811.xyz/img_37.png"></p>
+<p>终端中使用 <code>Alt .</code> 可自动补齐上一条命令的最后一个参数  </p>
+<h2 id="配置-选中即复制"><a href="#配置-选中即复制" class="headerlink" title="配置 选中即复制"></a>配置 选中即复制</h2><p>工具-&gt;选项<br><img src="https://i.0920811.xyz/img_38.png"></p>
+<p>选择 <code>键盘和鼠标</code><br><img src="https://i.0920811.xyz/img_39.png"></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>xshell</category>
+      </categories>
+      <tags>
+        <tag>xshell</tag>
       </tags>
   </entry>
   <entry>
@@ -41778,244 +42016,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>wireshark 抓包工具使用</title>
-    <url>/202211251613/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="wiresark-显示过滤器使用方法"><a href="#wiresark-显示过滤器使用方法" class="headerlink" title="wiresark 显示过滤器使用方法"></a>wiresark 显示过滤器使用方法</h1><p>Wireshark 提供了两种过滤器</p>
-<ul>
-<li><strong>捕获过滤器</strong> ：在抓包之前就设定好过滤条件，然后只抓取符合条件的数据包。</li>
-<li><strong>显示过滤器</strong> ：在已捕获的数据包集合中设置过滤条件，隐藏不想显示的数据包，只显示符合条件的数据包。</li>
-</ul>
-<p>这两种过滤器所使用的语法是完全不同的，捕捉网卡数据的其实并不是 Wireshark，而是 WinPcap，要按 WinPcap 的规则来，显示过滤器就是 Wireshark 对已捕捉的数据进行筛选。</p>
-<h2 id="显示过滤器中常用的关系计算符号"><a href="#显示过滤器中常用的关系计算符号" class="headerlink" title="显示过滤器中常用的关系计算符号"></a>显示过滤器中常用的关系计算符号</h2><table>
-<thead>
-<tr>
-<th>符号</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>eq</code> <br/> <code>==</code></td>
-<td>等于</td>
-<td><code>ip.src==10.10.10.10</code> <br/> <code>ip.src eq 10.10.10.10</code></td>
-</tr>
-<tr>
-<td><code>ne</code> <br/> <code>!=</code></td>
-<td>不等于</td>
-<td><code>ip.src!=10.10.10.10</code> <br/> <code>ip.src ne 10.10.10.10</code></td>
-</tr>
-<tr>
-<td><code>gt</code> <br/> <code>&gt;</code></td>
-<td>大于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>lt</code> <br/> <code>&lt;</code></td>
-<td>小于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>ge</code> <br/> <code>&gt;=</code></td>
-<td>大于等于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>le</code> <br/> <code>&lt;=</code></td>
-<td>小于等于</td>
-<td></td>
-</tr>
-<tr>
-<td><code>contains</code></td>
-<td>包含</td>
-<td><code>http.host contains com</code></td>
-</tr>
-</tbody></table>
-<h2 id="显示过滤器中常用的逻辑计算符号"><a href="#显示过滤器中常用的逻辑计算符号" class="headerlink" title="显示过滤器中常用的逻辑计算符号"></a>显示过滤器中常用的逻辑计算符号</h2><table>
-<thead>
-<tr>
-<th>符号</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>and</code> <br/> <code>&amp;&amp;</code></td>
-<td>与</td>
-<td><code>http.host contains com &amp;&amp; ip.src == 44.199.163.86</code> <br/> <code>http.host contains com and ip.src == 44.199.163.86</code></td>
-</tr>
-<tr>
-<td><code>or</code> <br/> <code>||</code></td>
-<td>或</td>
-<td></td>
-</tr>
-<tr>
-<td><code>not</code> <br/> <code>!</code></td>
-<td>非</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="常用示例"><a href="#常用示例" class="headerlink" title="常用示例"></a>常用示例</h2><h3 id="针对-IP-过滤"><a href="#针对-IP-过滤" class="headerlink" title="针对 IP 过滤"></a>针对 IP 过滤</h3><ul>
-<li>对源地址进行过滤</li>
-</ul>
-<p><code>ip.src == 192.168.0.1</code></p>
-<ul>
-<li>对目的地址进行过滤</li>
-</ul>
-<p><code>ip.dst == 192.168.0.1</code></p>
-<ul>
-<li>对源地址或者目的地址进行过滤</li>
-</ul>
-<p><code>ip.addr == 192.168.0.1</code></p>
-<ul>
-<li>如果想排除以上的数据包，只需要将其用括号囊括，然后使用 <code>!</code> 即可</li>
-</ul>
-<p><code>!(ip.addr == 192.168.0.1)</code></p>
-<h3 id="针对协议过滤"><a href="#针对协议过滤" class="headerlink" title="针对协议过滤"></a>针对协议过滤</h3><p>针对某种协议的数据包，表达式很简单仅仅需要把协议的名字（必须小写）输入即可</p>
-<p>常见协议：<br><code>tcp</code><br><code>udp</code><br><code>arp</code><br><code>icmp</code><br><code>http</code><br><code>smtp</code><br><code>ftp</code><br><code>dns</code><br><code>msnms</code><br><code>ip</code><br><code>ssl</code><br><code>oicq</code><br><code>bootp</code></p>
-<h3 id="针对端口过滤"><a href="#针对端口过滤" class="headerlink" title="针对端口过滤"></a>针对端口过滤</h3><ul>
-<li>捕获某一端口的数据包（以 tcp 协议为例）</li>
-</ul>
-<p><code>tcp.port == 80</code></p>
-<ul>
-<li>捕获多端口的数据包，可以使用 <code>and</code> 来连接，下面是捕获高于某端口的表达式（以 udp 协议为例）</li>
-</ul>
-<p><code>udp.port &gt;= 2048</code></p>
-<h3 id="针对-http-请求的一些过滤实例"><a href="#针对-http-请求的一些过滤实例" class="headerlink" title="针对 http 请求的一些过滤实例"></a>针对 http 请求的一些过滤实例</h3><ul>
-<li>过滤出请求地址中包含 <code>user</code> 的请求，不包括域名</li>
-</ul>
-<p><code>http.request.uri contains &quot;User&quot;</code></p>
-<ul>
-<li>精确过滤域名</li>
-</ul>
-<p><code>http.host==baidu.com</code></p>
-<ul>
-<li>模糊过滤域名</li>
-</ul>
-<p><code>http.host contains &quot;baidu&quot;</code></p>
-<ul>
-<li>过滤请求的 content_type 类型</li>
-</ul>
-<p><code>http.content_type ==&quot;text/html&quot;</code><br>-过滤 http 请求方法<br><code>http.request.method==&quot;POST&quot;</code></p>
-<ul>
-<li>过滤 tcp 端口</li>
-</ul>
-<p><code>tcp.port==80</code><br><code>http &amp;&amp; tcp.port==80 or tcp.port==5566</code></p>
-<ul>
-<li>过滤 http 响应状态码</li>
-</ul>
-<p><code>http.response.code==302</code></p>
-<ul>
-<li>过滤含有指定 cookie 的 http 数据包</li>
-</ul>
-<p><code>http.cookie contains &quot;userid&quot;</code></p>
-]]></content>
-      <categories>
-        <category>TCPIP</category>
-      </categories>
-      <tags>
-        <tag>wireshark</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>xray 部署使用</title>
-    <url>/20260303033711/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Docker-部署步骤"><a href="#Docker-部署步骤" class="headerlink" title="Docker 部署步骤"></a>Docker 部署步骤</h1><p>创建配置文件 <code>config.json</code></p>
-<figure class="highlight json"><figcaption><span>config.json</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;log&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;loglevel&quot;</span><span class="punctuation">:</span> <span class="string">&quot;debug&quot;</span><span class="punctuation">,</span>    <span class="comment">/* 为了观察运行情况或者定位问题，可以开启debug 日志 */</span></span><br><span class="line">    <span class="attr">&quot;access&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;error&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/dev/stdout&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">,</span>    </span><br><span class="line">  <span class="attr">&quot;inbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;port&quot;</span><span class="punctuation">:</span> <span class="number">443</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;vless&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;settings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;clients&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">         <span class="punctuation">&#123;</span></span><br><span class="line">           <span class="attr">&quot;id&quot;</span><span class="punctuation">:</span> <span class="string">&quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</span><span class="punctuation">,</span> </span><br><span class="line">           <span class="attr">&quot;flow&quot;</span><span class="punctuation">:</span> <span class="string">&quot;xtls-rprx-vision&quot;</span></span><br><span class="line">         <span class="punctuation">&#125;</span></span><br><span class="line">        <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;decryption&quot;</span><span class="punctuation">:</span> <span class="string">&quot;none&quot;</span></span><br><span class="line">    <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;streamSettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">      <span class="attr">&quot;network&quot;</span><span class="punctuation">:</span> <span class="string">&quot;tcp&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;security&quot;</span><span class="punctuation">:</span> <span class="string">&quot;reality&quot;</span><span class="punctuation">,</span></span><br><span class="line">      <span class="attr">&quot;realitySettings&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">        <span class="attr">&quot;show&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;dest&quot;</span><span class="punctuation">:</span> <span class="string">&quot;www.microsoft.com:443&quot;</span><span class="punctuation">,</span>   </span><br><span class="line">        <span class="attr">&quot;xver&quot;</span><span class="punctuation">:</span> <span class="number">0</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;serverNames&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;www.microsoft.com&quot;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;privateKey&quot;</span><span class="punctuation">:</span> <span class="string">&quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;shortIds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;a1b2c3d4&quot;</span><span class="punctuation">]</span></span><br><span class="line">      <span class="punctuation">&#125;</span></span><br><span class="line">    <span class="punctuation">&#125;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;outbounds&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="punctuation">&#123;</span><span class="attr">&quot;protocol&quot;</span><span class="punctuation">:</span> <span class="string">&quot;freedom&quot;</span><span class="punctuation">&#125;</span><span class="punctuation">]</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><p><code>&quot;id&quot;: &quot;c4187394-5865-446d-9d8d-3f6c179416b0(UID 替换为实际值)&quot;</code> 可以自行生成</p>
-</li>
-<li><p><code>&quot;dest&quot;: &quot;www.microsoft.com:443&quot;</code> 伪装的网站地址</p>
-</li>
-<li><p><code>&quot;privateKey&quot;: &quot;mD0OUR8tFvOypHQre6yGgsZs2w-JecH4zkXB9_TY-k8（私钥）&quot;</code> 私钥，公司钥对可以使用如下命令生成</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">docker run --<span class="built_in">rm</span> teddysun/xray xray x25519</span></span><br><span class="line">PrivateKey: iBKDmvNMfFOAzNPOLRlnJLzoaYbHKs9RFatpW1ELeks</span><br><span class="line">Password: OV_SMIonfy1cEzxnDGZff9x0HeuhuqLyrIj0dLqAaHw</span><br><span class="line">Hash32: 1fEp1041YBnLfSvQYVsRfvGJEA8ZV_LjqFGtQKwaWG0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><code>PrivateKey</code> 对应私钥（ <code>privateKey</code> ）</li>
-<li><code>Password</code> 对应公钥（ Public Key ），要发送给客户端使用</li>
-</ul>
-</li>
-</ul>
-<p><code>docker-compose.yaml</code> 配置如下：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">xray:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">teddysun/xray:latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">xray</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">always</span></span><br><span class="line">    <span class="attr">network_mode:</span> <span class="string">&quot;host&quot;</span> <span class="comment"># 使用 host 模式性能更佳，且直接映射 443 端口</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/config.json:/etc/xray/config.json</span></span><br><span class="line">    <span class="attr">logging:</span></span><br><span class="line">      <span class="attr">driver:</span> <span class="string">&quot;json-file&quot;</span></span><br><span class="line">      <span class="attr">options:</span></span><br><span class="line">        <span class="attr">max-size:</span> <span class="string">&quot;10m&quot;</span></span><br><span class="line">        <span class="attr">max-file:</span> <span class="string">&quot;3&quot;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>正常启动后，在客户端如下配置：</p>
-<ul>
-<li><p>类型： <code>VLESS</code></p>
-</li>
-<li><p>地址（Address）： <code>&lt;SERVER IP&gt;</code></p>
-</li>
-<li><p>端口（Port）： <code>443</code> # 对应配置文件中的 <code>inbounds.port</code></p>
-</li>
-<li><p>UUID： <code>&lt;UID&gt;</code>  # 对应配置文件中的 <code>inbounds.settings.clients.id</code></p>
-</li>
-<li><p>流（Flow）： <code>xtls-rprx-vision</code>  # 对应配置文件中的 <code>inbounds.settings.clients.flow</code></p>
-</li>
-<li><p>传输协议(Transport protocol(network))： <code>TCP</code>   # 对应配置文件中的 <code>inbounds.streamSettings.network</code></p>
-</li>
-<li><p>TLS&#x2F;安全： <code>Reality</code>   # 对应配置文件中的 <code>inbounds.streamSettings.security</code></p>
-</li>
-<li><p>加密(Encryption): <code>none</code>  # 对应配置文件中的 <code>inbounds.settings.decryption</code></p>
-</li>
-<li><p>SNI： <code>www.microsoft.com</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.dest</code></p>
-</li>
-<li><p>短 ID（Short ID）： <code>a1b2c3d4</code>  # 对应配置文件中的 <code>inbounds.streamSettings.realitySettings.shortIds</code></p>
-</li>
-<li><p>公钥（Public key、密码、Password）： <code>&lt;公钥&gt;</code>  # <code>docker run --rm teddysun/xray xray x25519</code> 命令生成的 <code>Password</code></p>
-</li>
-</ul>
-<p>为了方便客户端导入，可以为配置生成以下链接，其中包含了客户端链接所需的参数：</p>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</span><br></pre></td></tr></table></figure>
-
-<p>大多数客户端都支持从粘贴板复制以上内容自动导入配置。</p>
-<h1 id="Windows-中使用-v2rayN-连接-xray-server"><a href="#Windows-中使用-v2rayN-连接-xray-server" class="headerlink" title="Windows 中使用 v2rayN 连接 xray server"></a>Windows 中使用 v2rayN 连接 xray server</h1><ul>
-<li><strong>v2rayN</strong> 版本： v7.18.0</li>
-</ul>
-<p>Windows 下载 <strong>v2rayN</strong> ，将其解压后，运行程序 <code>v2rayN.exe</code> 即可打开程序。复制配置链接（ <code>vless://&lt;UID&gt;@&lt;SERVER IP&gt;:&lt;Port&gt;?encryption=none&amp;flow=xtls-rprx-vision&amp;security=reality&amp;sni=www.microsoft.com&amp;fp=chrome&amp;pbk=&lt;Public Key or Password&gt;&amp;sid=a1b2c3d4#Shanghai_MS_Reality</code> ），在 <strong>v2rayN</strong> 主界面点击 <strong>Configuration -&gt; Import Share Links from clipboard</strong> 即可自动导入配置<br><img src="https://i.0920811.xyz/img_429.png"><br><img src="https://i.0920811.xyz/img_428.png"></p>
-<p>默认情况下， <strong>v2rayN</strong> 会测试到 <code>google.com</code> 的连接来验证服务端是否正常，国内服务器此测试必定失败，因此可以修改此测试目标。参考以下步骤：</p>
-<ol>
-<li>导航到 <strong>Settings -&gt; v2rayN settings: Speed Ping Test URL</strong> ，此处默认值为 <code>google.com</code> ，将其改为国内服务器可以访问的地址如 <code>https://www.baidu.com</code></li>
-</ol>
-<p><img src="https://i.0920811.xyz/img_430.png"></p>
-<p>要验证 <strong>xray server</strong> 工作正常，可以在 <strong>v2rayN</strong> 客户端进行 <strong>延迟检测（Test real delay）</strong> 。右键要检测的 <strong>xray server</strong> 选择 <strong>Test real delay</strong></p>
-<p><img src="https://i.0920811.xyz/img_433.png"></p>
-<p>如果能够获取到延迟数据，说明 xray 工作正常，如果未获取到延迟数据，可以登陆服务器，通过命令 <code>docker logs</code> 检查服务端日志<br><img src="https://i.0920811.xyz/img_434.png"></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>xshell 常用配置</title>
-    <url>/202208101059/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>xshell7</li>
-</ul>
-<h1 id="常用配置"><a href="#常用配置" class="headerlink" title="常用配置"></a>常用配置</h1><h2 id="字体配置"><a href="#字体配置" class="headerlink" title="字体配置"></a>字体配置</h2><p>(菜单栏)查看 &gt; 工具栏 &gt; 标准按钮  </p>
-<p><img src="https://i.0920811.xyz/img_36.png"></p>
-<p>中文字体和英文字体需要单独配置，建议配置默认会话属性</p>
-<p>(菜单栏)文件 &gt; 默认会话属性，找到 <code>外观</code> 分别配置 <code>字体</code> 以及 <code>亚洲字体</code> :</p>
-<p><img src="https://i.0920811.xyz/img_225.png"></p>
-<span id="more"></span>
-
-<h2 id="Meta-键配置"><a href="#Meta-键配置" class="headerlink" title="Meta 键配置"></a>Meta 键配置</h2><p>(菜单栏)文件 &gt; 当前会话属性:<br><img src="https://i.0920811.xyz/img_37.png"></p>
-<p>终端中使用 <code>Alt .</code> 可自动补齐上一条命令的最后一个参数  </p>
-<h2 id="配置-选中即复制"><a href="#配置-选中即复制" class="headerlink" title="配置 选中即复制"></a>配置 选中即复制</h2><p>工具-&gt;选项<br><img src="https://i.0920811.xyz/img_38.png"></p>
-<p>选择 <code>键盘和鼠标</code><br><img src="https://i.0920811.xyz/img_39.png"></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>xshell</category>
-      </categories>
-      <tags>
-        <tag>xshell</tag>
       </tags>
   </entry>
 </search>
