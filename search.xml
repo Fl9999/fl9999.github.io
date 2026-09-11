@@ -6619,6 +6619,91 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>AWS Security Group(安全组)</title>
+    <url>/20260210152620/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>AWS 里 <strong>安全组（Security Group, SG）不是 “防火墙规则表”，而是一套 关系型访问控制架构</strong></p>
+<p>安全组是在 <strong>网络接口 (ENI)</strong> 级别运行的，而不是在子网级别。这意味着即使两个实例在同一个子网内，如果它们的安全组规则不允许通信，它们也无法互相访问。</p>
+<p>AWS 安全组（Security Group, SG）有以下关键特性</p>
+<table>
+<thead>
+<tr>
+<th>关键特性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>有状态 (Stateful)</strong></td>
+<td>如果你允许入站请求，响应流量会自动允许流出，不受出站规则限制。</td>
+</tr>
+<tr>
+<td><strong>白名单机制</strong></td>
+<td>默认拒绝所有流量。你只能添加 “允许” 规则，不能设置 “拒绝” 规则。</td>
+</tr>
+<tr>
+<td><strong>即时生效</strong></td>
+<td>修改规则后，变更会立即应用到所有关联的资源上。</td>
+</tr>
+<tr>
+<td><strong>拓扑关系</strong></td>
+<td>安全组之间可以 互相引用，形成拓扑关系。也可以包含 <strong>自引用规则（self-referencing SG rule），在规则中引用自身安全组</strong></td>
+</tr>
+</tbody></table>
+<p>安全组可以绑定到：</p>
+<ul>
+<li><p><strong>EC2 实例</strong></p>
+</li>
+<li><p><strong>ENI（弹性网卡）</strong></p>
+</li>
+<li><p><strong>ALB &#x2F; NLB</strong></p>
+</li>
+<li><p><strong>RDS</strong></p>
+</li>
+<li><p><strong>EKS Pod（通过 ENI &#x2F; SG for Pod）</strong></p>
+</li>
+<li><p><strong>📌 一个资源可以绑多个 SG，多个 SG 规则没有顺序概念</strong></p>
+</li>
+<li><p><strong>📌 一个 SG 也可以被多个资源复用</strong></p>
+</li>
+</ul>
+<p><strong>引用安全组作为源（Security Group Referencing）</strong></p>
+<p>这是 AWS 架构设计中最优雅的功能之一。在设置规则时，源（Source）不仅可以是 IP 地址（如 10.0.0.5&#x2F;32），还可以是 <strong>另一个安全组 ID</strong> 。典型场景如下：</p>
+<ul>
+<li><p><strong>场景</strong> ：Web 层服务器需要访问数据库层。为 Web 层服务器创建一个安全组，如 <code>sg-web-servers</code></p>
+</li>
+<li><p><strong>做法</strong> ：在数据库安全组中添加规则：允许来自安全组 <code>sg-web-servers</code> 的 3306 端口访问。</p>
+</li>
+<li><p><strong>好处</strong> ：当 Web 层实例由于自动缩容（Auto Scaling）增加或减少时，你不需要手动更新 IP 地址列表，权限会自动随安全组标签流转。不关心 IP 变化，不关心实例扩缩容，只关心 <strong>角色之间的通信关系</strong></p>
+</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="AWS-EKS-Security-Group"><a href="#AWS-EKS-Security-Group" class="headerlink" title="AWS EKS Security Group"></a>AWS EKS Security Group</h1><p>AWS EKS 默认的 Security Group 如下图所示：<br><img src="https://i.0920811.xyz/img_408.png"></p>
+<p>其中只包含了一条规则，即允许所有来源于 <strong>安全组自己</strong> 的流量， <strong>任何挂了这个安全组的 ENI，可以无条件互相通信</strong> ，这是一条 <strong>自引用规则（self-referencing SG rule）</strong> 。</p>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">Inbound:</span><br><span class="line">  Source: sg-058bd1ef730091911 (自己)</span><br><span class="line">  Protocol: ALL</span><br><span class="line">  Port: ALL</span><br></pre></td></tr></table></figure>
+
+<p>在安全组规则中，将 <strong>Source（源） 设置为自身的 Security Group ID</strong> ，其本质含义是：</p>
+<blockquote>
+<p><em><strong>凡是关联了这个安全组的资源，彼此之间可以无障碍通信</strong></em></p>
+</blockquote>
+<p>这正是 AWS 实现集群内部成员相互信任的核心手段。</p>
+<p>在 EKS 的上下文中，这主要解决了以下通信需求：</p>
+<ul>
+<li><strong>控制平面与工作节点通信</strong> ：EKS 的控制平面（Master Nodes）和工作节点（Worker Nodes）都需要关联这个安全组。</li>
+<li><strong>Pod 间通信</strong> ：某些核心组件（如 kubelet 与 API Server 的交互）需要跨节点通信。</li>
+<li><strong>EFA (Elastic Fabric Adapter) 支持</strong> ：正如你截图中右侧 Description 提到的 “Allows EFA traffic…”，EFA 高性能网络通常要求节点间拥有全开放的内网访问权限，以便进行极低延迟的数据交换。</li>
+</ul>
+<p>这种配置比写死 IP 地址要高级得多，因为无论你的 EKS 集群如何扩容（增加 Node），新节点只要关联了这个 SG ID，就自动获得了进入 “信任圈” 的通行证。</p>
+<p>EKS API Server Endpoint （ <code>https://3F54290E45FB092995.sk1.ap-east-1.eks.amazonaws.com</code> ）实际上是 AWS 在你的 VPC 内部创建的 条件网络接口 (Cross-account ENI)。</p>
+]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Aws</category>
+      </categories>
+      <tags>
+        <tag>Aws</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>aws 云平台常见操作</title>
     <url>/202302230924/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="S3"><a href="#S3" class="headerlink" title="S3"></a>S3</h1><h2 id="s3-配置跨域"><a href="#s3-配置跨域" class="headerlink" title="s3 配置跨域"></a>s3 配置跨域</h2><p>当使用 aws 的 cloudfront 或其他第三方 cdn （如 cdn77）为域名加速，资源是回源到 aws s3 的情况下，一般都需要配置 <strong>允许跨域</strong> ，此种情况需要在 aws s3 存储桶中配置允许跨域 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[CORS 配置](https://docs.aws.amazon.com/zh_cn/AmazonS3/latest/userguide/ManageCorsUsing.html#cors-example-1)">[1]</span></a></sup></p>
@@ -7194,91 +7279,6 @@ width: 20%;
         <category>易学</category>
         <category>八字十神</category>
       </categories>
-  </entry>
-  <entry>
-    <title>AWS Security Group(安全组)</title>
-    <url>/20260210152620/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>AWS 里 <strong>安全组（Security Group, SG）不是 “防火墙规则表”，而是一套 关系型访问控制架构</strong></p>
-<p>安全组是在 <strong>网络接口 (ENI)</strong> 级别运行的，而不是在子网级别。这意味着即使两个实例在同一个子网内，如果它们的安全组规则不允许通信，它们也无法互相访问。</p>
-<p>AWS 安全组（Security Group, SG）有以下关键特性</p>
-<table>
-<thead>
-<tr>
-<th>关键特性</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>有状态 (Stateful)</strong></td>
-<td>如果你允许入站请求，响应流量会自动允许流出，不受出站规则限制。</td>
-</tr>
-<tr>
-<td><strong>白名单机制</strong></td>
-<td>默认拒绝所有流量。你只能添加 “允许” 规则，不能设置 “拒绝” 规则。</td>
-</tr>
-<tr>
-<td><strong>即时生效</strong></td>
-<td>修改规则后，变更会立即应用到所有关联的资源上。</td>
-</tr>
-<tr>
-<td><strong>拓扑关系</strong></td>
-<td>安全组之间可以 互相引用，形成拓扑关系。也可以包含 <strong>自引用规则（self-referencing SG rule），在规则中引用自身安全组</strong></td>
-</tr>
-</tbody></table>
-<p>安全组可以绑定到：</p>
-<ul>
-<li><p><strong>EC2 实例</strong></p>
-</li>
-<li><p><strong>ENI（弹性网卡）</strong></p>
-</li>
-<li><p><strong>ALB &#x2F; NLB</strong></p>
-</li>
-<li><p><strong>RDS</strong></p>
-</li>
-<li><p><strong>EKS Pod（通过 ENI &#x2F; SG for Pod）</strong></p>
-</li>
-<li><p><strong>📌 一个资源可以绑多个 SG，多个 SG 规则没有顺序概念</strong></p>
-</li>
-<li><p><strong>📌 一个 SG 也可以被多个资源复用</strong></p>
-</li>
-</ul>
-<p><strong>引用安全组作为源（Security Group Referencing）</strong></p>
-<p>这是 AWS 架构设计中最优雅的功能之一。在设置规则时，源（Source）不仅可以是 IP 地址（如 10.0.0.5&#x2F;32），还可以是 <strong>另一个安全组 ID</strong> 。典型场景如下：</p>
-<ul>
-<li><p><strong>场景</strong> ：Web 层服务器需要访问数据库层。为 Web 层服务器创建一个安全组，如 <code>sg-web-servers</code></p>
-</li>
-<li><p><strong>做法</strong> ：在数据库安全组中添加规则：允许来自安全组 <code>sg-web-servers</code> 的 3306 端口访问。</p>
-</li>
-<li><p><strong>好处</strong> ：当 Web 层实例由于自动缩容（Auto Scaling）增加或减少时，你不需要手动更新 IP 地址列表，权限会自动随安全组标签流转。不关心 IP 变化，不关心实例扩缩容，只关心 <strong>角色之间的通信关系</strong></p>
-</li>
-</ul>
-<span id="more"></span>
-
-<h1 id="AWS-EKS-Security-Group"><a href="#AWS-EKS-Security-Group" class="headerlink" title="AWS EKS Security Group"></a>AWS EKS Security Group</h1><p>AWS EKS 默认的 Security Group 如下图所示：<br><img src="https://i.0920811.xyz/img_408.png"></p>
-<p>其中只包含了一条规则，即允许所有来源于 <strong>安全组自己</strong> 的流量， <strong>任何挂了这个安全组的 ENI，可以无条件互相通信</strong> ，这是一条 <strong>自引用规则（self-referencing SG rule）</strong> 。</p>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">Inbound:</span><br><span class="line">  Source: sg-058bd1ef730091911 (自己)</span><br><span class="line">  Protocol: ALL</span><br><span class="line">  Port: ALL</span><br></pre></td></tr></table></figure>
-
-<p>在安全组规则中，将 <strong>Source（源） 设置为自身的 Security Group ID</strong> ，其本质含义是：</p>
-<blockquote>
-<p><em><strong>凡是关联了这个安全组的资源，彼此之间可以无障碍通信</strong></em></p>
-</blockquote>
-<p>这正是 AWS 实现集群内部成员相互信任的核心手段。</p>
-<p>在 EKS 的上下文中，这主要解决了以下通信需求：</p>
-<ul>
-<li><strong>控制平面与工作节点通信</strong> ：EKS 的控制平面（Master Nodes）和工作节点（Worker Nodes）都需要关联这个安全组。</li>
-<li><strong>Pod 间通信</strong> ：某些核心组件（如 kubelet 与 API Server 的交互）需要跨节点通信。</li>
-<li><strong>EFA (Elastic Fabric Adapter) 支持</strong> ：正如你截图中右侧 Description 提到的 “Allows EFA traffic…”，EFA 高性能网络通常要求节点间拥有全开放的内网访问权限，以便进行极低延迟的数据交换。</li>
-</ul>
-<p>这种配置比写死 IP 地址要高级得多，因为无论你的 EKS 集群如何扩容（增加 Node），新节点只要关联了这个 SG ID，就自动获得了进入 “信任圈” 的通行证。</p>
-<p>EKS API Server Endpoint （ <code>https://3F54290E45FB092995.sk1.ap-east-1.eks.amazonaws.com</code> ）实际上是 AWS 在你的 VPC 内部创建的 条件网络接口 (Cross-account ENI)。</p>
-]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Aws</category>
-      </categories>
-      <tags>
-        <tag>Aws</tag>
-      </tags>
   </entry>
   <entry>
     <title>八字十神</title>
@@ -9808,6 +9808,121 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>containerd 使用方法</title>
+    <url>/202212011355/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>containerd.io-1.4.13-3</li>
+</ul>
+<h1 id="containerd-相关配置"><a href="#containerd-相关配置" class="headerlink" title="containerd 相关配置"></a>containerd 相关配置</h1><h2 id="默认配置文件"><a href="#默认配置文件" class="headerlink" title="默认配置文件"></a>默认配置文件</h2><p><code>containerd</code> 服务默认配置文件为 <code>/etc/containerd/config.toml</code></p>
+<figure class="highlight ini"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">#root = &quot;/var/lib/containerd&quot;</span></span><br><span class="line"><span class="comment">#state = &quot;/run/containerd&quot;</span></span><br><span class="line"><span class="comment">#subreaper = true</span></span><br><span class="line"><span class="comment">#oom_score = 0</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>Containerd 有两个不同的存储路径，一个用来保存持久化数据，一个用来保存运行时状态。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Containerd 的前世今生和保姆级入门教程](https://blog.51cto.com/u_15127639/3256557)
+">[1]</span></a></sup></p>
+<figure class="highlight ini"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">#root = &quot;/var/lib/containerd&quot;</span></span><br><span class="line"><span class="comment">#state = &quot;/run/containerd&quot;</span></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>root</code> - 用来保存持久化数据，包括 Snapshots, Content, Metadata 以及各种插件的数据。每一个插件都有自己单独的目录，Containerd 本身不存储任何数据，它的所有功能都来自于已加载的插件。</li>
+<li><code>state</code> - 用来保存临时数据，包括 <code>sockets</code> 、 <code>pid</code> 、 <code>挂载点</code> 、 <code>运行时状态</code> 以及不需要持久化保存的插件数据。</li>
+</ul>
+<figure class="highlight ini"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">#oom_score = 0</span></span><br></pre></td></tr></table></figure>
+
+<p>Containerd 是容器的守护者，一旦发生内存不足的情况，理想的情况应该是先杀死容器，而不是杀死 Containerd。所以需要调整 Containerd 的 OOM 权重，减少其被 OOM Kill 的几率。 <code>oom_score</code> 其取值范围为 <code>-1000</code> 到 <code>1000</code> ，如果将该值设置为 <code>-1000</code> ，则进程永远不会被杀死，建议 Containerd 将该值设置为 <code>-999</code> 到 <code>0</code> 之间。如果作为 Kubernetes 的 Worker 节点，可以考虑设置为 <code>-999</code> 。</p>
+<h2 id="containerd-服务配置文件"><a href="#containerd-服务配置文件" class="headerlink" title="containerd 服务配置文件"></a>containerd 服务配置文件</h2><p>默认的 <code>containerd</code> 服务的配置为 <code>/usr/lib/systemd/system/containerd.service</code></p>
+<figure class="highlight ini"><figcaption><span>/usr/lib/systemd/system/containerd.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=containerd container runtime</span><br><span class="line"><span class="attr">Documentation</span>=https://containerd.io</span><br><span class="line"><span class="attr">After</span>=network.target local-fs.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStartPre</span>=-/sbin/modprobe overlay</span><br><span class="line"><span class="attr">ExecStart</span>=/usr/bin/containerd</span><br><span class="line"></span><br><span class="line"><span class="attr">Type</span>=notify</span><br><span class="line"><span class="attr">Delegate</span>=<span class="literal">yes</span></span><br><span class="line"><span class="attr">KillMode</span>=process</span><br><span class="line"><span class="attr">Restart</span>=always</span><br><span class="line"><span class="attr">RestartSec</span>=<span class="number">5</span></span><br><span class="line"></span><br><span class="line"><span class="attr">LimitNPROC</span>=infinity</span><br><span class="line"><span class="attr">LimitCORE</span>=infinity</span><br><span class="line"><span class="attr">LimitNOFILE</span>=<span class="number">1048576</span></span><br><span class="line"></span><br><span class="line"><span class="attr">TasksMax</span>=infinity</span><br><span class="line"><span class="attr">OOMScoreAdjust</span>=-<span class="number">999</span></span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><p><strong><code>Delegate</code></strong> - 这个选项允许 Containerd 以及运行时自己管理自己创建的容器的 cgroups。如果不设置这个选项， <code>systemd</code> 就会将进程移到自己的 cgroups 中，从而导致 Containerd 无法正确获取容器的资源使用情况。</p>
+</li>
+<li><p><strong><code>KillMode</code></strong> - 这个选项用来处理 Containerd 进程被杀死的方式。默认情况下， <code>systemd</code> 会在进程的 cgroup 中查找并杀死 Containerd 的所有子进程，这肯定不是我们想要的。 <code>KillMode</code> 字段可以设置的值如下:</p>
+<ul>
+<li><strong><code>control-group</code></strong> -（默认值）当前控制组里面的所有子进程，都会被杀掉</li>
+<li><strong><code>process</code></strong> - 只杀主进程。</li>
+<li><strong><code>mixed</code></strong> - 主进程将收到 <code>SIGTERM</code> 信号，子进程收到 <code>SIGKILL</code> 信号</li>
+<li><strong><code>none</code></strong> - 没有进程会被杀掉，只是执行服务的 stop 命令。</li>
+</ul>
+<p>  需要将 <code>KillMode</code> 的值设置为 <code>process</code> ，这样可以确保升级或重启 Containerd 时不杀死现有的容器。</p>
+</li>
+</ul>
+<h2 id="Containerd-常用配置"><a href="#Containerd-常用配置" class="headerlink" title="Containerd 常用配置"></a>Containerd 常用配置</h2><p>Containerd 默认配置文件为 <code>/etc/containerd/config.toml</code> ，未在配置文件中配置的则使用默认配置，为了方便修改，可以使用以下命令将默认配置写入配置文件中</p>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line">containerd config default | sudo tee /etc/containerd/config.toml</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>在作为 Kubernetes 的 CRI 时，需要修改以下配置：</p>
+<ul>
+<li><p><strong>启用 CRI 功能</strong> 。Containerd 默认禁用了 CRI 功能（ <code>disabled_plugins = [&#39;cri&#39;]</code> ），要启用 <code>cri</code> ，将其注释或删除</p>
+</li>
+<li><p><strong>配置 <code>cgroup v2</code> ，</strong> Kubernetes 的很多功能需要 <code>cgroup v2</code> 支持，Kubernetes 节点通常使用 <code>cgroup v2</code> ，要配置 <code>containerd</code> 使用 <code>cgroup v2</code> ，修改配置文件的 <code>plugins.&quot;io.containerd.grpc.v1.cri&quot;.containerd.runtimes.runc.options</code> 部分，将 <code>SystemdCgroup</code> 配置为 <code>true</code> 后重启 <code>containerd</code> 服务</p>
+<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line">[plugins.&quot;io.containerd.grpc.v1.cri&quot;.containerd.runtimes.runc.options]</span><br><span class="line">  BinaryName = &quot;&quot;</span><br><span class="line">  CriuImagePath = &quot;&quot;</span><br><span class="line">  CriuPath = &quot;&quot;</span><br><span class="line">  CriuWorkPath = &quot;&quot;</span><br><span class="line">  IoGid = 0</span><br><span class="line">  IoUid = 0</span><br><span class="line">  NoNewKeyring = false</span><br><span class="line">  NoPivotRoot = false</span><br><span class="line">  Root = &quot;&quot;</span><br><span class="line">  ShimCgroup = &quot;&quot;</span><br><span class="line">  SystemdCgroup = true</span><br><span class="line">  </span><br></pre></td></tr></table></figure></li>
+</ul>
+<h1 id="客户端工具-ctr-使用"><a href="#客户端工具-ctr-使用" class="headerlink" title="客户端工具 ctr 使用"></a>客户端工具 ctr 使用</h1><h2 id="ctr-管理镜像"><a href="#ctr-管理镜像" class="headerlink" title="ctr 管理镜像"></a>ctr 管理镜像</h2><h3 id="镜像下载"><a href="#镜像下载" class="headerlink" title="镜像下载"></a>镜像下载</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image pull docker.io/library/nginx:alpine</span><br></pre></td></tr></table></figure>
+
+<h3 id="列出本地镜像"><a href="#列出本地镜像" class="headerlink" title="列出本地镜像"></a>列出本地镜像</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image <span class="built_in">ls</span></span></span><br><span class="line">REF                            TYPE                                                      DIGEST                                                                  SIZE    PLATFORMS                                                                                LABELS </span><br><span class="line">docker.io/library/nginx:alpine application/vnd.docker.distribution.manifest.list.v2+json sha256:455c39afebd4d98ef26dd70284aa86e6810b0485af5f4f222b19b89758cabf1e 9.8 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/s390x -</span><br></pre></td></tr></table></figure>
+
+<h3 id="将镜像挂载到本地目录"><a href="#将镜像挂载到本地目录" class="headerlink" title="将镜像挂载到本地目录"></a>将镜像挂载到本地目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image mount docker.io/library/nginx:alpine /mnt</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /mnt</span></span><br><span class="line">bin  docker-entrypoint.d   etc   lib    mnt  proc  run   srv  tmp  var</span><br><span class="line">dev  docker-entrypoint.sh  home  media  opt  root  sbin  sys  usr</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>卸载已挂载的镜像</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image unmount /mnt</span><br></pre></td></tr></table></figure>
+
+<h2 id="ctr-管理-容器"><a href="#ctr-管理-容器" class="headerlink" title="ctr 管理 容器"></a>ctr 管理 容器</h2><h3 id="创建容器"><a href="#创建容器" class="headerlink" title="创建容器"></a>创建容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container create docker.io/library/nginx:alpine nginx</span><br></pre></td></tr></table></figure>
+
+<p>容器创建后，并没有开始运行，只是分配了容器运行所需的资源及配置的数据结构，这意味着 <code>namespaces</code> 、 <code>rootfs</code> 和容器的配置都已经初始化成功了，只是用户进程(这里是 <code>nginx</code> )还没有启动，容器（进程）状态的变化由 <code>Task</code> 对象实现，通过命令 <code>ctr task</code> 来管理。</p>
+<p>启动 <code>ctr container create</code> 创建的容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx</span><br></pre></td></tr></table></figure>
+
+<p>以上命令启动之前创建的容器 <code>nginx</code> ，未指定其他参数时，容器中的进程在系统前台运行，如需后台运行，可以使用选项 <code>-d</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx -d</span><br></pre></td></tr></table></figure>
+
+<p>也可以直接使用 <code>run</code> 命令，创建并启动容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr run --rm -d docker.io/library/nginx:alpine nginx1</span><br></pre></td></tr></table></figure>
+
+<h3 id="列出容器"><a href="#列出容器" class="headerlink" title="列出容器"></a>列出容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container ls</span><br></pre></td></tr></table></figure>
+
+<p>查看容器中进程的状态</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task <span class="built_in">ls</span></span></span><br><span class="line">TASK      PID     STATUS    </span><br><span class="line">nginx1    5495    RUNNING</span><br></pre></td></tr></table></figure>
+
+<p>查看容器中运行的所有的进程</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task ps nginx1</span></span><br><span class="line">PID     INFO</span><br><span class="line">5495    -</span><br><span class="line">5531    -</span><br><span class="line">5532    -</span><br><span class="line">5533    -</span><br><span class="line">5534    -</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>这里的 PID 是宿主机看到的 PID，不是容器中看到的 PID。</strong></p>
+<h3 id="查看容器详细信息"><a href="#查看容器详细信息" class="headerlink" title="查看容器详细信息"></a>查看容器详细信息</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container info nginx</span><br></pre></td></tr></table></figure>
+
+<h3 id="删除容器"><a href="#删除容器" class="headerlink" title="删除容器"></a>删除容器</h3><p>停止&#x2F;删除容器中的进程</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task delete nginx -f</span><br><span class="line"></span><br><span class="line">ctr task pause nginx</span><br></pre></td></tr></table></figure>
+
+<p>以上命令 <strong>删除&#x2F;停止容器中的进程，但是并不删除容器</strong> ，执行以上命令后再执行以下命令，可删除容器</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container delete nginx</span><br></pre></td></tr></table></figure>
+
+<p><strong>ctr 没有 stop 容器的功能，只能暂停或者杀死容器。</strong></p>
+<h3 id="进入容器"><a href="#进入容器" class="headerlink" title="进入容器"></a>进入容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task exec -t --exec-id 1 nginx1 sh</span><br></pre></td></tr></table></figure>
+
+<p>执行 <code>ctr task exec</code> 进入容器，必须制定 <code>--exec-id</code> ，值可以随便指定。</p>
+<h3 id="namespace-管理"><a href="#namespace-管理" class="headerlink" title="namespace 管理"></a>namespace 管理</h3><p>Containerd 相比于 Docker ，多了 Namespace 的概念，使用以下命令，查看所有的 Namespace</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr ns <span class="built_in">ls</span></span></span><br><span class="line">NAME    LABELS </span><br><span class="line">default        </span><br><span class="line">moby     </span><br></pre></td></tr></table></figure>
+
+<p><code>docker</code> 默认使用 <code>moby</code> 的 Namespace，要使用 <code>ctr</code> 命令查看 <code>docker</code> 创建的容器，需要使用选项 <code>-n moby</code> 指定命名空间，否则 <code>ctr</code> 默认使用 <code>default</code> 命名空间，无法看到 <code>moby</code> 命名空间中的资源</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr -n moby container ls</span><br><span class="line">CONTAINER                                                           IMAGE    RUNTIME                           </span><br><span class="line">17b16c3699cdb88a1ff80d8a7c84724eff393c42186775b58418c90bd178600f    -        io.containerd.runtime.v1.linux    </span><br><span class="line">27fc19226baa91251d63a375a7b1309122334cfb5ceb39aeb67ab1701b708464    -        io.containerd.runtime.v1.linux</span><br></pre></td></tr></table></figure>
+
+<p><em><strong>Kubernetes 默认使用 <code>k8s.io</code> 命名空间</strong></em> 。</p>
+<p><code>ctr</code> 没有配置或者环境变量可以来配置默认的 Namespace，在 Kubernetes 场景中，可以使用 <code>alias</code> 命令配置 <code>ctr</code> ，使其自动指向 <code>k8s.io</code> 的 Namespace</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">alias ctr=&#x27;ctr -n k8s.io&#x27;</span><br></pre></td></tr></table></figure>
+
+<h1 id="nerdctl"><a href="#nerdctl" class="headerlink" title="nerdctl"></a>nerdctl</h1><p><code>nerdctl</code> 是为 Containerd 开发的完全兼容 Docker 命令行的工具，它可以使用和 <code>docker</code> 命令一样的语法来操作 <code>containerd</code> 中的容器。</p>
+<p><a href="https://github.com/containerd/nerdctl?tab=readme-ov-file"><code>nerdctl</code> 官方说明文档</a></p>
+<p>如果要使用 <code>nerdctl</code> 调试 Kubernetes 环境中的容器，需要指定 Namespace，示例如下：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nerdctl --namespace k8s.io ps -a</span></span><br></pre></td></tr></table></figure>
+
+<p>如果是在 Kubernetes 环境中使用，为方便起见，可以添加环境变量：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">alias</span> nerdctl=<span class="string">&#x27;nerdctl --namespace k8s.io&#x27;</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nerdctl ps</span></span><br><span class="line">CONTAINER ID    IMAGE                                              COMMAND                   CREATED       STATUS    PORTS    NAMES</span><br><span class="line">4de4c59a8913    registry.k8s.io/kube-controller-manager:v1.32.0    &quot;kube-controller-man…&quot;    2 days ago    Up                 k8s://kube-system/kube-controller-manager-k8s-master/kube-controller-manager</span><br><span class="line">6a9f17dffdb5    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/kube-controller-manager-k8s-master</span><br><span class="line">3ae8ed830b63    registry.k8s.io/kube-scheduler:v1.32.0             &quot;kube-scheduler --au…&quot;    2 days ago    Up                 k8s://kube-system/kube-scheduler-k8s-master/kube-scheduler</span><br><span class="line">0cb15e8f5ac7    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/kube-scheduler-k8s-master</span><br><span class="line">60ea2cfc01c8    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/kube-apiserver-k8s-master</span><br><span class="line">eaf781314f4a    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/etcd-k8s-master</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://blog.51cto.com/u_15127639/3256557">Containerd 的前世今生和保姆级入门教程</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Docker</category>
+      </categories>
+      <tags>
+        <tag>containerd</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Django admin 配置</title>
     <url>/202209021312/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Django 自带的 <code>Admin Site</code> 管理页面可以方便用户快速构建一个简单的后台管理系统，少量代码即可快速实现对数据库中的数据进行展示、修改、保存的可视化页面和功能。当需要对后台展示的数据进行配置时，只需要在 <code>app</code> 的代码文件 <code>admin.py</code> 中进行相应配置即可。</p>
@@ -9929,121 +10044,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Django</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>containerd 使用方法</title>
-    <url>/202212011355/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>containerd.io-1.4.13-3</li>
-</ul>
-<h1 id="containerd-相关配置"><a href="#containerd-相关配置" class="headerlink" title="containerd 相关配置"></a>containerd 相关配置</h1><h2 id="默认配置文件"><a href="#默认配置文件" class="headerlink" title="默认配置文件"></a>默认配置文件</h2><p><code>containerd</code> 服务默认配置文件为 <code>/etc/containerd/config.toml</code></p>
-<figure class="highlight ini"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">#root = &quot;/var/lib/containerd&quot;</span></span><br><span class="line"><span class="comment">#state = &quot;/run/containerd&quot;</span></span><br><span class="line"><span class="comment">#subreaper = true</span></span><br><span class="line"><span class="comment">#oom_score = 0</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>Containerd 有两个不同的存储路径，一个用来保存持久化数据，一个用来保存运行时状态。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Containerd 的前世今生和保姆级入门教程](https://blog.51cto.com/u_15127639/3256557)
-">[1]</span></a></sup></p>
-<figure class="highlight ini"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">#root = &quot;/var/lib/containerd&quot;</span></span><br><span class="line"><span class="comment">#state = &quot;/run/containerd&quot;</span></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><code>root</code> - 用来保存持久化数据，包括 Snapshots, Content, Metadata 以及各种插件的数据。每一个插件都有自己单独的目录，Containerd 本身不存储任何数据，它的所有功能都来自于已加载的插件。</li>
-<li><code>state</code> - 用来保存临时数据，包括 <code>sockets</code> 、 <code>pid</code> 、 <code>挂载点</code> 、 <code>运行时状态</code> 以及不需要持久化保存的插件数据。</li>
-</ul>
-<figure class="highlight ini"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">#oom_score = 0</span></span><br></pre></td></tr></table></figure>
-
-<p>Containerd 是容器的守护者，一旦发生内存不足的情况，理想的情况应该是先杀死容器，而不是杀死 Containerd。所以需要调整 Containerd 的 OOM 权重，减少其被 OOM Kill 的几率。 <code>oom_score</code> 其取值范围为 <code>-1000</code> 到 <code>1000</code> ，如果将该值设置为 <code>-1000</code> ，则进程永远不会被杀死，建议 Containerd 将该值设置为 <code>-999</code> 到 <code>0</code> 之间。如果作为 Kubernetes 的 Worker 节点，可以考虑设置为 <code>-999</code> 。</p>
-<h2 id="containerd-服务配置文件"><a href="#containerd-服务配置文件" class="headerlink" title="containerd 服务配置文件"></a>containerd 服务配置文件</h2><p>默认的 <code>containerd</code> 服务的配置为 <code>/usr/lib/systemd/system/containerd.service</code></p>
-<figure class="highlight ini"><figcaption><span>/usr/lib/systemd/system/containerd.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=containerd container runtime</span><br><span class="line"><span class="attr">Documentation</span>=https://containerd.io</span><br><span class="line"><span class="attr">After</span>=network.target local-fs.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStartPre</span>=-/sbin/modprobe overlay</span><br><span class="line"><span class="attr">ExecStart</span>=/usr/bin/containerd</span><br><span class="line"></span><br><span class="line"><span class="attr">Type</span>=notify</span><br><span class="line"><span class="attr">Delegate</span>=<span class="literal">yes</span></span><br><span class="line"><span class="attr">KillMode</span>=process</span><br><span class="line"><span class="attr">Restart</span>=always</span><br><span class="line"><span class="attr">RestartSec</span>=<span class="number">5</span></span><br><span class="line"></span><br><span class="line"><span class="attr">LimitNPROC</span>=infinity</span><br><span class="line"><span class="attr">LimitCORE</span>=infinity</span><br><span class="line"><span class="attr">LimitNOFILE</span>=<span class="number">1048576</span></span><br><span class="line"></span><br><span class="line"><span class="attr">TasksMax</span>=infinity</span><br><span class="line"><span class="attr">OOMScoreAdjust</span>=-<span class="number">999</span></span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><p><strong><code>Delegate</code></strong> - 这个选项允许 Containerd 以及运行时自己管理自己创建的容器的 cgroups。如果不设置这个选项， <code>systemd</code> 就会将进程移到自己的 cgroups 中，从而导致 Containerd 无法正确获取容器的资源使用情况。</p>
-</li>
-<li><p><strong><code>KillMode</code></strong> - 这个选项用来处理 Containerd 进程被杀死的方式。默认情况下， <code>systemd</code> 会在进程的 cgroup 中查找并杀死 Containerd 的所有子进程，这肯定不是我们想要的。 <code>KillMode</code> 字段可以设置的值如下:</p>
-<ul>
-<li><strong><code>control-group</code></strong> -（默认值）当前控制组里面的所有子进程，都会被杀掉</li>
-<li><strong><code>process</code></strong> - 只杀主进程。</li>
-<li><strong><code>mixed</code></strong> - 主进程将收到 <code>SIGTERM</code> 信号，子进程收到 <code>SIGKILL</code> 信号</li>
-<li><strong><code>none</code></strong> - 没有进程会被杀掉，只是执行服务的 stop 命令。</li>
-</ul>
-<p>  需要将 <code>KillMode</code> 的值设置为 <code>process</code> ，这样可以确保升级或重启 Containerd 时不杀死现有的容器。</p>
-</li>
-</ul>
-<h2 id="Containerd-常用配置"><a href="#Containerd-常用配置" class="headerlink" title="Containerd 常用配置"></a>Containerd 常用配置</h2><p>Containerd 默认配置文件为 <code>/etc/containerd/config.toml</code> ，未在配置文件中配置的则使用默认配置，为了方便修改，可以使用以下命令将默认配置写入配置文件中</p>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line">containerd config default | sudo tee /etc/containerd/config.toml</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>在作为 Kubernetes 的 CRI 时，需要修改以下配置：</p>
-<ul>
-<li><p><strong>启用 CRI 功能</strong> 。Containerd 默认禁用了 CRI 功能（ <code>disabled_plugins = [&#39;cri&#39;]</code> ），要启用 <code>cri</code> ，将其注释或删除</p>
-</li>
-<li><p><strong>配置 <code>cgroup v2</code> ，</strong> Kubernetes 的很多功能需要 <code>cgroup v2</code> 支持，Kubernetes 节点通常使用 <code>cgroup v2</code> ，要配置 <code>containerd</code> 使用 <code>cgroup v2</code> ，修改配置文件的 <code>plugins.&quot;io.containerd.grpc.v1.cri&quot;.containerd.runtimes.runc.options</code> 部分，将 <code>SystemdCgroup</code> 配置为 <code>true</code> 后重启 <code>containerd</code> 服务</p>
-<figure class="highlight shell"><figcaption><span>/etc/containerd/config.toml</span></figcaption><table><tr><td class="code"><pre><span class="line">[plugins.&quot;io.containerd.grpc.v1.cri&quot;.containerd.runtimes.runc.options]</span><br><span class="line">  BinaryName = &quot;&quot;</span><br><span class="line">  CriuImagePath = &quot;&quot;</span><br><span class="line">  CriuPath = &quot;&quot;</span><br><span class="line">  CriuWorkPath = &quot;&quot;</span><br><span class="line">  IoGid = 0</span><br><span class="line">  IoUid = 0</span><br><span class="line">  NoNewKeyring = false</span><br><span class="line">  NoPivotRoot = false</span><br><span class="line">  Root = &quot;&quot;</span><br><span class="line">  ShimCgroup = &quot;&quot;</span><br><span class="line">  SystemdCgroup = true</span><br><span class="line">  </span><br></pre></td></tr></table></figure></li>
-</ul>
-<h1 id="客户端工具-ctr-使用"><a href="#客户端工具-ctr-使用" class="headerlink" title="客户端工具 ctr 使用"></a>客户端工具 ctr 使用</h1><h2 id="ctr-管理镜像"><a href="#ctr-管理镜像" class="headerlink" title="ctr 管理镜像"></a>ctr 管理镜像</h2><h3 id="镜像下载"><a href="#镜像下载" class="headerlink" title="镜像下载"></a>镜像下载</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image pull docker.io/library/nginx:alpine</span><br></pre></td></tr></table></figure>
-
-<h3 id="列出本地镜像"><a href="#列出本地镜像" class="headerlink" title="列出本地镜像"></a>列出本地镜像</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image <span class="built_in">ls</span></span></span><br><span class="line">REF                            TYPE                                                      DIGEST                                                                  SIZE    PLATFORMS                                                                                LABELS </span><br><span class="line">docker.io/library/nginx:alpine application/vnd.docker.distribution.manifest.list.v2+json sha256:455c39afebd4d98ef26dd70284aa86e6810b0485af5f4f222b19b89758cabf1e 9.8 MiB linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/s390x -</span><br></pre></td></tr></table></figure>
-
-<h3 id="将镜像挂载到本地目录"><a href="#将镜像挂载到本地目录" class="headerlink" title="将镜像挂载到本地目录"></a>将镜像挂载到本地目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr image mount docker.io/library/nginx:alpine /mnt</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">ls</span> /mnt</span></span><br><span class="line">bin  docker-entrypoint.d   etc   lib    mnt  proc  run   srv  tmp  var</span><br><span class="line">dev  docker-entrypoint.sh  home  media  opt  root  sbin  sys  usr</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>卸载已挂载的镜像</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr image unmount /mnt</span><br></pre></td></tr></table></figure>
-
-<h2 id="ctr-管理-容器"><a href="#ctr-管理-容器" class="headerlink" title="ctr 管理 容器"></a>ctr 管理 容器</h2><h3 id="创建容器"><a href="#创建容器" class="headerlink" title="创建容器"></a>创建容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container create docker.io/library/nginx:alpine nginx</span><br></pre></td></tr></table></figure>
-
-<p>容器创建后，并没有开始运行，只是分配了容器运行所需的资源及配置的数据结构，这意味着 <code>namespaces</code> 、 <code>rootfs</code> 和容器的配置都已经初始化成功了，只是用户进程(这里是 <code>nginx</code> )还没有启动，容器（进程）状态的变化由 <code>Task</code> 对象实现，通过命令 <code>ctr task</code> 来管理。</p>
-<p>启动 <code>ctr container create</code> 创建的容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx</span><br></pre></td></tr></table></figure>
-
-<p>以上命令启动之前创建的容器 <code>nginx</code> ，未指定其他参数时，容器中的进程在系统前台运行，如需后台运行，可以使用选项 <code>-d</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task start nginx -d</span><br></pre></td></tr></table></figure>
-
-<p>也可以直接使用 <code>run</code> 命令，创建并启动容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr run --rm -d docker.io/library/nginx:alpine nginx1</span><br></pre></td></tr></table></figure>
-
-<h3 id="列出容器"><a href="#列出容器" class="headerlink" title="列出容器"></a>列出容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container ls</span><br></pre></td></tr></table></figure>
-
-<p>查看容器中进程的状态</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task <span class="built_in">ls</span></span></span><br><span class="line">TASK      PID     STATUS    </span><br><span class="line">nginx1    5495    RUNNING</span><br></pre></td></tr></table></figure>
-
-<p>查看容器中运行的所有的进程</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr task ps nginx1</span></span><br><span class="line">PID     INFO</span><br><span class="line">5495    -</span><br><span class="line">5531    -</span><br><span class="line">5532    -</span><br><span class="line">5533    -</span><br><span class="line">5534    -</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>这里的 PID 是宿主机看到的 PID，不是容器中看到的 PID。</strong></p>
-<h3 id="查看容器详细信息"><a href="#查看容器详细信息" class="headerlink" title="查看容器详细信息"></a>查看容器详细信息</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container info nginx</span><br></pre></td></tr></table></figure>
-
-<h3 id="删除容器"><a href="#删除容器" class="headerlink" title="删除容器"></a>删除容器</h3><p>停止&#x2F;删除容器中的进程</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task delete nginx -f</span><br><span class="line"></span><br><span class="line">ctr task pause nginx</span><br></pre></td></tr></table></figure>
-
-<p>以上命令 <strong>删除&#x2F;停止容器中的进程，但是并不删除容器</strong> ，执行以上命令后再执行以下命令，可删除容器</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr container delete nginx</span><br></pre></td></tr></table></figure>
-
-<p><strong>ctr 没有 stop 容器的功能，只能暂停或者杀死容器。</strong></p>
-<h3 id="进入容器"><a href="#进入容器" class="headerlink" title="进入容器"></a>进入容器</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr task exec -t --exec-id 1 nginx1 sh</span><br></pre></td></tr></table></figure>
-
-<p>执行 <code>ctr task exec</code> 进入容器，必须制定 <code>--exec-id</code> ，值可以随便指定。</p>
-<h3 id="namespace-管理"><a href="#namespace-管理" class="headerlink" title="namespace 管理"></a>namespace 管理</h3><p>Containerd 相比于 Docker ，多了 Namespace 的概念，使用以下命令，查看所有的 Namespace</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">ctr ns <span class="built_in">ls</span></span></span><br><span class="line">NAME    LABELS </span><br><span class="line">default        </span><br><span class="line">moby     </span><br></pre></td></tr></table></figure>
-
-<p><code>docker</code> 默认使用 <code>moby</code> 的 Namespace，要使用 <code>ctr</code> 命令查看 <code>docker</code> 创建的容器，需要使用选项 <code>-n moby</code> 指定命名空间，否则 <code>ctr</code> 默认使用 <code>default</code> 命名空间，无法看到 <code>moby</code> 命名空间中的资源</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ctr -n moby container ls</span><br><span class="line">CONTAINER                                                           IMAGE    RUNTIME                           </span><br><span class="line">17b16c3699cdb88a1ff80d8a7c84724eff393c42186775b58418c90bd178600f    -        io.containerd.runtime.v1.linux    </span><br><span class="line">27fc19226baa91251d63a375a7b1309122334cfb5ceb39aeb67ab1701b708464    -        io.containerd.runtime.v1.linux</span><br></pre></td></tr></table></figure>
-
-<p><em><strong>Kubernetes 默认使用 <code>k8s.io</code> 命名空间</strong></em> 。</p>
-<p><code>ctr</code> 没有配置或者环境变量可以来配置默认的 Namespace，在 Kubernetes 场景中，可以使用 <code>alias</code> 命令配置 <code>ctr</code> ，使其自动指向 <code>k8s.io</code> 的 Namespace</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">alias ctr=&#x27;ctr -n k8s.io&#x27;</span><br></pre></td></tr></table></figure>
-
-<h1 id="nerdctl"><a href="#nerdctl" class="headerlink" title="nerdctl"></a>nerdctl</h1><p><code>nerdctl</code> 是为 Containerd 开发的完全兼容 Docker 命令行的工具，它可以使用和 <code>docker</code> 命令一样的语法来操作 <code>containerd</code> 中的容器。</p>
-<p><a href="https://github.com/containerd/nerdctl?tab=readme-ov-file"><code>nerdctl</code> 官方说明文档</a></p>
-<p>如果要使用 <code>nerdctl</code> 调试 Kubernetes 环境中的容器，需要指定 Namespace，示例如下：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nerdctl --namespace k8s.io ps -a</span></span><br></pre></td></tr></table></figure>
-
-<p>如果是在 Kubernetes 环境中使用，为方便起见，可以添加环境变量：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">alias</span> nerdctl=<span class="string">&#x27;nerdctl --namespace k8s.io&#x27;</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">nerdctl ps</span></span><br><span class="line">CONTAINER ID    IMAGE                                              COMMAND                   CREATED       STATUS    PORTS    NAMES</span><br><span class="line">4de4c59a8913    registry.k8s.io/kube-controller-manager:v1.32.0    &quot;kube-controller-man…&quot;    2 days ago    Up                 k8s://kube-system/kube-controller-manager-k8s-master/kube-controller-manager</span><br><span class="line">6a9f17dffdb5    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/kube-controller-manager-k8s-master</span><br><span class="line">3ae8ed830b63    registry.k8s.io/kube-scheduler:v1.32.0             &quot;kube-scheduler --au…&quot;    2 days ago    Up                 k8s://kube-system/kube-scheduler-k8s-master/kube-scheduler</span><br><span class="line">0cb15e8f5ac7    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/kube-scheduler-k8s-master</span><br><span class="line">60ea2cfc01c8    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/kube-apiserver-k8s-master</span><br><span class="line">eaf781314f4a    registry.k8s.io/pause:3.6                          &quot;/pause&quot;                  2 days ago    Up                 k8s://kube-system/etcd-k8s-master</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://blog.51cto.com/u_15127639/3256557">Containerd 的前世今生和保姆级入门教程</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Docker</category>
-      </categories>
-      <tags>
-        <tag>containerd</tag>
       </tags>
   </entry>
   <entry>
@@ -10782,6 +10782,86 @@ width: 20%;
   <entry>
     <title>Django 模板语言</title>
     <url>/202303241517/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11</li>
+<li>Django 4.1</li>
+</ul>
+<h1 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h1><p>在 Django 4.1 中，使用静态文件的方法与之前的版本相同。以下是使用静态文件的步骤：</p>
+<ol>
+<li><p>在 <code>settings.py</code> 中设置静态文件目录：</p>
+ <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">STATIC_URL = <span class="string">&#x27;/static/&#x27;</span></span><br><span class="line">STATICFILES_DIRS = [</span><br><span class="line">    BASE_DIR / <span class="string">&quot;static&quot;</span>,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>STATIC_URL</code> 是静态文件 URL 的前缀。</li>
+<li><code>STATICFILES_DIRS</code> 是一个列表，其中包含要在其中查找静态文件的目录。</li>
+</ul>
+</li>
+<li><p>在 HTML 文件中使用静态文件</p>
+ <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Static File Example<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> <span class="attr">type</span>=<span class="string">&quot;text/css&quot;</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;css/style.css&#x27; %&#125;&quot;</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">img</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;images/logo.png&#x27; %&#125;&quot;</span> <span class="attr">alt</span>=<span class="string">&quot;My logo&quot;</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;js/script.js&#x27; %&#125;&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<p> 在上面的示例中，我们使用了 Django 模板语言的 <code>&#123;% static %&#125;</code> 标记来引用静态文件。<code>&#123;% load static %&#125;</code> 指令必须在使用 <code>&#123;% static %&#125;</code> 标记之前加载，以确保 Django 能够正确解析它们。</p>
+</li>
+<li><p>运行 <code>collectstatic</code> 命令：<br>  当您准备部署您的 Django 应用程序时，您需要将静态文件收集到一个单独的目录中，以便可以轻松地在生产服务器上提供它们。您可以使用 Django 的 <code>collectstatic</code> 命令来完成此操作。在命令行中运行以下命令：</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py collectstatic</span><br></pre></td></tr></table></figure>
+
+<p> Django 将在 <code>STATIC_ROOT</code> 目录中创建一个新的静态文件目录，并将您的静态文件从 <code>STATICFILES_DIRS</code> 中指定的目录复制到该目录中。您可以在 <code>settings.py</code> 文件中设置 <code>STATIC_ROOT</code> 目录的路径</p>
+</li>
+</ol>
+<h1 id="DTL-语法"><a href="#DTL-语法" class="headerlink" title="DTL 语法"></a>DTL 语法</h1><h2 id="load-static"><a href="#load-static" class="headerlink" title="load static"></a>load static</h2><p><a href="#%E5%9C%A8-HTML-%E6%96%87%E4%BB%B6%E4%B8%AD%E4%BD%BF%E7%94%A8%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6">参考说明</a></p>
+<h2 id="block-super"><a href="#block-super" class="headerlink" title="block.super"></a>block.super</h2><p>用来从父 block 中继承选项</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrahead %&#125;</span><br><span class="line">&#123;&#123; block.super &#125;&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/bootstrap.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/base.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="include"><a href="#include" class="headerlink" title="include"></a>include</h2><p>假设有两个 HTML 文件：<code>header.html</code> 和 <code>content.html</code>。<br><code>header.html</code> 包含页面的头部内容。</p>
+<figure class="highlight html"><figcaption><span>header.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- header.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">header</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h1</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">h1</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">nav</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 导航栏内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">nav</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">header</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p><code>content.html</code> 包含页面的主要内容。</p>
+<figure class="highlight html"><figcaption><span>content.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- content.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">section</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h2</span>&gt;</span>Welcome to our website!<span class="tag">&lt;/<span class="name">h2</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>This is the main content of the page.<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">section</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p>现在，可以在另一个 HTML 文件中使用 <code>&#123;% include %&#125;</code> 标签来包含这些内容。</p>
+<figure class="highlight html"><figcaption><span>main_template.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- main_template.html --&gt;</span></span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    &#123;% include &#x27;header.html&#x27; %&#125;</span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span> <span class="attr">class</span>=<span class="string">&quot;content&quot;</span>&gt;</span></span><br><span class="line">        &#123;% include &#x27;content.html&#x27; %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line">    </span><br><span class="line">    <span class="tag">&lt;<span class="name">footer</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 页脚内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">footer</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p>在这个示例中，<code>&#123;% include 'header.html' %&#125;</code> 和 <code>&#123;% include 'content.html' %&#125;</code> 标签会将相应的模板文件的内容包含在 <code>main_template.html</code> 中。这样，就可以在一个模板中包含另一个模板的内容了。</p>
+<h2 id="url-反向解析"><a href="#url-反向解析" class="headerlink" title="url 反向解析"></a>url 反向解析</h2><p>在模板中不推荐使用 url 硬编码，建议使用 url 反向解析功能，在 <code>urls.py</code> 中定义 url 时，给 url 命名，在模板中 可以使用反向解析使用 url，避免使用 url 硬编码。<strong>需要在 <code>urls.py</code> 中配置 <code>app_name = &#39;polls&#39;</code>，否则会因为 namespace 不清楚而报错：<code>&#39;polls&#39; is not a registered namespace</code></strong></p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> django.urls <span class="keyword">import</span> path</span><br><span class="line"><span class="keyword">from</span> . <span class="keyword">import</span> views</span><br><span class="line"></span><br><span class="line">app_name = <span class="string">&#x27;polls&#x27;</span></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(<span class="string">&#x27;&#x27;</span>, views.IndexView.as_view(), name=<span class="string">&#x27;index&#x27;</span>),</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+<p>以上事例中，<code>name=&#39;index&#39;</code> 为 url 命名，在模板中通过以下方式使用 url 名称 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[反向命名空间 URLs](https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls)">[1]</span></a></sup></p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;polls:index&#x27; %&#125;&quot;</span>&gt;</span>首页<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+<h2 id="for-循环"><a href="#for-循环" class="headerlink" title="for 循环"></a>for 循环</h2><h3 id="根据-model-中的值实现下拉选择菜单"><a href="#根据-model-中的值实现下拉选择菜单" class="headerlink" title="根据 model 中的值实现下拉选择菜单"></a>根据 model 中的值实现下拉选择菜单</h3><p>假如需要实现下拉表单中的可选值来自于某个 <code>model</code>，可以参考以下实现</p>
+<figure class="highlight shell"><figcaption><span>models.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.db import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your models here.</span></span><br><span class="line">class Account(models.Model):</span><br><span class="line">    name = models.CharField(max_length=16, unique=True)</span><br></pre></td></tr></table></figure>
+
+<p>视图函数代码如下：</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line">from cloudclient import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br></pre></td></tr></table></figure>
+<p>HTML 模板主要代码如下：</p>
+<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">    &#123;% csrf_token %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;category&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line">       &#123;% for account in accounts %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endfor %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p><strong>其中使用 <code>for</code> 循环将视图函数传过来的参数列表（<code>accounts</code>）中的对象添加到下拉菜单中作为下拉选项。</strong><br><img src="https://i.0920811.xyz/img_216.png"></p>
+<p>表单提交后，服务端口会收到 POST 的数据(<code>request.POST</code>)：<code>account=1</code>。参考以下代码处理接收到的表单数据</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    if request.method == &#x27;GET&#x27;:</span><br><span class="line">        accounts = models.Account.objects.all()</span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        # data = request.body</span><br><span class="line">        account_id = request.POST.get(&#x27;account&#x27;)</span><br><span class="line">        logging.info(f&quot;POST DATA: &#123;&#125;&quot;)</span><br></pre></td></tr></table></figure>
+
+<p>如果想在 POST 处理后返回给客户端的 HTML 表单中的默认选中的值任然是客户端 POST 提交时选中的值，可以参考以下代码</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def cf_add_domains(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        data = request.POST</span><br><span class="line">        account_id = data[&#x27;account&#x27;]</span><br><span class="line">        account = models.Account.objects.get(id=account_id)</span><br><span class="line"></span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts, &#x27;selected_account_id&#x27;: account_id&#125;)</span><br></pre></td></tr></table></figure>
+
+<p>HTML 模板中使用 <code>option</code> 的 <code>selected</code> 标签选择指定的值。<em><strong>要注意其中的类型转换 <code>account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot;，将变量值转换一致，否则条件判断会失败</code></strong></em> </p>
+<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">&#123;% csrf_token %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;account&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line"></span><br><span class="line">   &#123;% for account in accounts %&#125;</span><br><span class="line">       &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% else %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endif %&#125;</span><br><span class="line">   &#123;% endfor %&#125;</span><br><span class="line"><span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="if-条件判断"><a href="#if-条件判断" class="headerlink" title="if 条件判断"></a>if 条件判断</h2><p><code>if</code> 语法如下</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% if condition %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为真 --&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为假 --&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% if user.is_authenticated %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>欢迎回来，&#123;&#123; user.username &#125;&#125;！<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;logout&#x27; %&#125;&quot;</span>&gt;</span>退出登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>您还未登录。<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;login&#x27; %&#125;&quot;</span>&gt;</span>立即登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="类型转换"><a href="#类型转换" class="headerlink" title="类型转换"></a>类型转换</h2><p>如果在模板中需要对变量类型进行转换，参考以下语法</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% else %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% endif %&#125;</span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
+
+<p>更精简的写法</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    </span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> &#123;% <span class="attr">if</span> <span class="attr">account.id</span>|<span class="attr">stringformat:</span>&quot;<span class="attr">s</span>&quot; == <span class="string">selected_account_id|stringformat:</span>&quot;<span class="attr">s</span>&quot; %&#125;<span class="attr">selected</span>&#123;% <span class="attr">endif</span> %&#125;&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls">反向命名空间 URLs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+        <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Django 模板语言</title>
+    <url>/202303241517/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
 <li>Python 3.11</li>
 <li>Django 4.1</li>
@@ -10859,86 +10939,6 @@ width: 20%;
 <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    </span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> &#123;% <span class="attr">if</span> <span class="attr">account.id</span>|<span class="attr">stringformat:</span>&quot;<span class="attr">s</span>&quot; == <span class="string">selected_account_id|stringformat:</span>&quot;<span class="attr">s</span>&quot; %&#125;<span class="attr">selected</span>&#123;% <span class="attr">endif</span> %&#125;&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
 
 <h2 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h2><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls">反向命名空间 URLs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-        <tag>Django</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Django 模板语言</title>
-    <url>/202303241517/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.11</li>
-<li>Django 4.1</li>
-</ul>
-<h1 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h1><p>在 Django 4.1 中，使用静态文件的方法与之前的版本相同。以下是使用静态文件的步骤：</p>
-<ol>
-<li><p>在 <code>settings.py</code> 中设置静态文件目录：</p>
- <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">STATIC_URL = <span class="string">&#x27;/static/&#x27;</span></span><br><span class="line">STATICFILES_DIRS = [</span><br><span class="line">    BASE_DIR / <span class="string">&quot;static&quot;</span>,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><code>STATIC_URL</code> 是静态文件 URL 的前缀。</li>
-<li><code>STATICFILES_DIRS</code> 是一个列表，其中包含要在其中查找静态文件的目录。</li>
-</ul>
-</li>
-<li><p>在 HTML 文件中使用静态文件</p>
- <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Static File Example<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> <span class="attr">type</span>=<span class="string">&quot;text/css&quot;</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;css/style.css&#x27; %&#125;&quot;</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">img</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;images/logo.png&#x27; %&#125;&quot;</span> <span class="attr">alt</span>=<span class="string">&quot;My logo&quot;</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;js/script.js&#x27; %&#125;&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<p> 在上面的示例中，我们使用了 Django 模板语言的 <code>&#123;% static %&#125;</code> 标记来引用静态文件。<code>&#123;% load static %&#125;</code> 指令必须在使用 <code>&#123;% static %&#125;</code> 标记之前加载，以确保 Django 能够正确解析它们。</p>
-</li>
-<li><p>运行 <code>collectstatic</code> 命令：<br>  当您准备部署您的 Django 应用程序时，您需要将静态文件收集到一个单独的目录中，以便可以轻松地在生产服务器上提供它们。您可以使用 Django 的 <code>collectstatic</code> 命令来完成此操作。在命令行中运行以下命令：</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py collectstatic</span><br></pre></td></tr></table></figure>
-
-<p> Django 将在 <code>STATIC_ROOT</code> 目录中创建一个新的静态文件目录，并将您的静态文件从 <code>STATICFILES_DIRS</code> 中指定的目录复制到该目录中。您可以在 <code>settings.py</code> 文件中设置 <code>STATIC_ROOT</code> 目录的路径</p>
-</li>
-</ol>
-<h1 id="DTL-语法"><a href="#DTL-语法" class="headerlink" title="DTL 语法"></a>DTL 语法</h1><h2 id="load-static"><a href="#load-static" class="headerlink" title="load static"></a>load static</h2><p><a href="#%E5%9C%A8-HTML-%E6%96%87%E4%BB%B6%E4%B8%AD%E4%BD%BF%E7%94%A8%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6">参考说明</a></p>
-<h2 id="block-super"><a href="#block-super" class="headerlink" title="block.super"></a>block.super</h2><p>用来从父 block 中继承选项</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrahead %&#125;</span><br><span class="line">&#123;&#123; block.super &#125;&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/bootstrap.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/base.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="include"><a href="#include" class="headerlink" title="include"></a>include</h2><p>假设有两个 HTML 文件：<code>header.html</code> 和 <code>content.html</code>。<br><code>header.html</code> 包含页面的头部内容。</p>
-<figure class="highlight html"><figcaption><span>header.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- header.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">header</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h1</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">h1</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">nav</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 导航栏内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">nav</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">header</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p><code>content.html</code> 包含页面的主要内容。</p>
-<figure class="highlight html"><figcaption><span>content.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- content.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">section</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h2</span>&gt;</span>Welcome to our website!<span class="tag">&lt;/<span class="name">h2</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>This is the main content of the page.<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">section</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p>现在，可以在另一个 HTML 文件中使用 <code>&#123;% include %&#125;</code> 标签来包含这些内容。</p>
-<figure class="highlight html"><figcaption><span>main_template.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- main_template.html --&gt;</span></span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    &#123;% include &#x27;header.html&#x27; %&#125;</span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span> <span class="attr">class</span>=<span class="string">&quot;content&quot;</span>&gt;</span></span><br><span class="line">        &#123;% include &#x27;content.html&#x27; %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line">    </span><br><span class="line">    <span class="tag">&lt;<span class="name">footer</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 页脚内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">footer</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p>在这个示例中，<code>&#123;% include 'header.html' %&#125;</code> 和 <code>&#123;% include 'content.html' %&#125;</code> 标签会将相应的模板文件的内容包含在 <code>main_template.html</code> 中。这样，就可以在一个模板中包含另一个模板的内容了。</p>
-<h2 id="url-反向解析"><a href="#url-反向解析" class="headerlink" title="url 反向解析"></a>url 反向解析</h2><p>在模板中不推荐使用 url 硬编码，建议使用 url 反向解析功能，在 <code>urls.py</code> 中定义 url 时，给 url 命名，在模板中 可以使用反向解析使用 url，避免使用 url 硬编码。<strong>需要在 <code>urls.py</code> 中配置 <code>app_name = &#39;polls&#39;</code>，否则会因为 namespace 不清楚而报错：<code>&#39;polls&#39; is not a registered namespace</code></strong></p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> django.urls <span class="keyword">import</span> path</span><br><span class="line"><span class="keyword">from</span> . <span class="keyword">import</span> views</span><br><span class="line"></span><br><span class="line">app_name = <span class="string">&#x27;polls&#x27;</span></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(<span class="string">&#x27;&#x27;</span>, views.IndexView.as_view(), name=<span class="string">&#x27;index&#x27;</span>),</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-<p>以上事例中，<code>name=&#39;index&#39;</code> 为 url 命名，在模板中通过以下方式使用 url 名称 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[反向命名空间 URLs](https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls)">[1]</span></a></sup></p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;polls:index&#x27; %&#125;&quot;</span>&gt;</span>首页<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-<h2 id="for-循环"><a href="#for-循环" class="headerlink" title="for 循环"></a>for 循环</h2><h3 id="根据-model-中的值实现下拉选择菜单"><a href="#根据-model-中的值实现下拉选择菜单" class="headerlink" title="根据 model 中的值实现下拉选择菜单"></a>根据 model 中的值实现下拉选择菜单</h3><p>假如需要实现下拉表单中的可选值来自于某个 <code>model</code>，可以参考以下实现</p>
-<figure class="highlight shell"><figcaption><span>models.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.db import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your models here.</span></span><br><span class="line">class Account(models.Model):</span><br><span class="line">    name = models.CharField(max_length=16, unique=True)</span><br></pre></td></tr></table></figure>
-
-<p>视图函数代码如下：</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line">from cloudclient import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br></pre></td></tr></table></figure>
-<p>HTML 模板主要代码如下：</p>
-<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">    &#123;% csrf_token %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;category&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line">       &#123;% for account in accounts %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endfor %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p><strong>其中使用 <code>for</code> 循环将视图函数传过来的参数列表（<code>accounts</code>）中的对象添加到下拉菜单中作为下拉选项。</strong><br><img src="https://i.0920811.xyz/img_216.png"></p>
-<p>表单提交后，服务端口会收到 POST 的数据(<code>request.POST</code>)：<code>account=1</code>。参考以下代码处理接收到的表单数据</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    if request.method == &#x27;GET&#x27;:</span><br><span class="line">        accounts = models.Account.objects.all()</span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        # data = request.body</span><br><span class="line">        account_id = request.POST.get(&#x27;account&#x27;)</span><br><span class="line">        logging.info(f&quot;POST DATA: &#123;&#125;&quot;)</span><br></pre></td></tr></table></figure>
-
-<p>如果想在 POST 处理后返回给客户端的 HTML 表单中的默认选中的值任然是客户端 POST 提交时选中的值，可以参考以下代码</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def cf_add_domains(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        data = request.POST</span><br><span class="line">        account_id = data[&#x27;account&#x27;]</span><br><span class="line">        account = models.Account.objects.get(id=account_id)</span><br><span class="line"></span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts, &#x27;selected_account_id&#x27;: account_id&#125;)</span><br></pre></td></tr></table></figure>
-
-<p>HTML 模板中使用 <code>option</code> 的 <code>selected</code> 标签选择指定的值。<em><strong>要注意其中的类型转换 <code>account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot;，将变量值转换一致，否则条件判断会失败</code></strong></em> </p>
-<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">&#123;% csrf_token %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;account&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line"></span><br><span class="line">   &#123;% for account in accounts %&#125;</span><br><span class="line">       &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% else %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endif %&#125;</span><br><span class="line">   &#123;% endfor %&#125;</span><br><span class="line"><span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<h2 id="if-条件判断"><a href="#if-条件判断" class="headerlink" title="if 条件判断"></a>if 条件判断</h2><p><code>if</code> 语法如下</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% if condition %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为真 --&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为假 --&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% if user.is_authenticated %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>欢迎回来，&#123;&#123; user.username &#125;&#125;！<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;logout&#x27; %&#125;&quot;</span>&gt;</span>退出登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>您还未登录。<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;login&#x27; %&#125;&quot;</span>&gt;</span>立即登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="类型转换"><a href="#类型转换" class="headerlink" title="类型转换"></a>类型转换</h2><p>如果在模板中需要对变量类型进行转换，参考以下语法</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% else %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% endif %&#125;</span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
-
-<p>更精简的写法</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    </span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> &#123;% <span class="attr">if</span> <span class="attr">account.id</span>|<span class="attr">stringformat:</span>&quot;<span class="attr">s</span>&quot; == <span class="string">selected_account_id|stringformat:</span>&quot;<span class="attr">s</span>&quot; %&#125;<span class="attr">selected</span>&#123;% <span class="attr">endif</span> %&#125;&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls">反向命名空间 URLs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Python</category>
         <category>Django</category>
@@ -17709,6 +17709,24 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Kubernetes 上部署 MinIO</title>
+    <url>/20260502113711/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>以下示例在 1 Mster + 2 Worker 的 Kubernetes 集群上快速部署使用 MinIO 存储</p>
+<figure class="highlight yaml"><figcaption><span>values.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">mode:</span> <span class="string">distributed</span></span><br><span class="line"></span><br><span class="line"><span class="attr">replicas:</span> <span class="number">4</span></span><br><span class="line"><span class="attr">drivesPerNode:</span> <span class="number">1</span></span><br><span class="line"></span><br><span class="line"><span class="attr">rootUser:</span> <span class="string">admin</span></span><br><span class="line"><span class="attr">rootPassword:</span> <span class="string">gLsSbu7dv4zXSjYUeQrVOFq6</span></span><br><span class="line"></span><br><span class="line"><span class="attr">persistence:</span></span><br><span class="line">  <span class="attr">enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">size:</span> <span class="string">200Gi</span></span><br><span class="line">  <span class="attr">storageClass:</span> <span class="string">&quot;&quot;</span>   <span class="comment"># 用默认的 StorageClass，要确保已存在</span></span><br><span class="line"></span><br><span class="line"><span class="attr">resources:</span></span><br><span class="line">  <span class="attr">requests:</span></span><br><span class="line">    <span class="attr">memory:</span> <span class="string">512Mi</span></span><br><span class="line">    <span class="attr">cpu:</span> <span class="string">500m</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 🔥 关键：强制分散调度</span></span><br><span class="line"><span class="attr">affinity:</span></span><br><span class="line">  <span class="attr">podAntiAffinity:</span></span><br><span class="line">    <span class="attr">preferredDuringSchedulingIgnoredDuringExecution:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">weight:</span> <span class="number">100</span></span><br><span class="line">        <span class="attr">podAffinityTerm:</span></span><br><span class="line">          <span class="attr">labelSelector:</span></span><br><span class="line">            <span class="attr">matchLabels:</span></span><br><span class="line">              <span class="attr">app:</span> <span class="string">minio</span></span><br><span class="line">          <span class="attr">topologyKey:</span> <span class="string">kubernetes.io/hostname</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 🔥 防止驱逐</span></span><br><span class="line"><span class="attr">tolerations:</span> []</span><br><span class="line"></span><br><span class="line"><span class="comment"># 🔥 确保分布</span></span><br><span class="line"><span class="attr">topologySpreadConstraints:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">maxSkew:</span> <span class="number">1</span></span><br><span class="line">    <span class="attr">topologyKey:</span> <span class="string">kubernetes.io/hostname</span></span><br><span class="line">    <span class="attr">whenUnsatisfiable:</span> <span class="string">ScheduleAnyway</span></span><br><span class="line">    <span class="attr">labelSelector:</span></span><br><span class="line">      <span class="attr">matchLabels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">minio</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 👇 新增 ingress（API + Console 分开）</span></span><br><span class="line"><span class="attr">ingress:</span></span><br><span class="line">  <span class="attr">enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">hosts:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">minio-api.example.click</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>新增以下 Ingress 配置用于提供 Console 访问</p>
+<figure class="highlight yaml"><figcaption><span>console-ingress.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">minio-console</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">minio</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/proxy-body-size:</span> <span class="string">&quot;0&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">minio.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">minio-console</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">9001</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>执行以下命令部署 MinIO</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm upgrade minio minio/minio   -n minio   -f values.yaml</span><br><span class="line"></span><br><span class="line">kubectl apply -f console-ingress.yaml</span><br></pre></td></tr></table></figure>
+
+<p>部署成功后通过 <code>minio.example.click</code> 登录 Console，管理员用户密码为 <code>values.yaml</code> 中配置的账户密码。</p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
     <title>Kubernetes 监控</title>
     <url>/202305231329/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -17770,24 +17788,6 @@ width: 20%;
       <tags>
         <tag>Kubernetes</tag>
       </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 上部署 MinIO</title>
-    <url>/20260502113711/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>以下示例在 1 Mster + 2 Worker 的 Kubernetes 集群上快速部署使用 MinIO 存储</p>
-<figure class="highlight yaml"><figcaption><span>values.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">mode:</span> <span class="string">distributed</span></span><br><span class="line"></span><br><span class="line"><span class="attr">replicas:</span> <span class="number">4</span></span><br><span class="line"><span class="attr">drivesPerNode:</span> <span class="number">1</span></span><br><span class="line"></span><br><span class="line"><span class="attr">rootUser:</span> <span class="string">admin</span></span><br><span class="line"><span class="attr">rootPassword:</span> <span class="string">gLsSbu7dv4zXSjYUeQrVOFq6</span></span><br><span class="line"></span><br><span class="line"><span class="attr">persistence:</span></span><br><span class="line">  <span class="attr">enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">size:</span> <span class="string">200Gi</span></span><br><span class="line">  <span class="attr">storageClass:</span> <span class="string">&quot;&quot;</span>   <span class="comment"># 用默认的 StorageClass，要确保已存在</span></span><br><span class="line"></span><br><span class="line"><span class="attr">resources:</span></span><br><span class="line">  <span class="attr">requests:</span></span><br><span class="line">    <span class="attr">memory:</span> <span class="string">512Mi</span></span><br><span class="line">    <span class="attr">cpu:</span> <span class="string">500m</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 🔥 关键：强制分散调度</span></span><br><span class="line"><span class="attr">affinity:</span></span><br><span class="line">  <span class="attr">podAntiAffinity:</span></span><br><span class="line">    <span class="attr">preferredDuringSchedulingIgnoredDuringExecution:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">weight:</span> <span class="number">100</span></span><br><span class="line">        <span class="attr">podAffinityTerm:</span></span><br><span class="line">          <span class="attr">labelSelector:</span></span><br><span class="line">            <span class="attr">matchLabels:</span></span><br><span class="line">              <span class="attr">app:</span> <span class="string">minio</span></span><br><span class="line">          <span class="attr">topologyKey:</span> <span class="string">kubernetes.io/hostname</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 🔥 防止驱逐</span></span><br><span class="line"><span class="attr">tolerations:</span> []</span><br><span class="line"></span><br><span class="line"><span class="comment"># 🔥 确保分布</span></span><br><span class="line"><span class="attr">topologySpreadConstraints:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">maxSkew:</span> <span class="number">1</span></span><br><span class="line">    <span class="attr">topologyKey:</span> <span class="string">kubernetes.io/hostname</span></span><br><span class="line">    <span class="attr">whenUnsatisfiable:</span> <span class="string">ScheduleAnyway</span></span><br><span class="line">    <span class="attr">labelSelector:</span></span><br><span class="line">      <span class="attr">matchLabels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">minio</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 👇 新增 ingress（API + Console 分开）</span></span><br><span class="line"><span class="attr">ingress:</span></span><br><span class="line">  <span class="attr">enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">hosts:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">minio-api.example.click</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>新增以下 Ingress 配置用于提供 Console 访问</p>
-<figure class="highlight yaml"><figcaption><span>console-ingress.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">minio-console</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">minio</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/proxy-body-size:</span> <span class="string">&quot;0&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">minio.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">minio-console</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">9001</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>执行以下命令部署 MinIO</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm upgrade minio minio/minio   -n minio   -f values.yaml</span><br><span class="line"></span><br><span class="line">kubectl apply -f console-ingress.yaml</span><br></pre></td></tr></table></figure>
-
-<p>部署成功后通过 <code>minio.example.click</code> 登录 Console，管理员用户密码为 <code>values.yaml</code> 中配置的账户密码。</p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
   </entry>
   <entry>
     <title>Kubernetes 网络数据包抓包分析</title>
@@ -20228,213 +20228,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux bash 常用操作</title>
-    <url>/20240816112002/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="bash-快捷键"><a href="#bash-快捷键" class="headerlink" title="bash 快捷键"></a>bash 快捷键</h1><p><code>bash</code> 常用的快捷键总结</p>
-<h2 id="删除类快捷键"><a href="#删除类快捷键" class="headerlink" title="删除类快捷键"></a>删除类快捷键</h2><table>
-<thead>
-<tr>
-<th>快捷键</th>
-<th>功能</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>Ctrl + D</code></td>
-<td>删除光标右侧的一个字符，等于 <code>Delete</code> 键</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + H</code></td>
-<td>删除光标左侧的一个字符，等于 <code>Backspace</code> 键</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + K</code></td>
-<td>删除从光标位置到行尾的所有字符。</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + U</code></td>
-<td>删除从光标位置到行首的所有字符。</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + W</code></td>
-<td>删除光标左侧的一个单词（以空格为分隔）。</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Alt + D</code></td>
-<td>删除光标右侧的一个单词。（空格，下划线，点分割）</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + C</code></td>
-<td>删除整行</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="定位类快捷键"><a href="#定位类快捷键" class="headerlink" title="定位类快捷键"></a>定位类快捷键</h2><table>
-<thead>
-<tr>
-<th>快捷键</th>
-<th>功能</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>Ctrl + F</code></td>
-<td>向前挪动一个字符 ，等于 右箭头 <code>-&gt;</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + B</code></td>
-<td>向后挪动一个字符  ，等于 左箭头 <code>&lt;-</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>Alt + F</code></td>
-<td>向前挪动一个 word</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Alt + B</code></td>
-<td>向后挪动一个 word              。</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + A</code></td>
-<td>跳到行首。</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Ctrl + E</code></td>
-<td>跳到行尾。</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="Recall-类快捷键"><a href="#Recall-类快捷键" class="headerlink" title="Recall 类快捷键"></a>Recall 类快捷键</h2><p><code>bash</code> 中执行过的命令都保存在了历史记录中，可以通过 <code>history</code> 命令查看。为了快速重新执行或者修改之前的命令并执行， <code>bash</code> 提供了以下快捷键</p>
-<table>
-<thead>
-<tr>
-<th>快捷键</th>
-<th>功能</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>Ctrl + R</code></td>
-<td>搜索 <code>history</code> 中 <strong>最后一个</strong> 匹配的命令</td>
-<td></td>
-</tr>
-<tr>
-<td><code>Alt + P</code></td>
-<td>搜索 <code>history</code> 中 <strong>最常使用</strong> 的命令</td>
-<td></td>
-</tr>
-<tr>
-<td><code>!100</code></td>
-<td>重新执行 <code>history</code> 中的第 100 号的命令，无确认，会立即执行</td>
-<td></td>
-</tr>
-<tr>
-<td><code>!!</code></td>
-<td>重新执行 <code>history</code> 中的 <strong>最后一个</strong> 命令，无确认，会立即执行</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="bash-环境变量"><a href="#bash-环境变量" class="headerlink" title="bash 环境变量"></a>bash 环境变量</h1><p><code>shell</code> 中的环境变量大体可以分为以下几种：</p>
-<ul>
-<li><p><code>Local Variables</code> : 当前 Shell 中的 <strong>所有的本地变量（ <code>Local Variables</code> ）</strong> ，要查看所有的 本地变量（ <code>Local Variables</code> ），可以使用以下命令：</p>
-<ul>
-<li><code>set</code></li>
-<li><code>declare</code></li>
-</ul>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">set</span> | more</span></span><br><span class="line">BASH=/bin/bash</span><br><span class="line">BASHOPTS=checkwinsize:cmdhist:complete_fullquote:expand_aliases:extglob:extquote:force_fignore:globasciiranges:histappend:interactive_comments:progcomp:promptvars:sour</span><br><span class="line">cepath</span><br><span class="line">BASH_ALIASES=()</span><br><span class="line">BASH_ARGC=([0]=&quot;0&quot;)</span><br><span class="line">BASH_ARGV=()</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
-</li>
-<li><p><code>Environment Variables</code> ： 本地变量（ <code>Local Variables</code> ）的一部分子集（ <code>subset</code> ）被稱為 <strong>环境变量（ <code>Environment Variables</code> ）</strong> ， <strong>环境变量（ <code>Environment Variables</code> ）</strong> 会被导入到任何从当前 Shell 启动的新的 Shell，要查看 <strong>环境变量（ <code>Environment Variables</code> ）</strong> ，使用以下命令</p>
-<ul>
-<li><code>env</code></li>
-<li><code>printenv</code></li>
-</ul>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">env</span></span></span><br><span class="line">SHELL=/bin/bash</span><br><span class="line">SESSION_MANAGER=local/U-3TSDMAL9IVFAQ:@/tmp/.ICE-unix/3396,unix/U-3TSDMAL9IVFAQ:/tmp/.ICE-unix/3396</span><br><span class="line">QT_ACCESSIBILITY=1</span><br><span class="line">COLORTERM=truecolor</span><br><span class="line">XDG_CONFIG_DIRS=/etc/xdg/xdg-ubuntu:/etc/xdg</span><br><span class="line">SSH_AGENT_LAUNCHER=gnome-keyring</span><br><span class="line">XDG_MENU_PREFIX=gnome-</span><br><span class="line">GNOME_DESKTOP_SESSION_ID=this-is-deprecated</span><br><span class="line">GTK_IM_MODULE=fcitx</span><br><span class="line">LANGUAGE=en</span><br><span class="line">LC_ADDRESS=en_US.UTF-8</span><br><span class="line">GNOME_SHELL_SESSION_MODE=ubuntu</span><br><span class="line">LC_NAME=en_US.UTF-8</span><br><span class="line">SSH_AUTH_SOCK=/run/user/408001114/keyring/ssh</span><br><span class="line">XMODIFIERS=@im=fcitx</span><br><span class="line">DESKTOP_SESSION=ubuntu</span><br><span class="line">LC_MONETARY=en_US.UTF-8</span><br><span class="line">GTK_MODULES=gail:atk-bridge</span><br><span class="line">DBUS_STARTER_BUS_TYPE=session</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
-
-<p>  查看单个变量</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">echo</span> <span class="variable">$PATH</span></span> </span><br><span class="line">/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ul>
-<p><strong><code>bash</code> 常用环境变量</strong> ：</p>
-<table>
-<thead>
-<tr>
-<th>环境变量</th>
-<th>功能</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>PATH</code></td>
-<td>可执行文件查找路径变量。<br/> <strong>查找顺序从左向右，找到即停止</strong></td>
-<td><code>$ echo $PATH</code> <br/> <code>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin</code></td>
-</tr>
-<tr>
-<td><code>PS1</code> <br/> <code>PS[234]</code></td>
-<td><code>PS1</code> 环境变量定义了 <code>bash</code> 中的命令后提示符包含的内容<br/>定义中支持的元字符可以查看 <code>man bash</code> 手册</td>
-<td><code>PS1=&quot;[\u@\h \W]\\$</code></td>
-</tr>
-</tbody></table>
-<h2 id="bash-命令查找优先级"><a href="#bash-命令查找优先级" class="headerlink" title="bash 命令查找优先级"></a>bash 命令查找优先级</h2><p><code>bash</code> 中命令执行优先顺序如下：</p>
-<ul>
-<li><strong>Aliases</strong> ： 由 <code>alias</code> 命令配置的命令别名。</li>
-<li><strong>Shell 预留的关键字</strong> ： 主要是 Shell 编程中会用到的关键字，如 <code>do</code> 、 <code>while</code> 、 <code>case</code> 、 <code>else</code> 等。</li>
-<li><strong>Built-in  Command</strong> ： shell 内嵌的命令，如 <code>cd</code> 、 <code>echo</code> 等</li>
-<li><strong>Filesystem Command</strong> ： 环境变量 <code>PATH</code> 中的命令。</li>
-</ul>
-<p>要查找命令所在位置，可以使用 <code>type</code> 和 <code>which</code> 命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">type</span> bash</span></span><br><span class="line">bash is /usr/bin/bash</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">which</span> bash</span></span><br><span class="line">/usr/bin/bash</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">type</span> -a <span class="built_in">ls</span></span></span><br><span class="line">ls is aliased to `ls --color=auto&#x27;</span><br><span class="line">ls is /usr/bin/ls</span><br><span class="line">ls is /bin/ls</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>如果要查找命令所在的所有位置，可以使用 <code>type -a ls</code> ，如上所示，这会显示 <code>ls</code> 命令所在的所有位置</p>
-</blockquote>
-<h2 id="bash-环境变量配置优先级"><a href="#bash-环境变量配置优先级" class="headerlink" title="bash 环境变量配置优先级"></a>bash 环境变量配置优先级</h2><p>Linux 系统中的多个配置文件中可以配置环境变量，其中有些会针对所有的用户和 <code>shell</code> 生效，有些只会针对特定的用户生效。</p>
-<p>以下表格中列出了常用的环境变量的配置文件：</p>
-<table>
-<thead>
-<tr>
-<th>File</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/etc/profile</code></td>
-<td><strong>此配置中的环境变量对所有用户生效，在用户登陆时为其配置环境变量</strong> ，它一般会加载（包含） <code>/etc/profile.d</code> 中的配置</td>
-</tr>
-<tr>
-<td><code>/etc/bashrc</code></td>
-<td><strong>此配置中的环境变量针对所有的 shell 生效，每次打开一个 <code>bash</code> 时会执行</strong> ，一般会设置包括 <strong>登陆提示</strong> 、 <strong><code>alias</code></strong> 等</td>
-</tr>
-<tr>
-<td><code>~/.bash_profile</code></td>
-<td><strong>此配置中的环境变量对 <code>当前登陆</code> 用户生效，仅在用户登陆时为其配置环境变量</strong> ，一般会加载 <code>~/.bashrc</code> 文件</td>
-</tr>
-<tr>
-<td><code>~/.bashrc</code></td>
-<td><strong>此配置中的环境变量针对 <code>当前登陆</code> 的用户 <code>bash</code> 生效，并在用户打开每个新的 <code>bash</code> 时执行</strong></td>
-</tr>
-<tr>
-<td><code>~/.bash_logout</code></td>
-<td><strong>此配置中的环境变量对 <code>当前登陆</code> 用户生效，仅在 <code>当前登陆用户登出（logout）</code> 时执行</strong></td>
-</tr>
-</tbody></table>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Linux auditd 服务</title>
     <url>/20241025105226/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Linux 审计系统提供了一种方式来跟踪系统上与安全相关的信息。根据预配置的规则，审计会生成日志条目，来尽可能多地记录系统上所发生的事件的相关信息。对于关键任务环境而言至关重要，可用来确定安全策略的违反者及其所执行的操作。审计不会为您的系统提供额外的安全，而是用于发现系统上使用的安全策略的违规。可以通过其他安全措施(如 SELinux)进一步防止这些违规。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[第 7 章 系统审计](https://docs.redhat.com/zh_hans/documentation/red_hat_enterprise_linux/7/html/security_guide/chap-system_auditing#chap-system_auditing)
@@ -20822,6 +20615,213 @@ width: 20%;
       <categories>
         <category>Linux</category>
         <category>常用服务</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux bash 常用操作</title>
+    <url>/20240816112002/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="bash-快捷键"><a href="#bash-快捷键" class="headerlink" title="bash 快捷键"></a>bash 快捷键</h1><p><code>bash</code> 常用的快捷键总结</p>
+<h2 id="删除类快捷键"><a href="#删除类快捷键" class="headerlink" title="删除类快捷键"></a>删除类快捷键</h2><table>
+<thead>
+<tr>
+<th>快捷键</th>
+<th>功能</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Ctrl + D</code></td>
+<td>删除光标右侧的一个字符，等于 <code>Delete</code> 键</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + H</code></td>
+<td>删除光标左侧的一个字符，等于 <code>Backspace</code> 键</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + K</code></td>
+<td>删除从光标位置到行尾的所有字符。</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + U</code></td>
+<td>删除从光标位置到行首的所有字符。</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + W</code></td>
+<td>删除光标左侧的一个单词（以空格为分隔）。</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Alt + D</code></td>
+<td>删除光标右侧的一个单词。（空格，下划线，点分割）</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + C</code></td>
+<td>删除整行</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="定位类快捷键"><a href="#定位类快捷键" class="headerlink" title="定位类快捷键"></a>定位类快捷键</h2><table>
+<thead>
+<tr>
+<th>快捷键</th>
+<th>功能</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Ctrl + F</code></td>
+<td>向前挪动一个字符 ，等于 右箭头 <code>-&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + B</code></td>
+<td>向后挪动一个字符  ，等于 左箭头 <code>&lt;-</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>Alt + F</code></td>
+<td>向前挪动一个 word</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Alt + B</code></td>
+<td>向后挪动一个 word              。</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + A</code></td>
+<td>跳到行首。</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Ctrl + E</code></td>
+<td>跳到行尾。</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="Recall-类快捷键"><a href="#Recall-类快捷键" class="headerlink" title="Recall 类快捷键"></a>Recall 类快捷键</h2><p><code>bash</code> 中执行过的命令都保存在了历史记录中，可以通过 <code>history</code> 命令查看。为了快速重新执行或者修改之前的命令并执行， <code>bash</code> 提供了以下快捷键</p>
+<table>
+<thead>
+<tr>
+<th>快捷键</th>
+<th>功能</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Ctrl + R</code></td>
+<td>搜索 <code>history</code> 中 <strong>最后一个</strong> 匹配的命令</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Alt + P</code></td>
+<td>搜索 <code>history</code> 中 <strong>最常使用</strong> 的命令</td>
+<td></td>
+</tr>
+<tr>
+<td><code>!100</code></td>
+<td>重新执行 <code>history</code> 中的第 100 号的命令，无确认，会立即执行</td>
+<td></td>
+</tr>
+<tr>
+<td><code>!!</code></td>
+<td>重新执行 <code>history</code> 中的 <strong>最后一个</strong> 命令，无确认，会立即执行</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="bash-环境变量"><a href="#bash-环境变量" class="headerlink" title="bash 环境变量"></a>bash 环境变量</h1><p><code>shell</code> 中的环境变量大体可以分为以下几种：</p>
+<ul>
+<li><p><code>Local Variables</code> : 当前 Shell 中的 <strong>所有的本地变量（ <code>Local Variables</code> ）</strong> ，要查看所有的 本地变量（ <code>Local Variables</code> ），可以使用以下命令：</p>
+<ul>
+<li><code>set</code></li>
+<li><code>declare</code></li>
+</ul>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">set</span> | more</span></span><br><span class="line">BASH=/bin/bash</span><br><span class="line">BASHOPTS=checkwinsize:cmdhist:complete_fullquote:expand_aliases:extglob:extquote:force_fignore:globasciiranges:histappend:interactive_comments:progcomp:promptvars:sour</span><br><span class="line">cepath</span><br><span class="line">BASH_ALIASES=()</span><br><span class="line">BASH_ARGC=([0]=&quot;0&quot;)</span><br><span class="line">BASH_ARGV=()</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><code>Environment Variables</code> ： 本地变量（ <code>Local Variables</code> ）的一部分子集（ <code>subset</code> ）被稱為 <strong>环境变量（ <code>Environment Variables</code> ）</strong> ， <strong>环境变量（ <code>Environment Variables</code> ）</strong> 会被导入到任何从当前 Shell 启动的新的 Shell，要查看 <strong>环境变量（ <code>Environment Variables</code> ）</strong> ，使用以下命令</p>
+<ul>
+<li><code>env</code></li>
+<li><code>printenv</code></li>
+</ul>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">env</span></span></span><br><span class="line">SHELL=/bin/bash</span><br><span class="line">SESSION_MANAGER=local/U-3TSDMAL9IVFAQ:@/tmp/.ICE-unix/3396,unix/U-3TSDMAL9IVFAQ:/tmp/.ICE-unix/3396</span><br><span class="line">QT_ACCESSIBILITY=1</span><br><span class="line">COLORTERM=truecolor</span><br><span class="line">XDG_CONFIG_DIRS=/etc/xdg/xdg-ubuntu:/etc/xdg</span><br><span class="line">SSH_AGENT_LAUNCHER=gnome-keyring</span><br><span class="line">XDG_MENU_PREFIX=gnome-</span><br><span class="line">GNOME_DESKTOP_SESSION_ID=this-is-deprecated</span><br><span class="line">GTK_IM_MODULE=fcitx</span><br><span class="line">LANGUAGE=en</span><br><span class="line">LC_ADDRESS=en_US.UTF-8</span><br><span class="line">GNOME_SHELL_SESSION_MODE=ubuntu</span><br><span class="line">LC_NAME=en_US.UTF-8</span><br><span class="line">SSH_AUTH_SOCK=/run/user/408001114/keyring/ssh</span><br><span class="line">XMODIFIERS=@im=fcitx</span><br><span class="line">DESKTOP_SESSION=ubuntu</span><br><span class="line">LC_MONETARY=en_US.UTF-8</span><br><span class="line">GTK_MODULES=gail:atk-bridge</span><br><span class="line">DBUS_STARTER_BUS_TYPE=session</span><br><span class="line">...</span><br></pre></td></tr></table></figure>
+
+<p>  查看单个变量</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">echo</span> <span class="variable">$PATH</span></span> </span><br><span class="line">/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin</span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ul>
+<p><strong><code>bash</code> 常用环境变量</strong> ：</p>
+<table>
+<thead>
+<tr>
+<th>环境变量</th>
+<th>功能</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PATH</code></td>
+<td>可执行文件查找路径变量。<br/> <strong>查找顺序从左向右，找到即停止</strong></td>
+<td><code>$ echo $PATH</code> <br/> <code>/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin</code></td>
+</tr>
+<tr>
+<td><code>PS1</code> <br/> <code>PS[234]</code></td>
+<td><code>PS1</code> 环境变量定义了 <code>bash</code> 中的命令后提示符包含的内容<br/>定义中支持的元字符可以查看 <code>man bash</code> 手册</td>
+<td><code>PS1=&quot;[\u@\h \W]\\$</code></td>
+</tr>
+</tbody></table>
+<h2 id="bash-命令查找优先级"><a href="#bash-命令查找优先级" class="headerlink" title="bash 命令查找优先级"></a>bash 命令查找优先级</h2><p><code>bash</code> 中命令执行优先顺序如下：</p>
+<ul>
+<li><strong>Aliases</strong> ： 由 <code>alias</code> 命令配置的命令别名。</li>
+<li><strong>Shell 预留的关键字</strong> ： 主要是 Shell 编程中会用到的关键字，如 <code>do</code> 、 <code>while</code> 、 <code>case</code> 、 <code>else</code> 等。</li>
+<li><strong>Built-in  Command</strong> ： shell 内嵌的命令，如 <code>cd</code> 、 <code>echo</code> 等</li>
+<li><strong>Filesystem Command</strong> ： 环境变量 <code>PATH</code> 中的命令。</li>
+</ul>
+<p>要查找命令所在位置，可以使用 <code>type</code> 和 <code>which</code> 命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">type</span> bash</span></span><br><span class="line">bash is /usr/bin/bash</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">which</span> bash</span></span><br><span class="line">/usr/bin/bash</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">type</span> -a <span class="built_in">ls</span></span></span><br><span class="line">ls is aliased to `ls --color=auto&#x27;</span><br><span class="line">ls is /usr/bin/ls</span><br><span class="line">ls is /bin/ls</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>如果要查找命令所在的所有位置，可以使用 <code>type -a ls</code> ，如上所示，这会显示 <code>ls</code> 命令所在的所有位置</p>
+</blockquote>
+<h2 id="bash-环境变量配置优先级"><a href="#bash-环境变量配置优先级" class="headerlink" title="bash 环境变量配置优先级"></a>bash 环境变量配置优先级</h2><p>Linux 系统中的多个配置文件中可以配置环境变量，其中有些会针对所有的用户和 <code>shell</code> 生效，有些只会针对特定的用户生效。</p>
+<p>以下表格中列出了常用的环境变量的配置文件：</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/etc/profile</code></td>
+<td><strong>此配置中的环境变量对所有用户生效，在用户登陆时为其配置环境变量</strong> ，它一般会加载（包含） <code>/etc/profile.d</code> 中的配置</td>
+</tr>
+<tr>
+<td><code>/etc/bashrc</code></td>
+<td><strong>此配置中的环境变量针对所有的 shell 生效，每次打开一个 <code>bash</code> 时会执行</strong> ，一般会设置包括 <strong>登陆提示</strong> 、 <strong><code>alias</code></strong> 等</td>
+</tr>
+<tr>
+<td><code>~/.bash_profile</code></td>
+<td><strong>此配置中的环境变量对 <code>当前登陆</code> 用户生效，仅在用户登陆时为其配置环境变量</strong> ，一般会加载 <code>~/.bashrc</code> 文件</td>
+</tr>
+<tr>
+<td><code>~/.bashrc</code></td>
+<td><strong>此配置中的环境变量针对 <code>当前登陆</code> 的用户 <code>bash</code> 生效，并在用户打开每个新的 <code>bash</code> 时执行</strong></td>
+</tr>
+<tr>
+<td><code>~/.bash_logout</code></td>
+<td><strong>此配置中的环境变量对 <code>当前登陆</code> 用户生效，仅在 <code>当前登陆用户登出（logout）</code> 时执行</strong></td>
+</tr>
+</tbody></table>
+]]></content>
+      <categories>
+        <category>Linux</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -26362,6 +26362,46 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Linux system call</title>
+    <url>/202406271324/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="CPU-相关的-syscall-函数"><a href="#CPU-相关的-syscall-函数" class="headerlink" title="CPU 相关的 syscall 函数"></a>CPU 相关的 syscall 函数</h1><p>Linux System Call 的帮助文档包含在内核文档中，可以通过 <code>man 2</code> 查看对应的手册，如 <code>man 2 fork</code> 。</p>
+<table>
+<thead>
+<tr>
+<th>system call function</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>fork</code></td>
+<td>创建 Processes<br/>Linux 中的 <code>fork</code> 是通过封装了 <code>clone</code> 函数实现的</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="内存相关的-syscall"><a href="#内存相关的-syscall" class="headerlink" title="内存相关的 syscall"></a>内存相关的 syscall</h1><table>
+<thead>
+<tr>
+<th>system call function</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>shm open</code></td>
+<td>使用 <code>Shared Memory</code> 方式的 IPC 进程使用此方法创建 <code>shared memory</code> ，要相互通信的进程链接到此 FD（File Descripter）</td>
+<td><code>fd = shm open(name, O CREAT &amp;#124; O RDWR, 0666);</code></td>
+</tr>
+</tbody></table>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux systemd-journald 服务说明</title>
     <url>/202211211437/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="systemd-journald-服务简介"><a href="#systemd-journald-服务简介" class="headerlink" title="systemd-journald 服务简介"></a>systemd-journald 服务简介</h1><p><code>systemd-journald</code> 服务是 <code>systemd init</code> 系统提供的收集系统日志的服务。它会根据从内核、用户进程、标准输入和系统服务错误收到的日志记录信息，维护结构化的索引日记，并以此方式来收集和储存日志记录数据。 <code>systemd-journald</code> 服务默认处于启用状态。</p>
@@ -26438,46 +26478,6 @@ width: 20%;
       <categories>
         <category>Linux</category>
         <category>常用服务</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux system call</title>
-    <url>/202406271324/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="CPU-相关的-syscall-函数"><a href="#CPU-相关的-syscall-函数" class="headerlink" title="CPU 相关的 syscall 函数"></a>CPU 相关的 syscall 函数</h1><p>Linux System Call 的帮助文档包含在内核文档中，可以通过 <code>man 2</code> 查看对应的手册，如 <code>man 2 fork</code> 。</p>
-<table>
-<thead>
-<tr>
-<th>system call function</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>fork</code></td>
-<td>创建 Processes<br/>Linux 中的 <code>fork</code> 是通过封装了 <code>clone</code> 函数实现的</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="内存相关的-syscall"><a href="#内存相关的-syscall" class="headerlink" title="内存相关的 syscall"></a>内存相关的 syscall</h1><table>
-<thead>
-<tr>
-<th>system call function</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>shm open</code></td>
-<td>使用 <code>Shared Memory</code> 方式的 IPC 进程使用此方法创建 <code>shared memory</code> ，要相互通信的进程链接到此 FD（File Descripter）</td>
-<td><code>fd = shm open(name, O CREAT &amp;#124; O RDWR, 0666);</code></td>
-</tr>
-</tbody></table>
-]]></content>
-      <categories>
-        <category>Linux</category>
       </categories>
       <tags>
         <tag>Linux</tag>
@@ -31910,30 +31910,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>python PyInstaller 使用</title>
-    <url>/202310021022/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>要将 Python 脚本打包为 Windows 可运行程序，一种常用的方法是使用 PyInstaller。</p>
-<h1 id="安装-PyInstaller"><a href="#安装-PyInstaller" class="headerlink" title="安装 PyInstaller"></a>安装 PyInstaller</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install pyinstaller</span><br></pre></td></tr></table></figure>
-
-<h1 id="打包"><a href="#打包" class="headerlink" title="打包"></a>打包</h1><p>在命令行中，导航到脚本所在的文件夹并运行以下命令</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile test_file.py</span><br></pre></td></tr></table></figure>
-
-<p>这会生成一个 <code>dist</code> 目录，里面包含一个名为 <code>test_file.exe</code> 的可执行文件。参数 <code>--onefile</code> 确保所有必要的文件都被包含在单一的可执行文件中。</p>
-<p>以上方法打包后的文件点击运行后，桌面会弹窗一个 cmd 窗口，如果关闭了此 cmd 窗口，与其关联的程序也会被关闭。为了阻止这个命令行窗口的出现，并让程序在关闭窗口后仍然运行，你需要在使用 PyInstaller 打包时使用 <code>--noconsole</code> 选项。此外，为了使程序在没有任何可视窗口的情况下静默运行（例如，仅在系统托盘中），你还需要使用 <code>--windowed</code> 选项。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile --noconsole --windowed test_file.py</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>如果你想要程序在系统托盘中静默运行，并通过系统托盘图标进行交互，那么你需要使用其他库，如 <code>pystray</code> ，来创建系统托盘应用。</p>
-</blockquote>
-]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Python 代码集成 Prometheus Client 输出 Metrics 到 Prometheus</title>
     <url>/20241204092829/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>在 Python 中，可以使用 Prometheus Python Client Library 来输出 Metrics，供 Prometheus 采集。</p>
@@ -32025,6 +32001,54 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>python PyInstaller 使用</title>
+    <url>/202310021022/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>要将 Python 脚本打包为 Windows 可运行程序，一种常用的方法是使用 PyInstaller。</p>
+<h1 id="安装-PyInstaller"><a href="#安装-PyInstaller" class="headerlink" title="安装 PyInstaller"></a>安装 PyInstaller</h1><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip install pyinstaller</span><br></pre></td></tr></table></figure>
+
+<h1 id="打包"><a href="#打包" class="headerlink" title="打包"></a>打包</h1><p>在命令行中，导航到脚本所在的文件夹并运行以下命令</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile test_file.py</span><br></pre></td></tr></table></figure>
+
+<p>这会生成一个 <code>dist</code> 目录，里面包含一个名为 <code>test_file.exe</code> 的可执行文件。参数 <code>--onefile</code> 确保所有必要的文件都被包含在单一的可执行文件中。</p>
+<p>以上方法打包后的文件点击运行后，桌面会弹窗一个 cmd 窗口，如果关闭了此 cmd 窗口，与其关联的程序也会被关闭。为了阻止这个命令行窗口的出现，并让程序在关闭窗口后仍然运行，你需要在使用 PyInstaller 打包时使用 <code>--noconsole</code> 选项。此外，为了使程序在没有任何可视窗口的情况下静默运行（例如，仅在系统托盘中），你还需要使用 <code>--windowed</code> 选项。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pyinstaller --onefile --noconsole --windowed test_file.py</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>如果你想要程序在系统托盘中静默运行，并通过系统托盘图标进行交互，那么你需要使用其他库，如 <code>pystray</code> ，来创建系统托盘应用。</p>
+</blockquote>
+]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Python3 requests 库使用</title>
+    <url>/202302011011/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>python3.10</li>
+</ul>
+<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><p>基础用法可以查看系统帮助信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests)</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p><code>requests</code> 发送请求时，会自动创建 <code>requests.Request</code>，因此发送请求时如果需要发送更多数据，可以查看 <code>Request</code> 类的帮助信息，或者查看 <code>requests.models</code> 获取更多帮助信息，如 <code>headers</code>，<code>files</code> 等</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.Request)</span></span><br></pre></td></tr></table></figure>
+<p>例如发送请求时需要添加头部信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; headers = &#123;<span class="string">&#x27;Authorization&#x27;</span>: token, <span class="string">&#x27;User-Agent&#x27;</span>: <span class="string">&#x27;Python&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; r = requests.get(<span class="string">&#x27;https://api.cdn77.com/v3/cdn&#x27;</span>, headers=headers)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; r.text</span></span><br></pre></td></tr></table></figure>
+
+<p><code>Request</code> 请求的响应是 ‘requests.models.Response’ 对象的实例。获取 <code>Response</code> 帮助，可以查看以下内容 </p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.models.Response)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.Response)</span></span><br></pre></td></tr></table></figure>
+
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1>]]></content>
+      <categories>
+        <category>Python</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>python requests 使用</title>
     <url>/202303071126/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -32103,30 +32127,6 @@ width: 20%;
 <p>请求方式改为以下方式可正常返回期望的数据：</p>
 <figure class="highlight python"><table><tr><td class="code"><pre><span class="line">resp = requests.post(url, json=payload, headers=headers)</span><br><span class="line"><span class="built_in">print</span>(<span class="string">f&quot;response: <span class="subst">&#123;resp.status_code&#125;</span>, text: <span class="subst">&#123;resp.text&#125;</span>&quot;</span>)</span><br></pre></td></tr></table></figure>
 ]]></content>
-      <categories>
-        <category>Python</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Python3 requests 库使用</title>
-    <url>/202302011011/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>python3.10</li>
-</ul>
-<h1 id="常见用法"><a href="#常见用法" class="headerlink" title="常见用法"></a>常见用法</h1><p>基础用法可以查看系统帮助信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests)</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p><code>requests</code> 发送请求时，会自动创建 <code>requests.Request</code>，因此发送请求时如果需要发送更多数据，可以查看 <code>Request</code> 类的帮助信息，或者查看 <code>requests.models</code> 获取更多帮助信息，如 <code>headers</code>，<code>files</code> 等</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.Request)</span></span><br></pre></td></tr></table></figure>
-<p>例如发送请求时需要添加头部信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; headers = &#123;<span class="string">&#x27;Authorization&#x27;</span>: token, <span class="string">&#x27;User-Agent&#x27;</span>: <span class="string">&#x27;Python&#x27;</span>&#125;</span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; r = requests.get(<span class="string">&#x27;https://api.cdn77.com/v3/cdn&#x27;</span>, headers=headers)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; r.text</span></span><br></pre></td></tr></table></figure>
-
-<p><code>Request</code> 请求的响应是 ‘requests.models.Response’ 对象的实例。获取 <code>Response</code> 帮助，可以查看以下内容 </p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.models.Response)</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">&gt;</span><span class="language-bash">&gt;&gt; <span class="built_in">help</span>(requests.Response)</span></span><br></pre></td></tr></table></figure>
-
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1>]]></content>
       <categories>
         <category>Python</category>
       </categories>
@@ -34366,45 +34366,6 @@ width: 20%;
 ">[1]</span></a></sup></p>
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考手册-策略</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考手册-策略</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Vault</category>
-      </categories>
-      <tags>
-        <tag>Vault</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Vault Policy</title>
-    <url>/202307131545/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)
-">[1]</span></a></sup></p>
-<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
-
-<p>以下示例创建一个只读策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
-<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>读取策略内容</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
-</blockquote>
-<p>使用新建的 token 登陆并尝试更新相关键</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>读取键，可以看到只能读取键值，无法写入</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Tools</category>
         <category>Vault</category>
@@ -42038,6 +41999,45 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Vault Policy</title>
+    <url>/202307131545/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>策略使用 HCL 或是 JSON 语法编写，描述了一个人类用户或是应用程序允许访问 Vault 中哪些路径。<sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[策略语法](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)
+">[1]</span></a></sup></p>
+<h1 id="策略管理"><a href="#策略管理" class="headerlink" title="策略管理"></a>策略管理</h1><h2 id="创建策略"><a href="#创建策略" class="headerlink" title="创建策略"></a>创建策略</h2><p>命令格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write policy-name policy-file.hcl</span></span><br></pre></td></tr></table></figure>
+
+<p>以下示例创建一个只读策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash"><span class="built_in">cat</span> readonly_policy.hcl</span> </span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy write readonly_policy readonly_policy.hcl</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>更新策略使用和创建策略一样的命令，使用的是已有的策略名</strong></p>
+<h2 id="查看策略"><a href="#查看策略" class="headerlink" title="查看策略"></a>查看策略</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy list</span></span><br><span class="line">default</span><br><span class="line">readonly_policy</span><br><span class="line">root</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>读取策略内容</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault policy <span class="built_in">read</span> readonly_policy</span></span><br><span class="line">path &quot;kv/*&quot; &#123;</span><br><span class="line">    capabilities = [&quot;read&quot;]</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="关联策略"><a href="#关联策略" class="headerlink" title="关联策略"></a>关联策略</h2><h3 id="创建-token-时关联策略"><a href="#创建-token-时关联策略" class="headerlink" title="创建 token 时关联策略"></a>创建 token 时关联策略</h3><p>使用以下命令在创建 token 时附加策略，否则创建的 token 默认关联当前身份(如 token)的策略</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault token create -policy=readonly_policy -policy=logs</span></span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       768h</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p><strong>关联策略时，如果关联的策略不存在，创建 token 只会给出相关策略不存在的 warnning，创建 token 不会失败</strong></p>
+</blockquote>
+<p>使用新建的 token 登陆并尝试更新相关键</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault login</span></span><br><span class="line">Token (will be hidden):</span><br><span class="line">Success! You are now authenticated. The token information displayed below</span><br><span class="line">is already stored in the token helper. You do NOT need to run &quot;vault login&quot;</span><br><span class="line">again. Future Vault requests will automatically use this token.</span><br><span class="line"></span><br><span class="line">Key                  Value</span><br><span class="line">---                  -----</span><br><span class="line">token                hvs.CAESICUghHrXAe3mFG9YEnEq8IXdtGPN-63VRRxqPOEzidpvGh4KHGh2cy5RMUhkbmU1M2FFdk52a3lFRTNiMmR6Um8</span><br><span class="line">token_accessor       iRixdShkSeHNTgS5JBLWW2Ta</span><br><span class="line">token_duration       767h55m32s</span><br><span class="line">token_renewable      true</span><br><span class="line">token_policies       [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line">identity_policies    []</span><br><span class="line">policies             [&quot;default&quot; &quot;logs&quot; &quot;readonly_policy&quot;]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>读取键，可以看到只能读取键值，无法写入</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list</span></span><br><span class="line">Not enough arguments (expected 1, got 0)</span><br><span class="line">~/vault_policy $ vault kv list kv</span><br><span class="line">Error listing kv: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: GET http://127.0.0.1:8200/v1/kv?list=true</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/ms/fm/qzx/qzapp/api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    127.0.0.1</span><br><span class="line">db_type    mysql</span><br><span class="line">db_user    password</span><br><span class="line">tk         test key</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/ms/fm/qzx/qzapp/api/config key=value</span></span><br><span class="line">Error writing data to kv/ms/fm/qzx/qzapp/api/config: Error making API request.</span><br><span class="line"></span><br><span class="line">URL: PUT http://127.0.0.1:8200/v1/kv/ms/fm/qzx/qzapp/api/config</span><br><span class="line">Code: 403. Errors:</span><br><span class="line"></span><br><span class="line">* 1 error occurred:</span><br><span class="line">	* permission denied</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">Vault 中文参考</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html">策略语法</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Vault</category>
+      </categories>
+      <tags>
+        <tag>Vault</tag>
       </tags>
   </entry>
 </search>
