@@ -27854,6 +27854,200 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 主从复制相关原理简述</title>
+    <url>/2207211114/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
+<h2 id="Mysql-主从同步基本原理"><a href="#Mysql-主从同步基本原理" class="headerlink" title="Mysql 主从同步基本原理"></a>Mysql 主从同步基本原理</h2></blockquote>
+<p>复制的基本过程如下：  </p>
+<ol>
+<li><p>Slave 上面的 IO 进程连接上 Master，并请求从指定日志文件的指定位置（或者从最开始的日志）之后的日志内容；</p>
+</li>
+<li><p>Master 接收到来自 Slave 的 IO 进程的请求后，通过负责复制的 IO 进程,根据请求信息,读取指定日志指定位置之后的日志信息，返回给 Slave 的 IO 进程。返回信息中除了日志所包含的信息之外，还包括本次返回的信息已经到 Master 端的 bin-log 文件的名称以及 bin-log 的位置；</p>
+</li>
+<li><p>Slave 的 IO 进程接收到信息后，将接收到的日志内容依次添加到 Slave 端的 relay-log 文件的最末端，并将读取到的 Master 端的 bin-log 的文件名和位置记录到 master-info 文件中，以便在下一次读取的时候能够清楚的告诉 Master “我需要从某个 bin-log 的哪个位置开始往后的日志内容，请发给我”；</p>
+</li>
+<li><p>Slave 的 Sql 进程检测到 relay-log 中新增加了内容后，会马上解析 relay-log 的内容，获得在 Master 端真实执行的那些可执行的内容，并在自身执行。</p>
+</li>
+</ol>
+<p>双主情况下，禁止同时写入，建议还是按照主从的方式工作，防止数据冲突。双主场景下，主要是切换主备方便。</p>
+<span id="more"></span>
+
+<blockquote>
+<h2 id="Mysql-复制方式"><a href="#Mysql-复制方式" class="headerlink" title="Mysql 复制方式"></a>Mysql 复制方式</h2></blockquote>
+<blockquote>
+<h3 id="异步复制（Asynchronous-replication）"><a href="#异步复制（Asynchronous-replication）" class="headerlink" title="异步复制（Asynchronous replication）"></a>异步复制（Asynchronous replication）</h3></blockquote>
+<p>MySQL 默认的复制即是异步的，主库在执行完客户端提交的事务后会立即将结果返给给客户端，并不关心从库是否已经接收并处理，这样就会有一个问题，主如果 crash 掉了，此时主上已经提交的事务可能并没有传到从上，如果此时，强行将从提升为主，可能导致新主上的数据不完整。</p>
+<blockquote>
+<h3 id="全同步复制（Fully-synchronous-replication）"><a href="#全同步复制（Fully-synchronous-replication）" class="headerlink" title="全同步复制（Fully synchronous replication）"></a>全同步复制（Fully synchronous replication）</h3></blockquote>
+<p>指当主库执行完一个事务，所有的从库都执行了该事务才返回给客户端。因为需要等待所有从库执行完该事务才能返回，所以全同步复制的性能必然会收到严重的影响。</p>
+<blockquote>
+<h3 id="半同步复制（Semisynchronous-replication）"><a href="#半同步复制（Semisynchronous-replication）" class="headerlink" title="半同步复制（Semisynchronous replication）"></a>半同步复制（Semisynchronous replication）</h3></blockquote>
+<p>介于异步复制和全同步复制之间，主库在执行完客户端提交的事务后不是立刻返回给客户端，而是等待至少一个从库接收到并写到 relay log 中才返回给客户端。相对于异步复制，半同步复制提高了数据的安全性，同时它也造成了一定程度的延迟，这个延迟最少是一个 TCP&#x2F;IP 往返的时间。所以，半同步复制最好在低延时的网络中使用。半同步复制失败(配置超时时间)，自动转为异步复制  </p>
+<h4 id="半同步复制配置步骤"><a href="#半同步复制配置步骤" class="headerlink" title="半同步复制配置步骤"></a>半同步复制配置步骤</h4><ol>
+<li>加载使用的插件</li>
+</ol>
+<p>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_master SONAME &#x27;semisync_master.so&#x27;;</span><br></pre></td></tr></table></figure>
+
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_slave SONAME &#x27;semisync_slave.so&#x27;;</span><br></pre></td></tr></table></figure>
+
+<p>通过 <code>show plugins;</code> 可查看已加载的插件</p>
+<ol start="2">
+<li>启动半同步复制</li>
+</ol>
+<p>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_master_enabled = 1;</span><br></pre></td></tr></table></figure>
+
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_slave_enabled = 1;</span><br></pre></td></tr></table></figure>
+
+<p>执行以下命令重启从库上的 IO 线程</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">STOP SLAVE IO_THREAD;</span><br><span class="line">START SLAVE IO_THREAD;</span><br></pre></td></tr></table></figure>
+
+<ol start="3">
+<li>检查半同步复制插件是否在运行</li>
+</ol>
+<p>主库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_master_status&#x27;;</span><br></pre></td></tr></table></figure>
+
+<p>从库执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_slave_status&#x27;;</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<h2 id="Mysql-复制级别说明"><a href="#Mysql-复制级别说明" class="headerlink" title="Mysql 复制级别说明"></a>Mysql 复制级别说明</h2></blockquote>
+<p>不同复制级别的设置会影响到 Master 端的 bin-log 记录成不同的形式。<br>配置方式:</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">binlog_format=&#x27;row&#x27;</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<h3 id="基于-sql-语句（Statement-level）"><a href="#基于-sql-语句（Statement-level）" class="headerlink" title="基于 sql 语句（Statement level）"></a>基于 sql 语句（Statement level）</h3></blockquote>
+<p>每一条会修改数据的 sql 都会记录到 master 的 bin-log 中。slave 在复制的时候，sql 进程会解析成和原来 master 端执行过的相同的 sql 来再次执行。</p>
+<p><strong>优点</strong> ：statement level 下的优点首先就是解决了<a href="#%E5%9F%BA%E4%BA%8E%E4%B8%80%E6%9D%A1%E8%AE%B0%E5%BD%95%EF%BC%88Row-level%EF%BC%89">row level</a>下的缺点，不需要记录每一行数据的变化，减少 bin-log 日志量，节约 IO，提高性能。因为他只需要记录在 Master 上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
+<p><strong>缺点</strong> ：由于他是记录的执行语句，所以，为了让这些语句在 slave 端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在 slave 端被执行的时候能够得到和在 master 端执行时候相同的结果。<br>另外就是，由于 Mysql 现在发展比较快，很多的新功能不断的加入，使 mysql 的复制遇到了不小的挑战，复制的时候涉及到越复杂的内容，bug 也就越容易出现。在 statement level 下，目前已经发现的就有不少情况会造成 mysql 的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep()函数在有些版本中就不能真确复制，在存储过程中使用了 last_insert_id()函数，可能会使 slave 和 master 上得到不一致的 id 等等。<br>由于 row level 是基于每一行来记录的变化，所以不会出现类似的问题。</p>
+<blockquote>
+<h3 id="基于一条记录（Row-level）"><a href="#基于一条记录（Row-level）" class="headerlink" title="基于一条记录（Row level）"></a>基于一条记录（Row level）</h3></blockquote>
+<p>日志中会记录成每一行数据被修改的形式，然后在 slave 端再对相同的数据进行修改</p>
+<p><strong>优点</strong> ： 在 row level 模式下，bin-log 中可以不记录执行的 sql 语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以 row level 的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程，或 function，以及 trigger 的调用和触发无法被正确复制的问题。<br>任何情况都可以被复制，这对复制来说是最安全可靠的；和其他大多数数据库系统的复制技术一样；多数情况下，从服务器上的表如果有主键的话，复制就会快了很多,更少的锁</p>
+<p><strong>缺点</strong> ： row level 下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条 update 语句：update product set owner_member_id &#x3D; ‘b’ where owner_member_id &#x3D; ‘a’，执行之后，日志中记录的不是这条 update 语句所对应的事件（mysql 以事件的形式来记录 bin-log 日志），而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log 日志的量就会很大。尤其是当执行 alter table 之类的语句的时候，产生的日志量是惊人的。因为 Mysql 对于 alter table 之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
+<blockquote>
+<h3 id="Mixed"><a href="#Mixed" class="headerlink" title="Mixed"></a>Mixed</h3></blockquote>
+<p>在 Mixed 模式下，Mysql 会根据执行的每一条具体的 sql 语句,来区分对待记录的日志形式，也就是在 Statement 和 Row 之间选择一种。新版本中的 Statment level 还是和以前一样，仅仅记录执行的语句。而新版本的 Mysql 中对 row level 模式也被做了优化，并不是所有的修改都会以 row level 来记录，像遇到表结构变更的时候就会以 statement 模式来记录，如果 sql 语句确实就是 update 或者 delete 等修改数据的语句，那么还是会记录所有行的变更。</p>
+<blockquote>
+<h3 id="GTID-模式"><a href="#GTID-模式" class="headerlink" title="GTID 模式"></a>GTID 模式</h3></blockquote>
+<p>需要基于 row 模式，mysql-5.6.2 支持,mysql5.6.10 后完善</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log_bin=on</span><br><span class="line">binlog_format=&#x27;row&#x27;</span><br><span class="line">gtid_mode=on</span><br><span class="line">enforce-gtid-consistency=on</span><br><span class="line">log-slave-updates=1</span><br></pre></td></tr></table></figure>
+
+<p>限制：</p>
+<ol>
+<li>不支持非事务引擎(从库报错, stop slave; start slave ; 忽略)</li>
+<li>不支持 create table … select 语句(主库直接报错)</li>
+<li>不支持一个 sql 同时更新一个事务引擎和非事务引擎的表</li>
+<li>在一个复制组中,必须要求统一开启 gtid 或是关闭 gtid</li>
+<li>开启 gtid 需要重启</li>
+<li>开启 gtid 后,就不在使用原来传统的复制方式</li>
+<li>对于 create temporary table 和 drop temporary table 语句不支持</li>
+<li>不支持 sql_slave_skip_counter</li>
+</ol>
+<blockquote>
+<h2 id="MySQL（主从）配置相关参数"><a href="#MySQL（主从）配置相关参数" class="headerlink" title="MySQL（主从）配置相关参数"></a>MySQL（主从）配置相关参数</h2></blockquote>
+<p>master 相关配置  </p>
+<figure class="highlight shell"><figcaption><span>master my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 1</span><br><span class="line">log-bin = mysql-bin    #要生成的二进制日志文件名称</span><br><span class="line">binlog_format=statement/row/mixed        ###复制实现模式/级别</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-do-db = rtzc_pnc_base       <span class="comment">##要同步的库.应该尽可能的在从库上使用replicate_wild_*，不建议在主库上使用</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-ignore-db = mysql   <span class="comment">#不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#### 一般不再主服务器上过滤，虽然可以减少主的开销，但这样会导致二进制日志不完整</span></span></span><br><span class="line">sync_binlog=0</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#######</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">0      表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span></span><br><span class="line"></span><br><span class="line">innodb_flush_log_at_trx_commit = 1</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##########innodb特有参数</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=0     每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=1     每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，<span class="built_in">log</span> buffer 会被写入到日志文件并刷写到磁盘。这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=2    当取值为 2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">replicate-wild-ignore-table=db.*               <span class="comment">###应该在从库上尽可能的使用replicate_wild_</span></span></span><br><span class="line"></span><br><span class="line">max_binlog_size</span><br><span class="line">expire_logs_days = 7          ##日志保存天数</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>slave 相关配置</p>
+<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 2</span><br><span class="line">relay-log = mysql-relay-bin</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-db = rtzc_pnc_base     <span class="comment">##应该在从库上尽可能的使用replicate_wild_*，并不会减少主往从复制数据占用带宽</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-table = db.table      <span class="comment">##表级过滤</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#replicate-ignore-table = db.table</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_ignore_db=<span class="built_in">test</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_do_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_ignore_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">slave-skip-errors = 1032,1062     <span class="comment">###跳过某些同步错误号</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">log-slave-updates=1          <span class="comment">###从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span></span></span><br><span class="line">log-bin = mysql-bin</span><br><span class="line"></span><br><span class="line">expire_logs_days = 7</span><br><span class="line"></span><br><span class="line">read-only         ###从库Slave中使用read-only参数，确保从库数据不被非法更新。</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">innodb_read_only = 1         <span class="comment">###控制root用户，慎用</span></span></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>安装 Mysql</title>
+    <url>/202211021345/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 kernel 5.4</li>
+<li>Mysql Server 5.7</li>
+</ul>
+<h1 id="Mysql-Server-安装步骤"><a href="#Mysql-Server-安装步骤" class="headerlink" title="Mysql Server 安装步骤"></a>Mysql Server 安装步骤</h1><h2 id="yum-方式安装"><a href="#yum-方式安装" class="headerlink" title="yum 方式安装"></a>yum 方式安装</h2><h3 id="安装-MySQL-5-7-的-yum-源"><a href="#安装-MySQL-5-7-的-yum-源" class="headerlink" title="安装  MySQL 5.7 的 yum 源"></a>安装  MySQL 5.7 的 yum 源</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span><br></pre></td></tr></table></figure>
+
+<p>如果因为源冲突，类似如下错误</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Processing Conflict: mysql80-community-release-el7-2.noarch conflicts mysql57-community-release</span><br></pre></td></tr></table></figure>
+
+<p>可以卸载旧的 <code>yum</code> 源安装包，重新安装</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep mysql</span></span><br><span class="line">mysql80-community-release-el7-2.noarch</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum remove mysql80-community-release-el7-2</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span></span><br></pre></td></tr></table></figure>
+
+<p>检查 <code>yum</code> 源中的 <code>mysql-community-server</code> 信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum info mysql-community-server</span></span><br><span class="line">Loaded plugins: fastestmirror</span><br><span class="line">Loading mirror speeds from cached hostfile</span><br><span class="line"> * base: download.cf.centos.org</span><br><span class="line"> * elrepo: reflector.westga.edu</span><br><span class="line"> * epel: coresite.mm.fcix.net</span><br><span class="line"> * extras: download.cf.centos.org</span><br><span class="line"> * updates: download.cf.centos.org</span><br><span class="line">Available Packages</span><br><span class="line">Name        : mysql-community-server</span><br><span class="line">Arch        : x86_64</span><br><span class="line">Version     : 5.7.40</span><br><span class="line">Release     : 1.el7</span><br><span class="line">Size        : 178 M</span><br><span class="line">Repo        : mysql57-community/x86_64</span><br><span class="line">Summary     : A very fast and reliable SQL database server</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h3 id="安装-mysql-community-server"><a href="#安装-mysql-community-server" class="headerlink" title="安装 mysql-community-server"></a>安装 mysql-community-server</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mysql-community-server</span><br></pre></td></tr></table></figure>
+
+<h3 id="启动-mysql-server"><a href="#启动-mysql-server" class="headerlink" title="启动 mysql server"></a>启动 mysql server</h3><p>配置 mysql server 开机启动，同时启动服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable mysqld --now</span><br></pre></td></tr></table></figure>
+
+<p>MySQL5.7 会为 root 用户随机生成一个临时密码，密码记录在日志 <code>/var/log/mysqld.log</code> 中</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grep &#x27;temporary password&#x27; /var/log/mysqld.log </span><br><span class="line">2022-11-02T06:09:54.520945Z 1 [Note] A temporary password is generated for root@localhost: ZQc6OCFidi:g</span><br></pre></td></tr></table></figure>
+
+<p>使用临时密码登陆，修改密码，临时密码登陆后不能做任何操作，必须先更改密码</p>
+<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">ALTER USER &#x27;root&#x27;@&#x27;localhost&#x27; IDENTIFIED BY &#x27;WadgyWwRdgDNEb+5Pw==&#x27;;</span><br></pre></td></tr></table></figure>
+
+<h1 id="Mariadb-安装"><a href="#Mariadb-安装" class="headerlink" title="Mariadb 安装"></a>Mariadb 安装</h1><h2 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
+<li>Mariadb 5.5</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mariadb-server</span><br></pre></td></tr></table></figure>
+
+<p>安装后启动，默认密码为空，登陆后使用以下命令修改密码</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">SET PASSWORD FOR &#x27;root&#x27;@&#x27;localhost&#x27; = PASSWORD(&#x27;your_password&#x27;);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes 上部署 Nacos</title>
+    <url>/20260502033711/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="nacos-使用-NFS-持久化安装部署"><a href="#nacos-使用-NFS-持久化安装部署" class="headerlink" title="nacos 使用 NFS 持久化安装部署"></a>nacos 使用 NFS 持久化安装部署</h1><h2 id="部署-NFS"><a href="#部署-NFS" class="headerlink" title="部署 NFS"></a>部署 NFS</h2><p>在 NFS Server 上执行以下命令：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update </span><br><span class="line">sudo apt install nfs-kernel-server -y</span><br></pre></td></tr></table></figure>
+
+<h3 id="创建用于存放-Nacos-数据的目录"><a href="#创建用于存放-Nacos-数据的目录" class="headerlink" title="创建用于存放 Nacos 数据的目录"></a>创建用于存放 Nacos 数据的目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo mkdir -p /data/nfs/nacos </span><br></pre></td></tr></table></figure>
+
+<p>调整权限，生产环境建议更精细的权限控制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo chown nobody:nogroup /data/nfs/nacos </span><br><span class="line">sudo chmod 777 /data/nfs/nacos</span><br></pre></td></tr></table></figure>
+
+<h3 id="配置-NFS-服务"><a href="#配置-NFS-服务" class="headerlink" title="配置 NFS 服务"></a>配置 NFS 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo nano /etc/exports</span><br><span class="line"></span><br><span class="line">/data/nfs/nacos  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)</span><br></pre></td></tr></table></figure>
+
+<p>启动服务：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo exportfs -a </span><br><span class="line">sudo systemctl restart nfs-kernel-server</span><br></pre></td></tr></table></figure>
+
+<h2 id="在-Kubernetes-中配置-NFS-客户端"><a href="#在-Kubernetes-中配置-NFS-客户端" class="headerlink" title="在 Kubernetes 中配置 NFS 客户端"></a>在 Kubernetes 中配置 NFS 客户端</h2><p>为了让 K8S 节点能挂载 NFS，所有 Worker 节点都必须安装客户端工具：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt install nfs-common -y</span><br></pre></td></tr></table></figure>
+
+<h3 id="部署-NFS-动态存储类-StorageClass"><a href="#部署-NFS-动态存储类-StorageClass" class="headerlink" title="部署 NFS 动态存储类 (StorageClass)"></a>部署 NFS 动态存储类 (StorageClass)</h3><p>手动创建 PV 非常麻烦，在 K8S 中我们通常使用 <code>nfs-subdir-external-provisioner</code> 来实现自动创建 PV。</p>
+<h4 id="使用-Helm-快速部署-推荐"><a href="#使用-Helm-快速部署-推荐" class="headerlink" title="使用 Helm 快速部署 (推荐)"></a>使用 Helm 快速部署 (推荐)</h4><p>这是目前最简单、最标准的方式，添加仓库</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/ </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>安装 <code>nfs-provisioner</code> 作为 <strong>存储 Provisioner</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install nfs-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \</span><br><span class="line">     --set nfs.server=192.168.1.100 \</span><br><span class="line">     --set nfs.path=/data/nfs/nacos \</span><br><span class="line">     --set storageClass.name=nfs-storage \</span><br><span class="line">     --set storageClass.defaultClass=true</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>kubectl get sc</code> 验证 StorageClass</p>
+<h2 id="Nacos-关联-NFS-存储"><a href="#Nacos-关联-NFS-存储" class="headerlink" title="Nacos 关联 NFS 存储"></a>Nacos 关联 NFS 存储</h2><p>现在可以在 Nacos 的部署配置中使用这个 <code>nfs-storage</code> 的 StorageClass 了。参考以下资源清单部署单节点的 Nacos 完整服务，包括 Nginx Ingress 以及鉴权</p>
+<figure class="highlight yaml"><figcaption><span>nacos-single-node.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span>            </span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/whitelist-source-range:</span> <span class="string">&quot;54.251.236.229/24,206.119.115.76/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>部署完成后通过 <code>nacos.example.click</code> 登录后台，初始默认密码为 <code>nacos/nacos</code></p>
+<h1 id="nacos-使用-Mysql-持久化安装部署"><a href="#nacos-使用-Mysql-持久化安装部署" class="headerlink" title="nacos 使用 Mysql 持久化安装部署"></a>nacos 使用 Mysql 持久化安装部署</h1><p>要使用 Mysql 存储数据，只需修改资源清单为以下内容即可：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span>          </span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">SPRING_DATASOURCE_PLATFORM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;mysql&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_HOST</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_HOST&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PORT</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;3306&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_NAME</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_DB_NAME&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_USER</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_USER&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PASSWORD</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_PASSWORD&gt;&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_PARAM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;characterEncoding=utf8&amp;connectTimeout=1000&amp;socketTimeout=3000&amp;autoReconnect=true&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        </span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">rpc</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">9848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">9848</span>      </span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="comment"># nginx.ingress.kubernetes.io/whitelist-source-range: &quot;54.251.236.2/24,206.119.115.7/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
     <title>namesilo api 使用</title>
     <url>/202303031036/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.namesilo.com/api-reference">Namesilo api 官方文档</a></p>
@@ -39390,176 +39584,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之天水讼</title>
-    <url>/20250904163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天水讼"><a href="#天水讼" class="headerlink" title="天水讼"></a>天水讼</h1><p><img src="https://i.0920811.xyz/img_345.png"></p>
-<p>讼，坎下乾上、坎内乾外。乾为天在上，坎为水在下。内陷险（坎）外刚健（乾），象征 <strong>刚强遇险</strong> ，双方针锋相对，易生争讼。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">讼，有孚，窒惕，中吉，终凶。利见大人，不利涉大川。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：讼，上刚下险，险而健，讼。讼有孚，窒惕，中吉，刚来而得中也。终凶，讼不可成也。利见大人，尚中正也。不利涉大川，入于渊也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与水违行，讼。君子以作事谋始。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>讼</strong> ： 争讼、诉讼、象征人与人之间的争端。</li>
-<li><strong>有孚，窒惕，中吉</strong> ： 孚，诚信、守信、坚守本心； 窒，受阻滞、阻塞、不通，与亨相反。讼卦由遁卦（内艮外乾）六二和九三交换而来，即 <strong>刚来而得中也</strong> 。下卦坎中九二上下皆为柔爻，故有孚。天与水违行，水向下落，天气上行，背道而行，故窒塞不通。</li>
-<li><strong>中吉</strong> ： 刚来而得中，九二在下卦中位，有中庸之德。意思是打官司（诉讼）最好适可而止。</li>
-<li><strong>终凶</strong> ： 若持续官司，争讼到底（固执讼事），结果必凶。</li>
-<li><strong>不利涉大川</strong> ： 讼时不宜冒险行动（避免投资、合作等重大决策，以防风险叠加），否则陷入险境。</li>
-<li><strong>讼，上刚下险，险而健讼</strong> ： 上乾（刚健）下坎（险陷），象征 <strong>险恶有刚强</strong> ，易生争讼。</li>
-<li><strong>讼，有孚，窒踢，中吉，刚来而得中也</strong> ： 刚来而得中，指九二阳爻居中（刚来而得中），成为上下两柔爻的主，上下两柔爻依附相合，故为有孚。内有坎险，故窒惕。居于中位，行不失中，故中吉。</li>
-<li><strong>利见大人，尚中正也</strong> ： 尚，崇尚，推崇。中正，指 <strong>九五阳爻尊位而居中得正</strong> 。九五居乾中，为乾卦九五 “飞龙在天，利见大人” ，为卦主。</li>
-<li><strong>不利涉大川，入于渊也</strong> ： <strong>渊 是 坎险 的极致（水之深者为渊）</strong> 。争讼时本身已处 险 中（下卦坎），若再 涉大川（冒大险），相当于 从险处坠入深渊。</li>
-<li><strong>天与水违行，讼；君子以做事谋始</strong> ： 天（乾）主上升、向上，水（坎）主向下、下降，二者方向相反（违行），象征矛盾对立，故生讼。要避免争讼，关键在 <strong>做事的开始就谋划周全，从源头消除 方向对立、产生争讼 的可能。</strong></li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>讼者，争也。争之为义，不可久也。能惕而守中，则吉；若遂讼之，终必凶也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>讼之道，在于知止。讼不可成，必归于凶。若惕而中，则知讼之不可久也。利见大人者，必赖明哲以正曲直也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>讼卦之象，乾上坎下。健而险，故有讼。君子观之，知事贵于始，不可使至于讼也。</code></p>
-</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不永所事，小有言，终吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不永所事，讼不可长也。虽有小言，其辩明也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不永所事，讼不可久也</strong> ： 永，长久、持续、持久。所事，指引发争讼、争执得事物&#x2F;矛盾。不要长期纠缠于争讼；讼不可、不应久。久，终凶；能止，则吉。</li>
-<li><strong>虽有小言，其辨明也</strong> ： 小的争言，可澄清事实、辨明事理、厘清诉求，不致成大祸。但切忌执拗不休、纠缠不清。</li>
-</ul>
-<p>初六为讼卦的初始爻象征 <strong>争讼刚萌芽的阶段</strong> ，作为 <strong>阴爻居 初位（事物开端），其特性为 柔弱、谨慎、顺正，恰好与 争讼需及时止息 的核心逻辑契合</strong> 。上与九四为正应，前临互离，离为明，有小的口舌之争，但最终能说明情况，终吉。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初六以阴居下，非能讼者，然处讼之始，志欲讼也。能不久于所事，则讼自息。虽小有言，终则得吉也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>讼，不可久也。初在讼之始，若知止而不永所事，则虽有小过言语，终得吉也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>初六阴柔在下，不能讼也。若遂讼，则终不利。能不永所事，止于小言，则终吉。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不克讼，归而逋，其邑人三百户，无眚。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不克讼，归逋窜也。自下讼上，患至掇也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不克讼</strong> ： 克，克制、战胜、取胜。不克讼，意为争讼失败。九二虽刚中，但讼于上位者（九五为其敌应，处尊位），必然不能取胜。</li>
-<li><strong>归而逋</strong> ： 归，退回、回来。逋，退避、逃避、逃遁、逃亡、躲避、隐藏。知不可为而退避。</li>
-<li><strong>无眚（shěng）</strong> ： 小的灾祸、咎灾、灾眚。无眚，平安、无灾无祸。</li>
-<li><strong>自下讼上，患至掇也。</strong> ： 掇，本义和手部动作相关、（用手）拾取、获取、摘取，引申为 引发、主动招致。九二以臣（下）之位与九五之君（上）争讼，位卑而犯尊，自招其患。</li>
-</ul>
-<p>九二阳居阴位，刚而能柔（得中不过刚），下卦之中，得 <strong>刚中</strong> 之德，但上于九五敌应，且九五为 君位，九二与九五同性相斥，形成 敌刚，象征以下犯上，力量悬殊，难以取胜。 <strong>讼卦主旨 终凶</strong> ，九二若认清形势，知止而退，虽小有损失，终无咎。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九二虽居中而正，然在下讼上，力不胜也，故曰不克讼。能知不可而退，归而逋，虽失邑人三百户，犹无咎也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>二刚中得正，本可为主，然讼上则不可胜。能知不克而退，虽有所失，犹免于祸。三百户，言小邑也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九二以刚中而得正，本可有为，但讼于上，终不胜。若能退避，则虽有所失，犹无咎也。三百户，小邑数也。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">食旧德，贞厉，终吉，或从王事，无成。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：食旧德，从上吉也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>食旧德</strong> ： 食，吃、享用、依托、依靠。旧德，世袭制社会里，祖先立功封爵，死后子孙可继承，称为 <strong>食旧德</strong> 。第三爻为 <strong>公位</strong> ，可能有先祖余荫，即为旧德。</li>
-<li><strong>贞历，终吉</strong> ： 历，危险、灾难；食旧德，要守正并保持危历感，不要张狂居功，最终吉祥。</li>
-<li><strong>或从王事，无成</strong> ： 从，和主相对、顺从（柔顺）、跟从、不做主。无成，不是做事无法成功（成就），而是不居功，不自傲。从上做事，事成，不自居功。</li>
-</ul>
-<p>六三阴爻居阳位，位不中正，处坎卦之终（险之极），下乘九二（柔乘刚），上承九四，处于两刚之间，其出路不是 争、主 ，而是 从、守旧与顺上，六三只有顺从上位才能化险为夷。靠 旧德 而不敢擅作新举，正是 顺 的具体表现。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六三阴柔不中，不能自有其德，赖上之德以食焉，故曰“食旧德”。处讼之时，贞则厉，然能从上，则终吉。或从王事而无成者，柔而无功也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六三柔而不中，不能自有功德，赖旧德以食。贞则厉，终则吉。从王事无成者，谓柔不中正，不能有功也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六三阴柔不中，不能自有其德，赖上之旧德以食。能贞固则虽危厉，犹终吉。若从王事，则以柔不中，终无所成也。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不克讼，复自命，渝安贞，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：复即命，渝安贞;不失也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不克讼，复自命</strong> ： 复，返也、回归、反思。自命，自身的本分、天理、使命（天命，即事物的自然规律）。九五为卦主，九四与九五争讼，不胜。</li>
-<li><strong>渝安贞，吉</strong> ： 渝，改变、调整。改变初衷，安于正道。守正不移。不再躁动争讼，安稳守正。四为诸侯&#x2F;宰位，如果争讼不胜，不坚持争讼，安分守正，顺从天命，就会吉祥。</li>
-<li><strong>复即命，渝安贞;不失也</strong> ： 即，贴近、靠近、回归。改变争讼初衷，靠近事物的本质秩序（自命）。安稳守正、不偏离本分。</li>
-</ul>
-<p>九四阳爻居阴位，虽刚而能柔，有 自我裁量、变通 得空间，能主动认知到争讼不可为（近君位九五，九五尊位得中而正），理性得改变争讼之心、顺于上、坚守本分（复即命，渝安贞，不失也）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四居上近君，不中不正，欲讼则不能胜。能反命听上，变而安于贞正，则吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四居近君之位，不中不正，欲讼则不克。能反命而从上，变心而安贞，乃吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九四虽刚，居不正之位，不可讼也。若讼则不克。能复即命而从五，变心而安于贞正，则吉。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">讼，元吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：讼，元吉，以中正也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>元吉</strong> ： 元，为开始、创始、根本、首要、大。这是《周易》中对结果的最高评价（区别于 <strong>小吉、终吉</strong> ），表示能实现长期和谐，奠定根本的吉祥局面</li>
-</ul>
-<p>九五阳刚居上卦之中，位正且中，为卦主，象征有权威、有度量、能以 <strong>中正之道（公正、刚健、不偏不倚、飞龙在天，利见大人）</strong> 平讼止争。与前四爻 <strong>被动应对争讼 不同，九五是 主动化解争讼的核心角色，九五公正，就是大吉的源头。</strong></p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五居中得正，能断是非，正讼之主也。讼而能中正，则无所不吉，故曰“元吉”</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五以刚中正居尊位，讼之主也。能中正，则所断皆得理，故元吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五中正之位，为讼之主。能中正以断讼，故元吉。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">或锡之鞶带，终朝三褫之。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：以讼受服，亦不足敬也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>或锡之鞶（pán）带</strong> ： 锡，通赐，赐予、赏赐。鞶带，古代大夫以上官员系的皮革腰带，为王者赐予的荣宠或官职，象征 爵位、荣誉、利益。</li>
-<li><strong>终朝三褫（chǐ）之</strong> ： 终朝，整个早上，形容极端时间。褫，剥夺、收回、脱去、褫夺。</li>
-<li><strong>以讼受服</strong> ： 接受赏赐、获得尊位（鞶带）。依靠争讼、诉讼获得荣誉、利益，而非 德行、功绩。德不配位，必有灾殃，难以长久（终凶）</li>
-</ul>
-<p>上九阳爻居阴位，居讼卦之终，虽有刚健之性，却 位不正。阳刚至极，好讼到底。与六三有应，六三柔弱无力，上九凭强势压人，终获表面胜利，争讼或许能带来短暂的 胜利（荣誉、利益），但永远无法带来长久的 安稳（终凶）</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上九居讼之极，讼不可久。或虽得胜，受服带之宠，然无德以处之，故终朝而三失之。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>鞶带，饰服也。讼而得服，不由德而由讼，不能久享，故曰“终朝三褫之”。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>上九讼之极也。或因讼得胜，锡以鞶带之宠；然讼不可久，非德而有，必速失之，故曰“终朝三褫之”。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之天地否</title>
     <url>/20250922102639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天地否"><a href="#天地否" class="headerlink" title="天地否"></a>天地否</h1><p><img src="https://i.0920811.xyz/img_352.png"></p>
@@ -40475,163 +40499,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之水天需</title>
-    <url>/20250902163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水天需"><a href="#水天需" class="headerlink" title="水天需"></a>水天需</h1><p><img src="https://i.0920811.xyz/img_344.png"></p>
-<p>需，乾（天、健）下坎（水、云、险）上，刚健在内，险陷在外，需待时而动。云已升至天顶，雨意沛然却未降（欲雨未雨，需待云气聚集、时机成熟方能降雨），故曰 <strong>需——等待</strong> 。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需，有孚，光亨，贞吉。利涉大川。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：需，须也。险在前也。刚健而不陷，其义不困穷矣。需有孚，光亨，贞吉。位乎天位，以正中也。利涉大川，往有功也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：云上於天，需。君子以饮食宴乐。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>序卦</span></figcaption><table><tr><td class="code"><pre><span class="line">物稚不可以不养，故受之以需。需者，饮食之道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>有孚</strong> ： 孚，诚信、信实、守信。《周易》中，凡有异性爻来亲近应和为有孚。</li>
-<li><strong>需，须也。险在前也</strong> ： 须，等待、须待。前面有险（坎），需要等待时机在行动。</li>
-<li><strong>刚健而不陷，其义不困穷矣</strong> ：外卦为坎为陷险，内卦为乾为刚健，内有刚健可以突破艰险，不会轻易陷入陷险，不会被困。</li>
-<li><strong>位乎天位，以正中也。</strong> ： 九五尊位得中且正。为全卦主爻，符合天道，所以能守正吉祥。</li>
-<li><strong>利涉大川，往有功也</strong> ： 待时机成熟再行动，能济险，成大功</li>
-<li><strong>君子以饮食宴乐</strong> ： 饮食宴乐，象征君子在等待时，要自养（调养身心、养精蓄锐、充实自身），静待天时而动。</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于郊，利用恒，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于郊，不犯难行也。利用恒，无咎，未失常也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>需于郊。利用恒</strong> ： 郊，郊外、城外之地、郊野，邑外谓之郊，郊外谓之野；恒，常、恒常、恒心、持久。需于郊，象征着离险（坎）较远，未至危险之境，此时应该保持恒心、不动摇、不随意踏入险境。</li>
-<li><strong>需于郊，不犯难行也</strong> ：在郊外等待，不冒险强行前行（强行去做困难、超出自身能力的事）</li>
-<li><strong>未失常也</strong> ： 常，恒、恒心、坚守。指坚持守正（恒、不冒进）、坚守本心不动摇。阳刚好动，本易急躁；但能恒常，即未失其常度，故得无咎。</li>
-</ul>
-<p>初九阳爻居阳位（得位，能守正），但处全卦最下，离上坎之险最远，故曰郊。初九尚在郊外，险未当前，最忌冒进。此时唯一要做的就是保持节奏，积累实力，不轻举妄动（利用恒，不犯难行）。初九在乾卦是 <strong>潜龙勿用</strong> ，不宜动。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>在郊，未入难也。守常以待，故无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>郊者，远险之地。需而处此，不犯难，能守正则无咎。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>需于郊者，未至于难之地也。能守恒常之道，则无咎矣。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于沙，小有言，终吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于沙，衍在中也。虽小有言，以终吉也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>需于沙</strong> ： 沙，河岸浅滩、沙滩，介于郊野与深水之间。喻已靠近险境，但仍在缓冲地带。等待于沙滩，不是完全安全，但也未深陷险中。</li>
-<li><strong>小有言</strong> ： 言，议论、微词、口舌、言语非议。下互卦为兑，兑为言。</li>
-<li><strong>需于沙，衍在中也</strong> ： 衍，延展、宽裕、包容、从容不迫，象征有一定得活动空间和转圜余地。在中，指九二得中（下卦坎得第二爻）。</li>
-</ul>
-<p>九二阳爻居阴位，虽不当位，却得中；处下卦之中，离上坎之险又近一步，故象 沙。初九 郊 离险最远；九二 沙 已临水边，进退之间，最易受人议论（小有言）。但因得中（能守正），又有足够得活动空间（衍在中，能包容试错），心性宽裕，不急不躁，终能转危为安。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>需于沙，近难也。虽有小言，守中则终吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>沙者，险之渐也。九二居中，守正而待，虽有小言，终无害也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>沙，水滨也。二居中而正，虽近险而未入，故虽小有言，终吉。</code></p>
-<blockquote>
-<p><code>二居中而正</code> ，从爻位爻性来说，九二爻，中而不正，此处得 <code>二居中而正</code> 中得正，应理解为 <code>守正</code></p>
-</blockquote>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于泥，致寇至。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于泥，灾在外也。自我致寇，敬慎不败也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>需于泥</strong> ： 泥，水边得泥泞之地、沼泽，比九二沙更深、更危险之地。在泥泞之地等待，已近水边（坎险），脚已下陷，进退皆难。</li>
-<li><strong>自我致寇</strong> ： 坎为盗寇，故 <strong>自我致寇</strong></li>
-<li><strong>需于泥，灾在外也</strong> ： 灾（坎险）就在眼前，强调外部风险环境。 对此，只要能保持对外部环境得洞察和敬畏（不自大、刚健过刚），自身保持谨慎、勿要激进冒险，仍可避免失败。九三在下卦乾中，乾为健，有刚健行动力。</li>
-</ul>
-<p>九三（阳）爻，位于下卦 乾卦 最上，阳爻居阳位，过刚而不中，易阳刚用事（自身特性），但已逼近险地（上卦坎为水，象征险阻，外部环境），再前一步即入上卦坎险，正是泥象。刚而不柔，最易冒进，故 <strong>自我致寇</strong> 。这种情况下，若能及时敬畏、谨慎、审时度势，仍可避免失败（得正）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>泥者，险之渐也。三居险之渐，不知止而进，故致寇至也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>泥者，水之渐深。三以阳刚处险，若躁进则自招寇难，若能敬慎以待，则虽有外患，犹可免也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>泥，险之渐。三以阳刚而居险中，躁而进，则必致寇至矣。然灾在外，非自内出；能敬慎以守，则虽有外寇，不至于败。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于血，出自穴。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于血，顺以听也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>需于血</strong> ： 血，坎之象，象征处于危险中、已流血受伤（创伤与代价）。</li>
-<li><strong>出自穴</strong> ： 穴，险中之地。</li>
-<li><strong>顺以听也</strong> ： 能从穴（险）中出，是因为六四位正（阴爻居阴位），上承九五阳刚，下应初九（有援），能顺从正位（九五），顺而听命，不妄自行动。</li>
-</ul>
-<p>六四已入坎（险陷）中，但阴爻居阴位，位正，上承九五阳刚，下正应初九，虽陷险害，但以柔顺之德顺于时势、听取建议吸收教训（顺以听也），因而得以脱险</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>血者，伤害之象也。穴者，险之处也。四以阴居阴，得位而顺，虽遇险害，能顺以听，故能出穴而免于害也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>坎为血，穴亦险也。四以阴居阴，能守顺听上，虽陷险害，犹可出也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>血，坎之象。穴，险中也。六四以阴居阴，得位而顺，能听乎九五，故虽在险中，犹可以出也。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于酒食，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：酒食贞吉，以中正也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>需于酒食，贞吉</strong> ： 酒食象征安乐、宴饮，喻示 安然处需，从容等待，心不躁动。守持正道，必得吉祥。</li>
-<li><strong>以中正也</strong> ： 九五阳爻居阳位，处尊位而得中得正，为全卦之主，象征 <strong>雷雨已具，但须待时</strong> 。既不失刚健（乾），又能以 酒食 示宽缓养气，正是 <strong>刚健而不陷</strong> 的最高境界</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>酒食者，安乐之事也。居尊中之位，以刚中正，虽处需时，而能以中正守之，安而有待，故曰酒食贞吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五居中得正，需之极也，而能安处以中正，故曰需于酒食。酒食者，宴乐之象。能安于正道而不忧困，吉也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五以阳居尊位，中正而得体。虽当需时，而能以中正守正，不失其道，故可以安宴而待，贞而吉也。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">入于穴，有不速之客三人来，敬之终吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不速之客来，敬之终吉。虽不当位，未大失也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不速之客</strong> ： 未被邀请、非所召、意外出现的人或事。待时而动，但不能一直等待，会错失机遇，面对机遇（不速之客），要谨慎忖度，能抓住就要抓住（敬之终吉）</li>
-<li><strong>虽不当位，未大失也</strong> ： 不当位指 <strong>阴爻居坎险之极（坎最上爻）</strong> ，虽 <strong>得正 但乘九五之刚，不顺，上六正应九三，未大失</strong></li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>穴者，险之处也。上六阴柔居险之极，不能自出，必有客来援之。客者，阳也。三人者，三阳也。虽不速而自至，若能敬之，则终吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>险极而不能自出，必赖阳刚之助。不速之客，谓下卦三阳也。来而敬之，则终吉。虽不当位，未大失也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>穴，险极之象。上六居之，柔而不当，不能自出，必待阳来救之。三人者，下卦三阳也。敬而顺之，则终吉。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之泽风大过</title>
     <url>/20251113153340/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽风大过"><a href="#泽风大过" class="headerlink" title="泽风大过"></a>泽风大过</h1><p><img src="https://i.0920811.xyz/img_373.png"></p>
@@ -40769,158 +40636,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之泽雷随</title>
-    <url>/20251001132040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽雷随"><a href="#泽雷随" class="headerlink" title="泽雷随"></a>泽雷随</h1><p><img src="https://i.0920811.xyz/img_357.png"></p>
-<p>随，上（外）兑（泽、悦）下（内）震（雷、动），动而悦，象征着顺应（时势）、顺势而为、随时势而动。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随，元亨，利贞，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：随，刚来而下柔，动而说，随。大亨贞，无咎，而天下随时。随时之义大矣哉!</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽中有雷，随;君子以向晦入宴息。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>刚来而下柔，动而悦</strong> ： 随卦从否卦变来，否卦上九和初六交换，上九下到随卦初九位，处柔爻之下。否卦天地不通，上下两爻交换，天地往来，阴阳交流，变得通常，故元亨 0</li>
-<li><strong>君子以向晦入宴息</strong> ： 晦，夜晚、日暮、黄昏。君子效法卦象，随时而行：白天活动，夜晚歇息，动静有度，随顺自然。随之为义，随时而动，不失其正。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>随者，随时也。随时以动，则无往不利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随时而动者，非附和而已，乃因时顺理之谓。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>随，从也。随时而动，随理而行，则元亨利贞无咎。</code></p>
-</li>
-</ul>
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">官有渝，贞吉。出门交有功。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：官有渝，从正吉也。出门交有功，不失也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>官有渝</strong> ： 官，犹常（道）也。有渝者，变革旧常。能随时改正，必吉。渝，改变、变动、变化。</li>
-</ul>
-<p>初九刚来而下柔，阳爻居阳位，得正，为随卦主爻。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>官有渝者，变常也。能变旧而随时，不失正，则吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随者，当随时而动，不可执常。初九刚正，能随时改易，所以吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>官有渝，谓能变通。随时而变，从正则吉；交际而守正，亦有功。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系小子，失丈夫。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系小子，弗兼与也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>系小子，失丈夫</strong> ： 系，依附、追随、束缚。六二和九五为正应，可以为丈夫，初九为随卦主爻，六二比邻初九，初九为震，为长子，可为小子。若为女性，则顾念子而失丈夫，有离异之象；若男性，丈夫也可为德厚长者，小子为平庸之辈。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二以柔居中，本应九五。若系初九，则失九五。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随在得其所随。六二应九五而正，若舍之而系于初九，是失正也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>小子，指初九；丈夫，指九五。六二居中得正，应于九五，正随之道也。若系初九，则失九五矣。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系丈夫，失小子。随有求，得，利居贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系丈夫，志舍下也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>系丈夫，失小子</strong> ： 舍初九而随九四。</li>
-<li><strong>志舍下也</strong> ： 三欲随上，舍近而求远，是舍小子而随丈夫。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>二则随小子而失丈夫，三则随丈夫而失小子。志舍下也，故利居贞。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随在择所随，三能舍近就远，志在上也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>小子谓初九，丈夫谓九五。三舍近随远，志在随正也。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随有获，贞凶。有孚在道，以明，何咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：随有获，其义凶也。有孚在道，明功也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>随有获，贞凶</strong> ： 获，获利、获得。九四阳爻居阴位，刚而位不当，又处于近君位，易因刚健（锋芒过露）而居功逐利，招致凶险。</li>
-<li><strong>有孚在道，明功也</strong> ： 孚，诚心、诚信、诚实、真诚。明，明辨、清晰。随人做事，居功获利，其义凶。心怀诚信，明辨所处，则无咎害。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九四失位，随而有获，非正也，故贞凶。唯有孚守道，乃可以免咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九四以刚居阴位，非正。若随而得，必有凶。然能诚信守道，则虽得，亦无咎。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>随有获，非正也，故凶。有孚在道，则虽获亦可，无咎。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">孚于嘉，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：孚于嘉，吉;位正中也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>孚于嘉</strong> ： 嘉，美好、优秀、善的人或事。</li>
-</ul>
-<p>九五居尊位，阳爻居阳位，又在全卦的中位，正中而得正。以刚健中正之德居尊位，又能以孚随正道、美善之事（嘉），所以合随道。为全卦最好的一爻。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五刚中居尊，孚信在上，下应六二，故孚于嘉而吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五以刚中正居尊位，应六二之柔顺，君臣相孚，随从正道，吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>孚于嘉，言以诚信随美善也。九五中正居尊，正应六二，吉之道也。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拘系之，乃从维之。王用亨于西山。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拘系之，上穷也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>拘系之，乃从维之</strong> ： 拘系，拘束、束缚、捆绑。从、跟从、追随、顺从。维，维系、维持、加固。</li>
-<li><strong>王用亨于西山</strong> ： 用亨，通享，祭祀、祭礼。西山，西周的重要祭祀之地（传为周文王祭祀先祖或天地的场所，象征 “庄重、终结性的仪式”）</li>
-</ul>
-<p>上六阴爻处随卦最上（极），随之至极，随之穷尽，只知（能、过渡）追随，反而被束缚、限制。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上六随之极，柔而无正，故拘系。然犹能随正，则乃可维。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>随之至极，必至困穷。然能返正，从维大道，犹可以济。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>拘系之，随极而困也。乃从维之，犹可以归正。王用亨于西山，言随正以大祭，归于至诚。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之泽山咸</title>
     <url>/20251119103840/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽山咸"><a href="#泽山咸" class="headerlink" title="泽山咸"></a>泽山咸</h1><p><img src="https://i.0920811.xyz/img_376.png"></p>
@@ -41035,6 +40750,261 @@ width: 20%;
 <li><strong>咸其辅颊舌，滕口说也</strong> ： 辅，两腮旁的骨、牙床。颊，面颊、脸颊。舌，舌头。滕口，张口、喋喋不休、口舌动的样子。说，通悦，取悦</li>
 </ul>
 <p>上六阴居卦极，与九三（盲动）相应，象征虚言。位高而无实，唯剩 “口说” 之应，故成 “滕口” 之象（“滕” 通 “腾”，腾涌、滔滔不绝之意），口惠而实不至。</p>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之天水讼</title>
+    <url>/20250904163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天水讼"><a href="#天水讼" class="headerlink" title="天水讼"></a>天水讼</h1><p><img src="https://i.0920811.xyz/img_345.png"></p>
+<p>讼，坎下乾上、坎内乾外。乾为天在上，坎为水在下。内陷险（坎）外刚健（乾），象征 <strong>刚强遇险</strong> ，双方针锋相对，易生争讼。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">讼，有孚，窒惕，中吉，终凶。利见大人，不利涉大川。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：讼，上刚下险，险而健，讼。讼有孚，窒惕，中吉，刚来而得中也。终凶，讼不可成也。利见大人，尚中正也。不利涉大川，入于渊也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：天与水违行，讼。君子以作事谋始。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>讼</strong> ： 争讼、诉讼、象征人与人之间的争端。</li>
+<li><strong>有孚，窒惕，中吉</strong> ： 孚，诚信、守信、坚守本心； 窒，受阻滞、阻塞、不通，与亨相反。讼卦由遁卦（内艮外乾）六二和九三交换而来，即 <strong>刚来而得中也</strong> 。下卦坎中九二上下皆为柔爻，故有孚。天与水违行，水向下落，天气上行，背道而行，故窒塞不通。</li>
+<li><strong>中吉</strong> ： 刚来而得中，九二在下卦中位，有中庸之德。意思是打官司（诉讼）最好适可而止。</li>
+<li><strong>终凶</strong> ： 若持续官司，争讼到底（固执讼事），结果必凶。</li>
+<li><strong>不利涉大川</strong> ： 讼时不宜冒险行动（避免投资、合作等重大决策，以防风险叠加），否则陷入险境。</li>
+<li><strong>讼，上刚下险，险而健讼</strong> ： 上乾（刚健）下坎（险陷），象征 <strong>险恶有刚强</strong> ，易生争讼。</li>
+<li><strong>讼，有孚，窒踢，中吉，刚来而得中也</strong> ： 刚来而得中，指九二阳爻居中（刚来而得中），成为上下两柔爻的主，上下两柔爻依附相合，故为有孚。内有坎险，故窒惕。居于中位，行不失中，故中吉。</li>
+<li><strong>利见大人，尚中正也</strong> ： 尚，崇尚，推崇。中正，指 <strong>九五阳爻尊位而居中得正</strong> 。九五居乾中，为乾卦九五 “飞龙在天，利见大人” ，为卦主。</li>
+<li><strong>不利涉大川，入于渊也</strong> ： <strong>渊 是 坎险 的极致（水之深者为渊）</strong> 。争讼时本身已处 险 中（下卦坎），若再 涉大川（冒大险），相当于 从险处坠入深渊。</li>
+<li><strong>天与水违行，讼；君子以做事谋始</strong> ： 天（乾）主上升、向上，水（坎）主向下、下降，二者方向相反（违行），象征矛盾对立，故生讼。要避免争讼，关键在 <strong>做事的开始就谋划周全，从源头消除 方向对立、产生争讼 的可能。</strong></li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>讼者，争也。争之为义，不可久也。能惕而守中，则吉；若遂讼之，终必凶也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>讼之道，在于知止。讼不可成，必归于凶。若惕而中，则知讼之不可久也。利见大人者，必赖明哲以正曲直也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>讼卦之象，乾上坎下。健而险，故有讼。君子观之，知事贵于始，不可使至于讼也。</code></p>
+</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不永所事，小有言，终吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不永所事，讼不可长也。虽有小言，其辩明也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不永所事，讼不可久也</strong> ： 永，长久、持续、持久。所事，指引发争讼、争执得事物&#x2F;矛盾。不要长期纠缠于争讼；讼不可、不应久。久，终凶；能止，则吉。</li>
+<li><strong>虽有小言，其辨明也</strong> ： 小的争言，可澄清事实、辨明事理、厘清诉求，不致成大祸。但切忌执拗不休、纠缠不清。</li>
+</ul>
+<p>初六为讼卦的初始爻象征 <strong>争讼刚萌芽的阶段</strong> ，作为 <strong>阴爻居 初位（事物开端），其特性为 柔弱、谨慎、顺正，恰好与 争讼需及时止息 的核心逻辑契合</strong> 。上与九四为正应，前临互离，离为明，有小的口舌之争，但最终能说明情况，终吉。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初六以阴居下，非能讼者，然处讼之始，志欲讼也。能不久于所事，则讼自息。虽小有言，终则得吉也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>讼，不可久也。初在讼之始，若知止而不永所事，则虽有小过言语，终得吉也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>初六阴柔在下，不能讼也。若遂讼，则终不利。能不永所事，止于小言，则终吉。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不克讼，归而逋，其邑人三百户，无眚。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不克讼，归逋窜也。自下讼上，患至掇也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不克讼</strong> ： 克，克制、战胜、取胜。不克讼，意为争讼失败。九二虽刚中，但讼于上位者（九五为其敌应，处尊位），必然不能取胜。</li>
+<li><strong>归而逋</strong> ： 归，退回、回来。逋，退避、逃避、逃遁、逃亡、躲避、隐藏。知不可为而退避。</li>
+<li><strong>无眚（shěng）</strong> ： 小的灾祸、咎灾、灾眚。无眚，平安、无灾无祸。</li>
+<li><strong>自下讼上，患至掇也。</strong> ： 掇，本义和手部动作相关、（用手）拾取、获取、摘取，引申为 引发、主动招致。九二以臣（下）之位与九五之君（上）争讼，位卑而犯尊，自招其患。</li>
+</ul>
+<p>九二阳居阴位，刚而能柔（得中不过刚），下卦之中，得 <strong>刚中</strong> 之德，但上于九五敌应，且九五为 君位，九二与九五同性相斥，形成 敌刚，象征以下犯上，力量悬殊，难以取胜。 <strong>讼卦主旨 终凶</strong> ，九二若认清形势，知止而退，虽小有损失，终无咎。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九二虽居中而正，然在下讼上，力不胜也，故曰不克讼。能知不可而退，归而逋，虽失邑人三百户，犹无咎也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>二刚中得正，本可为主，然讼上则不可胜。能知不克而退，虽有所失，犹免于祸。三百户，言小邑也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九二以刚中而得正，本可有为，但讼于上，终不胜。若能退避，则虽有所失，犹无咎也。三百户，小邑数也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">食旧德，贞厉，终吉，或从王事，无成。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：食旧德，从上吉也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>食旧德</strong> ： 食，吃、享用、依托、依靠。旧德，世袭制社会里，祖先立功封爵，死后子孙可继承，称为 <strong>食旧德</strong> 。第三爻为 <strong>公位</strong> ，可能有先祖余荫，即为旧德。</li>
+<li><strong>贞历，终吉</strong> ： 历，危险、灾难；食旧德，要守正并保持危历感，不要张狂居功，最终吉祥。</li>
+<li><strong>或从王事，无成</strong> ： 从，和主相对、顺从（柔顺）、跟从、不做主。无成，不是做事无法成功（成就），而是不居功，不自傲。从上做事，事成，不自居功。</li>
+</ul>
+<p>六三阴爻居阳位，位不中正，处坎卦之终（险之极），下乘九二（柔乘刚），上承九四，处于两刚之间，其出路不是 争、主 ，而是 从、守旧与顺上，六三只有顺从上位才能化险为夷。靠 旧德 而不敢擅作新举，正是 顺 的具体表现。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六三阴柔不中，不能自有其德，赖上之德以食焉，故曰“食旧德”。处讼之时，贞则厉，然能从上，则终吉。或从王事而无成者，柔而无功也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六三柔而不中，不能自有功德，赖旧德以食。贞则厉，终则吉。从王事无成者，谓柔不中正，不能有功也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六三阴柔不中，不能自有其德，赖上之旧德以食。能贞固则虽危厉，犹终吉。若从王事，则以柔不中，终无所成也。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不克讼，复自命，渝安贞，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：复即命，渝安贞;不失也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不克讼，复自命</strong> ： 复，返也、回归、反思。自命，自身的本分、天理、使命（天命，即事物的自然规律）。九五为卦主，九四与九五争讼，不胜。</li>
+<li><strong>渝安贞，吉</strong> ： 渝，改变、调整。改变初衷，安于正道。守正不移。不再躁动争讼，安稳守正。四为诸侯&#x2F;宰位，如果争讼不胜，不坚持争讼，安分守正，顺从天命，就会吉祥。</li>
+<li><strong>复即命，渝安贞;不失也</strong> ： 即，贴近、靠近、回归。改变争讼初衷，靠近事物的本质秩序（自命）。安稳守正、不偏离本分。</li>
+</ul>
+<p>九四阳爻居阴位，虽刚而能柔，有 自我裁量、变通 得空间，能主动认知到争讼不可为（近君位九五，九五尊位得中而正），理性得改变争讼之心、顺于上、坚守本分（复即命，渝安贞，不失也）</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四居上近君，不中不正，欲讼则不能胜。能反命听上，变而安于贞正，则吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四居近君之位，不中不正，欲讼则不克。能反命而从上，变心而安贞，乃吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九四虽刚，居不正之位，不可讼也。若讼则不克。能复即命而从五，变心而安于贞正，则吉。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">讼，元吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：讼，元吉，以中正也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>元吉</strong> ： 元，为开始、创始、根本、首要、大。这是《周易》中对结果的最高评价（区别于 <strong>小吉、终吉</strong> ），表示能实现长期和谐，奠定根本的吉祥局面</li>
+</ul>
+<p>九五阳刚居上卦之中，位正且中，为卦主，象征有权威、有度量、能以 <strong>中正之道（公正、刚健、不偏不倚、飞龙在天，利见大人）</strong> 平讼止争。与前四爻 <strong>被动应对争讼 不同，九五是 主动化解争讼的核心角色，九五公正，就是大吉的源头。</strong></p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五居中得正，能断是非，正讼之主也。讼而能中正，则无所不吉，故曰“元吉”</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五以刚中正居尊位，讼之主也。能中正，则所断皆得理，故元吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五中正之位，为讼之主。能中正以断讼，故元吉。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">或锡之鞶带，终朝三褫之。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：以讼受服，亦不足敬也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>或锡之鞶（pán）带</strong> ： 锡，通赐，赐予、赏赐。鞶带，古代大夫以上官员系的皮革腰带，为王者赐予的荣宠或官职，象征 爵位、荣誉、利益。</li>
+<li><strong>终朝三褫（chǐ）之</strong> ： 终朝，整个早上，形容极端时间。褫，剥夺、收回、脱去、褫夺。</li>
+<li><strong>以讼受服</strong> ： 接受赏赐、获得尊位（鞶带）。依靠争讼、诉讼获得荣誉、利益，而非 德行、功绩。德不配位，必有灾殃，难以长久（终凶）</li>
+</ul>
+<p>上九阳爻居阴位，居讼卦之终，虽有刚健之性，却 位不正。阳刚至极，好讼到底。与六三有应，六三柔弱无力，上九凭强势压人，终获表面胜利，争讼或许能带来短暂的 胜利（荣誉、利益），但永远无法带来长久的 安稳（终凶）</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上九居讼之极，讼不可久。或虽得胜，受服带之宠，然无德以处之，故终朝而三失之。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>鞶带，饰服也。讼而得服，不由德而由讼，不能久享，故曰“终朝三褫之”。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>上九讼之极也。或因讼得胜，锡以鞶带之宠；然讼不可久，非德而有，必速失之，故曰“终朝三褫之”。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>八卦之阴阳属性</title>
+    <url>/20250807163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于八卦（单卦）得阴阳属性，目前有很多种说法，本篇为常见得说法总结。</p>
+<h1 id="经典易学（《说卦传》通行）中得八卦阴阳"><a href="#经典易学（《说卦传》通行）中得八卦阴阳" class="headerlink" title="经典易学（《说卦传》通行）中得八卦阴阳"></a>经典易学（《说卦传》通行）中得八卦阴阳</h1><p>经典易学（《说卦传》通行）中得八卦阴阳属性由 <strong>数</strong> 决定。</p>
+<p><strong>阳爻 <code>⚊</code> 数为 3（亦可以为 1），阴爻 <code>--</code> 数为 2</strong> 。根据八（单）卦所得总数之奇偶（单双）判定其阴阳属性</p>
+<table>
+<thead>
+<tr>
+<th>单卦</th>
+<th>总数</th>
+<th>阴阳</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>乾 ☰</strong></td>
+<td>9</td>
+<td>纯阳</td>
+</tr>
+<tr>
+<td><strong>坤 ☷</strong></td>
+<td>6</td>
+<td>纯阴</td>
+</tr>
+<tr>
+<td><strong>震 ☳</strong></td>
+<td>7</td>
+<td>阳</td>
+</tr>
+<tr>
+<td><strong>巽 ☴</strong></td>
+<td>8</td>
+<td>阴</td>
+</tr>
+<tr>
+<td><strong>坎 ☵</strong></td>
+<td>7</td>
+<td>阳</td>
+</tr>
+<tr>
+<td><strong>离 ☲</strong></td>
+<td>8</td>
+<td>阴</td>
+</tr>
+<tr>
+<td><strong>艮 ☶</strong></td>
+<td>7</td>
+<td>阳</td>
+</tr>
+<tr>
+<td><strong>兑 ☱</strong></td>
+<td>8</td>
+<td>阴</td>
+</tr>
+</tbody></table>
+<p>可快速识别的规律：</p>
+<blockquote>
+<ul>
+<li><p>看 <strong>主爻（最少得阴爻或者阳爻）</strong> 得阴阳，阳爻为主即阳卦，阴爻为主即阴卦</p>
+<p>  <strong>阳卦</strong> ： 卦中仅有一阳爻（奇数）： 震 ☳、坎 ☵、艮 ☶</p>
+<p>  <strong>阴卦</strong> ： 卦中仅有一阴爻（阳爻为偶数二）： 巽 ☴ 、离 ☲、兑 ☱</p>
+<p>  <strong>乾坤为纯阳、纯阴，自为阳、阴之宗</strong></p>
+</li>
+<li><p><strong>阳卦多阴，阴卦多阳</strong> 。除 <strong>乾坤</strong> 两卦外，其余的单卦，要么二阴一阳，要么二阳一阴。</p>
+<p>  《易经.系辞传.下》 有言： <strong>阴卦多阳，阳卦多阴，其故何也？阳卦奇，阴卦偶。其德何行也？阳一君而二民，君子之道也。阴二君而一民，小人之道也。</strong></p>
+</li>
+<li><p>根据 <strong>乾坤生六子</strong> ，阳生阴，阴生阳</p>
+<ul>
+<li><p><strong>坤卦 ☷ 所生 震 ☳、坎 ☵、艮 ☶ 为阳</strong></p>
+</li>
+<li><p><strong>乾卦 ☰ 所生 巽 ☴、离 ☲、兑 ☱ 为阴</strong></p>
+</li>
+</ul>
+</li>
+</ul>
+</blockquote>
+<p>结论： <strong>乾坎艮震为阳，坤离兑巽为阴</strong></p>
+<h1 id="三合风水（又称辅星水法）确定八卦阴阳"><a href="#三合风水（又称辅星水法）确定八卦阴阳" class="headerlink" title="三合风水（又称辅星水法）确定八卦阴阳"></a>三合风水（又称辅星水法）确定八卦阴阳</h1><p><img src="https://i.0920811.xyz/img_329.png"></p>
+<p>先天八卦图中，以 <strong>乾配天、坤配地、兑配泽、离配火、震配雷、巽配风、坎配水、艮配山</strong> 。依 <strong>阳自左边转、阴自右边转的原则，天尊而地卑，天居上，在南方，阳爻组成的四卦在左边，依次 逆时针 由 乾☰ 到 兑☱ 到 离☲ 到 震☳；地居下，在北方，阴爻组成的四卦在右边，依次 顺时针 由 巽☴ 到 坎☵ 到 艮☶ 到 坤☷</strong> ，由此产生 <strong>先天八卦</strong></p>
+<p><strong>此处的单卦之阴阳 是根据八卦的最下面爻的阴阳来定的，乾、兑、离、震四卦下爻均为阳爻（—），巽、坎、艮、坤四卦下爻均为阴爻（–）</strong> 。这是三合风水（又称辅星水法）确定八卦阴阳然后进一步确定天干地支阴阳的方法。</p>
 ]]></content>
       <categories>
         <category>易学</category>
@@ -41231,89 +41201,110 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>八卦之阴阳属性</title>
-    <url>/20250807163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>对于八卦（单卦）得阴阳属性，目前有很多种说法，本篇为常见得说法总结。</p>
-<h1 id="经典易学（《说卦传》通行）中得八卦阴阳"><a href="#经典易学（《说卦传》通行）中得八卦阴阳" class="headerlink" title="经典易学（《说卦传》通行）中得八卦阴阳"></a>经典易学（《说卦传》通行）中得八卦阴阳</h1><p>经典易学（《说卦传》通行）中得八卦阴阳属性由 <strong>数</strong> 决定。</p>
-<p><strong>阳爻 <code>⚊</code> 数为 3（亦可以为 1），阴爻 <code>--</code> 数为 2</strong> 。根据八（单）卦所得总数之奇偶（单双）判定其阴阳属性</p>
-<table>
-<thead>
-<tr>
-<th>单卦</th>
-<th>总数</th>
-<th>阴阳</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>乾 ☰</strong></td>
-<td>9</td>
-<td>纯阳</td>
-</tr>
-<tr>
-<td><strong>坤 ☷</strong></td>
-<td>6</td>
-<td>纯阴</td>
-</tr>
-<tr>
-<td><strong>震 ☳</strong></td>
-<td>7</td>
-<td>阳</td>
-</tr>
-<tr>
-<td><strong>巽 ☴</strong></td>
-<td>8</td>
-<td>阴</td>
-</tr>
-<tr>
-<td><strong>坎 ☵</strong></td>
-<td>7</td>
-<td>阳</td>
-</tr>
-<tr>
-<td><strong>离 ☲</strong></td>
-<td>8</td>
-<td>阴</td>
-</tr>
-<tr>
-<td><strong>艮 ☶</strong></td>
-<td>7</td>
-<td>阳</td>
-</tr>
-<tr>
-<td><strong>兑 ☱</strong></td>
-<td>8</td>
-<td>阴</td>
-</tr>
-</tbody></table>
-<p>可快速识别的规律：</p>
-<blockquote>
-<ul>
-<li><p>看 <strong>主爻（最少得阴爻或者阳爻）</strong> 得阴阳，阳爻为主即阳卦，阴爻为主即阴卦</p>
-<p>  <strong>阳卦</strong> ： 卦中仅有一阳爻（奇数）： 震 ☳、坎 ☵、艮 ☶</p>
-<p>  <strong>阴卦</strong> ： 卦中仅有一阴爻（阳爻为偶数二）： 巽 ☴ 、离 ☲、兑 ☱</p>
-<p>  <strong>乾坤为纯阳、纯阴，自为阳、阴之宗</strong></p>
-</li>
-<li><p><strong>阳卦多阴，阴卦多阳</strong> 。除 <strong>乾坤</strong> 两卦外，其余的单卦，要么二阴一阳，要么二阳一阴。</p>
-<p>  《易经.系辞传.下》 有言： <strong>阴卦多阳，阳卦多阴，其故何也？阳卦奇，阴卦偶。其德何行也？阳一君而二民，君子之道也。阴二君而一民，小人之道也。</strong></p>
-</li>
-<li><p>根据 <strong>乾坤生六子</strong> ，阳生阴，阴生阳</p>
-<ul>
-<li><p><strong>坤卦 ☷ 所生 震 ☳、坎 ☵、艮 ☶ 为阳</strong></p>
-</li>
-<li><p><strong>乾卦 ☰ 所生 巽 ☴、离 ☲、兑 ☱ 为阴</strong></p>
-</li>
+    <title>yum</title>
+    <url>/202208111442/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>CentOS Linux release 7.9.2009 (Core)</li>
+<li>yum-3.4.3</li>
 </ul>
-</li>
-</ul>
-</blockquote>
-<p>结论： <strong>乾坎艮震为阳，坤离兑巽为阴</strong></p>
-<h1 id="三合风水（又称辅星水法）确定八卦阴阳"><a href="#三合风水（又称辅星水法）确定八卦阴阳" class="headerlink" title="三合风水（又称辅星水法）确定八卦阴阳"></a>三合风水（又称辅星水法）确定八卦阴阳</h1><p><img src="https://i.0920811.xyz/img_329.png"></p>
-<p>先天八卦图中，以 <strong>乾配天、坤配地、兑配泽、离配火、震配雷、巽配风、坎配水、艮配山</strong> 。依 <strong>阳自左边转、阴自右边转的原则，天尊而地卑，天居上，在南方，阳爻组成的四卦在左边，依次 逆时针 由 乾☰ 到 兑☱ 到 离☲ 到 震☳；地居下，在北方，阴爻组成的四卦在右边，依次 顺时针 由 巽☴ 到 坎☵ 到 艮☶ 到 坤☷</strong> ，由此产生 <strong>先天八卦</strong></p>
-<p><strong>此处的单卦之阴阳 是根据八卦的最下面爻的阴阳来定的，乾、兑、离、震四卦下爻均为阳爻（—），巽、坎、艮、坤四卦下爻均为阴爻（–）</strong> 。这是三合风水（又称辅星水法）确定八卦阴阳然后进一步确定天干地支阴阳的方法。</p>
+<h1 id="yum-命令示例"><a href="#yum-命令示例" class="headerlink" title="yum 命令示例"></a>yum 命令示例</h1><h2 id="查询指定命令来自哪个安装包"><a href="#查询指定命令来自哪个安装包" class="headerlink" title="查询指定命令来自哪个安装包"></a>查询指定命令来自哪个安装包</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum whatprovides ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64 : Advanced IP routing and network device configuration tools</span><br><span class="line">Repo        : base</span><br><span class="line">Matched from:</span><br><span class="line">Filename    : /sbin/ip</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>rpm</code> 查询已安装文件来自哪个安装包</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qf /sbin/ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64</span><br></pre></td></tr></table></figure>
+
+<h2 id="仅下载安装包而不进行安装操作"><a href="#仅下载安装包而不进行安装操作" class="headerlink" title="仅下载安装包而不进行安装操作"></a>仅下载安装包而不进行安装操作</h2><p>如果只下载安装包而不进行安装，可以使用 <code>yumdownloader</code> 命令，此命令来自安装包 <code>yum-utils</code> ，如果不存在可以安装 <code>yum-utils</code> 。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yumdownloader &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
+
+<p>以上下载指定的安装包而不安装，安装包会下载到当前目录</p>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package"><a href="#The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package" class="headerlink" title="The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package"></a>The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package</h2><p><strong>解决方法</strong></p>
+<p>修改对应 <code>yum</code> 源的配置文件，将其中的配置 <code>gpgcheck=1</code> 改为 <code>gpgcheck=0</code> ，以此跳过 key 验证</p>
 ]]></content>
       <categories>
-        <category>易学</category>
+        <category>Linux</category>
+        <category>常用命令</category>
       </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Zabbix + PostgreSQL 16 + TimescaleDB 2.19.x 部署</title>
+    <url>/20260328143500/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Zabbix 支持 TimescaleDB 作为 PostgreSQL 扩展，用于大规模时间序列数据。</p>
+<p><strong>TimescaleDB 不支持给 Zabbix Proxy 当数据库</strong> ，只能给中心 zabbix-server 的 PostgreSQL 后端使用。</p>
+<p>Zabbix 7.0.6 开始把 TimescaleDB 最大支持版本提升到 2.17.x，7.0.13 提升到 2.19.x。</p>
+<h1 id="使用-Docker-Compose-部署-PostgreSQL"><a href="#使用-Docker-Compose-部署-PostgreSQL" class="headerlink" title="使用 Docker Compose 部署 PostgreSQL"></a>使用 Docker Compose 部署 PostgreSQL</h1><ul>
+<li><strong>pg16</strong></li>
+<li><strong>timescaledb 2.19.x</strong></li>
+</ul>
+<p>目录结构示例：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">.</span><br><span class="line">├── config              # postgresql 等配置文件路径</span><br><span class="line">│   ├── pg_hba.conf</span><br><span class="line">│   └── postgresql.conf</span><br><span class="line">├── docker-compose.yaml</span><br><span class="line">├── .env                       # 环境变量统一存储</span><br><span class="line">├── initdb                          # 数据库初始化 sql，只有在数据库为空的情况下才会执行</span><br><span class="line">│   ├── 01-create-zabbix-user.sql</span><br><span class="line">│   ├── 02-create-timescaledb.sql</span><br><span class="line">│   └── 03-create-db.sql</span><br><span class="line">├── postgres-data      # Postgresql/scaledb 持久化数据</span><br><span class="line">│   └── pgdata</span><br><span class="line">└── zabbix-data       # zabbix 持久化数据</span><br><span class="line">    ├── alertscripts</span><br><span class="line">    ├── enc</span><br><span class="line">    ├── export</span><br><span class="line">    ├── externalscripts</span><br><span class="line">    └── ssl</span><br><span class="line"></span><br><span class="line">10 directories, 6 files</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>.env</code> 内容参考</p>
+<figure class="highlight text"><figcaption><span>.env</span></figcaption><table><tr><td class="code"><pre><span class="line">TZ=Asia/Shanghai</span><br><span class="line"></span><br><span class="line">POSTGRES_DB=zabbix</span><br><span class="line">POSTGRES_USER=postgres</span><br><span class="line">POSTGRES_PASSWORD=ReplaceMe_SuperStrong_Zabbix</span><br><span class="line"></span><br><span class="line">ZABBIX_DB_USER=zabbix</span><br><span class="line">ZABBIX_DB_PASSWORD=ReplaceMe_SuperStrong_Zabbix</span><br><span class="line"></span><br><span class="line">PGDATA=/var/lib/postgresql/data/pgdata</span><br></pre></td></tr></table></figure>
+
+<p><code>initdb</code> 中的初始化 SQL</p>
+<figure class="highlight text"><figcaption><span>initdb/01-create-zabbix-user.sql</span></figcaption><table><tr><td class="code"><pre><span class="line">DO</span><br><span class="line">$$</span><br><span class="line">BEGIN</span><br><span class="line">   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = &#x27;zabbix&#x27;) THEN</span><br><span class="line">      CREATE ROLE zabbix LOGIN PASSWORD &#x27;ReplaceMe_SuperStrong_Zabbix&#x27;;</span><br><span class="line">   END IF;</span><br><span class="line">END</span><br><span class="line">$$;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>initdb/02-create-timescaledb.sql</span></figcaption><table><tr><td class="code"><pre><span class="line">CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>initdb/03-create-db.sql</span></figcaption><table><tr><td class="code"><pre><span class="line">GRANT ALL PRIVILEGES ON DATABASE zabbix TO zabbix;</span><br><span class="line">ALTER DATABASE zabbix OWNER TO zabbix;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>Postgresql 主配置 <code>config/postgresql.conf</code></p>
+<figure class="highlight text"><figcaption><span>config/postgresql.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">listen_addresses = &#x27;*&#x27;</span><br><span class="line">port = 5432</span><br><span class="line">max_connections = 200</span><br><span class="line"></span><br><span class="line">shared_buffers = 8GB</span><br><span class="line">effective_cache_size = 24GB</span><br><span class="line">work_mem = 32MB</span><br><span class="line">maintenance_work_mem = 1GB</span><br><span class="line"></span><br><span class="line">wal_level = replica</span><br><span class="line">max_wal_size = 8GB</span><br><span class="line">min_wal_size = 1GB</span><br><span class="line">checkpoint_timeout = 15min</span><br><span class="line">checkpoint_completion_target = 0.9</span><br><span class="line">wal_compression = on</span><br><span class="line"></span><br><span class="line">random_page_cost = 1.1</span><br><span class="line">effective_io_concurrency = 200</span><br><span class="line"></span><br><span class="line">default_statistics_target = 200</span><br><span class="line">shared_preload_libraries = &#x27;timescaledb&#x27;</span><br><span class="line"></span><br><span class="line">autovacuum = on</span><br><span class="line">autovacuum_max_workers = 5</span><br><span class="line">autovacuum_naptime = 10s</span><br><span class="line">autovacuum_vacuum_scale_factor = 0.02</span><br><span class="line">autovacuum_analyze_scale_factor = 0.01</span><br><span class="line"></span><br><span class="line">log_timezone = &#x27;Asia/Shanghai&#x27;</span><br><span class="line">timezone = &#x27;Asia/Shanghai&#x27;</span><br><span class="line">log_min_duration_statement = 1000</span><br><span class="line">log_checkpoints = on</span><br><span class="line">log_connections = off</span><br><span class="line">log_disconnections = off</span><br><span class="line">log_lock_waits = on</span><br><span class="line"></span><br><span class="line">timescaledb.telemetry_level = off</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>config/pg_hba.conf</code> 配置示例</p>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line"># TYPE  DATABASE        USER            ADDRESS                 METHOD</span><br><span class="line"></span><br><span class="line">local   all             all                                     trust</span><br><span class="line">host    all             all             127.0.0.1/32            scram-sha-256</span><br><span class="line">host    all             all             ::1/128                 scram-sha-256</span><br><span class="line"></span><br><span class="line"># Docker 网段，仅示例</span><br><span class="line">host    zabbix          zabbix          10.244.0.0/16           scram-sha-256</span><br><span class="line">host    zabbix          zabbix          172.18.0.0/16           scram-sha-256</span><br><span class="line"></span><br><span class="line"># 运维堡垒机</span><br><span class="line">host    all             postgres        192.168.20.10/32        scram-sha-256</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>docker-compose.yaml</code> 配置示例</p>
+<figure class="highlight yaml"><figcaption><span>docker-compose.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">timescaledb:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">timescale/timescaledb:2.19.3-pg16</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">zabbix-timescaledb</span></span><br><span class="line">    <span class="attr">hostname:</span> <span class="string">zabbix-timescaledb</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">env_file:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">.env</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">environment:</span></span><br><span class="line">      <span class="attr">TZ:</span> <span class="string">$&#123;TZ&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_DB:</span> <span class="string">$&#123;POSTGRES_DB&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_USER:</span> <span class="string">$&#123;POSTGRES_USER&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_PASSWORD:</span> <span class="string">$&#123;POSTGRES_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">ZABBIX_DB_USER:</span> <span class="string">$&#123;ZABBIX_DB_USER&#125;</span></span><br><span class="line">      <span class="attr">ZABBIX_DB_PASSWORD:</span> <span class="string">$&#123;ZABBIX_DB_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">PGDATA:</span> <span class="string">$&#123;PGDATA&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_INITDB_ARGS:</span> <span class="string">&quot;--auth-host=scram-sha-256 --auth-local=trust --data-checksums&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;5432:5432&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./postgres-data:/var/lib/postgresql/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./initdb:/docker-entrypoint-initdb.d:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/postgresql.conf:/etc/postgresql/postgresql.conf:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/localtime:/etc/localtime:ro</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      [</span><br><span class="line">        <span class="string">&quot;postgres&quot;</span>,</span><br><span class="line">        <span class="string">&quot;-c&quot;</span>, <span class="string">&quot;config_file=/etc/postgresql/postgresql.conf&quot;</span>,</span><br><span class="line">        <span class="string">&quot;-c&quot;</span>, <span class="string">&quot;hba_file=/etc/postgresql/pg_hba.conf&quot;</span></span><br><span class="line">      ]</span><br><span class="line"></span><br><span class="line">    <span class="attr">healthcheck:</span></span><br><span class="line">      <span class="attr">test:</span> [<span class="string">&quot;CMD-SHELL&quot;</span>, <span class="string">&quot;pg_isready -U $&#123;POSTGRES_USER&#125; -d $&#123;POSTGRES_DB&#125;&quot;</span>]</span><br><span class="line">      <span class="attr">interval:</span> <span class="string">10s</span></span><br><span class="line">      <span class="attr">timeout:</span> <span class="string">5s</span></span><br><span class="line">      <span class="attr">retries:</span> <span class="number">12</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ulimits:</span></span><br><span class="line">      <span class="attr">nofile:</span></span><br><span class="line">        <span class="attr">soft:</span> <span class="number">65536</span></span><br><span class="line">        <span class="attr">hard:</span> <span class="number">65536</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">zabbix-server:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">zabbix/zabbix-server-pgsql:alpine-7.4-latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">zabbix-server</span></span><br><span class="line">    <span class="attr">hostname:</span> <span class="string">zabbix-server</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">env_file:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">.env</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">environment:</span></span><br><span class="line">      <span class="attr">TZ:</span> <span class="string">$&#123;TZ&#125;</span></span><br><span class="line">      <span class="attr">DB_SERVER_HOST:</span> <span class="string">timescaledb</span></span><br><span class="line">      <span class="attr">DB_SERVER_PORT:</span> <span class="number">5432</span></span><br><span class="line">      <span class="attr">POSTGRES_DB:</span> <span class="string">$&#123;POSTGRES_DB&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_USER:</span> <span class="string">$&#123;ZABBIX_DB_USER&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_PASSWORD:</span> <span class="string">$&#123;ZABBIX_DB_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">ENABLE_TIMESCALEDB:</span> <span class="string">&quot;true&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">depends_on:</span></span><br><span class="line">      <span class="attr">timescaledb:</span></span><br><span class="line">        <span class="attr">condition:</span> <span class="string">service_healthy</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;10051:10051&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/alertscripts:/usr/lib/zabbix/alertscripts:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/externalscripts:/usr/lib/zabbix/externalscripts:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/export:/var/lib/zabbix/export</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/enc:/var/lib/zabbix/enc</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/localtime:/etc/localtime:ro</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">zabbix-web:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">zabbix/zabbix-web-nginx-pgsql:alpine-7.4-latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">zabbix-web</span></span><br><span class="line">    <span class="attr">hostname:</span> <span class="string">zabbix-web</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">env_file:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">.env</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">environment:</span></span><br><span class="line">      <span class="attr">DB_SERVER_HOST:</span> <span class="string">timescaledb</span></span><br><span class="line">      <span class="attr">DB_SERVER_PORT:</span> <span class="number">5432</span></span><br><span class="line">      <span class="attr">POSTGRES_DB:</span> <span class="string">$&#123;POSTGRES_DB&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_USER:</span> <span class="string">$&#123;ZABBIX_DB_USER&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_PASSWORD:</span> <span class="string">$&#123;ZABBIX_DB_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">ZBX_SERVER_HOST:</span> <span class="string">zabbix-server</span></span><br><span class="line">      <span class="attr">PHP_TZ:</span> <span class="string">$&#123;TZ&#125;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">depends_on:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">zabbix-server</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;8080:8080&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/ssl:/etc/ssl/nginx:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/localtime:/etc/localtime:ro</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="常用操作"><a href="#常用操作" class="headerlink" title="常用操作"></a>常用操作</h1><h2 id="从-Zabbix-Server-测试-Zabbix-Agent-连通性"><a href="#从-Zabbix-Server-测试-Zabbix-Agent-连通性" class="headerlink" title="从 Zabbix Server 测试 Zabbix Agent 连通性"></a>从 Zabbix Server 测试 Zabbix Agent 连通性</h2><p>以下命令可以用于在 Zabbix Server 检查到 Zabbix Agent 的连通性，连接 Agent 正常会返回 <code>1</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose exec -T zabbix-server zabbix_get -s 172.247.1.1 -p 10050 -k agent.ping</span><br></pre></td></tr></table></figure>
+
+<p>如果防火墙已经放通，却依然无法连接，很可能是 <code>zabbix-agent2</code> 配置中的 <code>Server=</code> 配置的 IP 不是 Zabbix Server 实际使用的 IP。此时可以通过 <code>tcpdump</code> 抓包确定请求 Zabbix Agent 的 Zabbix Server IP</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">tcpdump -n dst port 10050</span></span><br><span class="line">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode</span><br><span class="line">listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes</span><br><span class="line"></span><br><span class="line">12:39:34.936583 IP 172.18.0.3.37688 &gt; 172.247.2.14.10050: Flags [S], seq 1718798137, win 64240, options [mss 1460,sackOK,TS val 2935844814 ecr 0,nop,wscale 7], length 0</span><br><span class="line">12:39:35.946554 IP 172.18.0.3.37688 &gt; 172.247.2.14.10050: Flags [S], seq 1718798137, win 64240, options [mss 1460,sackOK,TS val 2935845824 ecr 0,nop,wscale 7], length 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>也可查看 <code>zabbix-agent2</code> 日志：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">tail</span> -f /var/log/zabbix/zabbix_agent2.<span class="built_in">log</span></span> </span><br><span class="line">2026/03/30 01:48:15.505489 connection from &quot;172.18.0.3&quot; rejected, allowed hosts: &quot;23.225.3.6/29&quot;</span><br><span class="line">2026/03/30 01:48:39.128438 connection from &quot;172.18.0.3&quot; rejected, allowed hosts: &quot;23.225.3.6/29&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="分路由发送告警"><a href="#分路由发送告警" class="headerlink" title="分路由发送告警"></a>分路由发送告警</h2><p>为了将不同的告警发送给不同的用户，首先需要为每个用户添加 Media，以 Admin 用户为例，为其添加 Media。定位到 <strong>Users -&gt; Users: Admin -&gt; Media -&gt; Add</strong> ，以添加 Telegram 为例，在 <code>Send to</code> 中填入 <strong>群组 ID</strong><br><img src="https://i.0920811.xyz/img_444.png"></p>
+<p><strong>配置 Medias</strong> 。定位到 <strong>Alerts -&gt; Media types</strong> 。Zabbix Server 已经配置了非常多可用的告警 Medias，选择 Telegram，将 <code>api_token</code> 修改为你自己的 Telegram Bot API Token，确保配置中的 <code>api_chat_id</code> 的值为 <code>&#123;ALERT.SENDTO&#125;</code></p>
+<blockquote>
+<p><strong>不要在这里硬编码 <code>api_chat_id</code> ，否则使用 Telegram 这个渠道只能将所有的消息发送到同一个群组，无法达到告警分流的作用，正确做法是将其配置为 <code>&#123;ALERT.SENDTO&#125;</code> ，当用户 Media 被调用时，会自动使用用户 Media 变量 <code>Send to</code> 的值达到告警分流到不通用户的 Media</strong></p>
+</blockquote>
+<p><strong>创建 Actions 触发发送告警</strong> 。告警 Medias 配置好后，需要创建一个 Action（或修改默认的），以决定什么时候触发告警</p>
+<p>定位到 <strong>Alerts -&gt; Actions -&gt; Trigger actions</strong> 。配置 Action<br><img src="https://i.0920811.xyz/img_445.png"></p>
+<p><strong>配置 Operations</strong> 发送消息。在 <strong>Alerts -&gt; Actions -&gt; Trigger actions -&gt; Action: Operations</strong> 中配置</p>
+<p><strong>确定 Actions Trigger</strong> ，在 <strong>Monitoring -&gt; Problems</strong> 中观察具体告警中的 Actions，看是否有关联，如果 <strong>Actions 为空，说明 Action 根本没有被触发</strong> ，检查 Action 配置</p>
+<blockquote>
+<p>如果 Problems 中的事件是在创建 Action 之前产生，那么它不会自动关联到新建的 Actions。此时可以 Update problems，将其关闭（Close），使其重新产生， Action 配置正常的话，会自动关联到 Action。</p>
+</blockquote>
+<p>Zabbix 告警默认只会发送一次，（未恢复）不会持续发送。要配置未恢复的问题间隔几分钟后再次发送。可以参考以下配置：</p>
+<ol>
+<li><p>在 <strong>Alerts -&gt; Actions -&gt; Trigger actions -&gt; Action: Operations</strong> 中配置时间间隔</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Default operation step duration = 5m</span><br></pre></td></tr></table></figure>
+
+<p> 每一步之间间隔 5 分钟</p>
+</li>
+<li><p>增加多个 Step</p>
+</li>
+</ol>
+<h1 id="常见问题处理"><a href="#常见问题处理" class="headerlink" title="常见问题处理"></a>常见问题处理</h1><h2 id="Zabbix-Web-中主机状态显示-Unknow"><a href="#Zabbix-Web-中主机状态显示-Unknow" class="headerlink" title="Zabbix Web 中主机状态显示 Unknow"></a>Zabbix Web 中主机状态显示 Unknow</h2><p>在 Zabbix Server 测试主机连通性返回 <code>1</code> ，说明 <strong>网络 + agent 都是 OK 的</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">root@zabbix:/opt/zabbix# docker compose exec -T zabbix-server zabbix_get -s 172.17.0.1 -p 10050 -k agent.ping</span><br><span class="line">1</span><br><span class="line"></span><br><span class="line">root@zabbix:/opt/zabbix# docker compose exec -T zabbix-server zabbix_get -s 172.17.0.1 -p 10050 -k system.uptime</span><br><span class="line">368373</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>但是 Zabbix Web 中主机状态显示 <code>Unknow</code> 。这种情况大概率是 Host 配置问题，重点检查：</p>
+<ul>
+<li><strong>是否绑定了 Templates</strong> ，如果没有模版，就没有抓取项（Items），Zabbix Server 不会被动去抓取主机指标</li>
+<li><strong>Interfaces</strong> 配置是否正确</li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
   </entry>
   <entry>
     <title>阴阳八卦</title>
@@ -41741,303 +41732,312 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>yum</title>
-    <url>/202208111442/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>CentOS Linux release 7.9.2009 (Core)</li>
-<li>yum-3.4.3</li>
-</ul>
-<h1 id="yum-命令示例"><a href="#yum-命令示例" class="headerlink" title="yum 命令示例"></a>yum 命令示例</h1><h2 id="查询指定命令来自哪个安装包"><a href="#查询指定命令来自哪个安装包" class="headerlink" title="查询指定命令来自哪个安装包"></a>查询指定命令来自哪个安装包</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum whatprovides ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64 : Advanced IP routing and network device configuration tools</span><br><span class="line">Repo        : base</span><br><span class="line">Matched from:</span><br><span class="line">Filename    : /sbin/ip</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+    <title>六十四卦之水天需</title>
+    <url>/20250902163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水天需"><a href="#水天需" class="headerlink" title="水天需"></a>水天需</h1><p><img src="https://i.0920811.xyz/img_344.png"></p>
+<p>需，乾（天、健）下坎（水、云、险）上，刚健在内，险陷在外，需待时而动。云已升至天顶，雨意沛然却未降（欲雨未雨，需待云气聚集、时机成熟方能降雨），故曰 <strong>需——等待</strong> 。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需，有孚，光亨，贞吉。利涉大川。</span><br></pre></td></tr></table></figure>
 
-<p><code>rpm</code> 查询已安装文件来自哪个安装包</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qf /sbin/ip</span></span><br><span class="line">iproute-4.11.0-30.el7.x86_64</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：需，须也。险在前也。刚健而不陷，其义不困穷矣。需有孚，光亨，贞吉。位乎天位，以正中也。利涉大川，往有功也。</span><br></pre></td></tr></table></figure>
 
-<h2 id="仅下载安装包而不进行安装操作"><a href="#仅下载安装包而不进行安装操作" class="headerlink" title="仅下载安装包而不进行安装操作"></a>仅下载安装包而不进行安装操作</h2><p>如果只下载安装包而不进行安装，可以使用 <code>yumdownloader</code> 命令，此命令来自安装包 <code>yum-utils</code> ，如果不存在可以安装 <code>yum-utils</code> 。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yumdownloader &lt;package-name&gt;</span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：云上於天，需。君子以饮食宴乐。</span><br></pre></td></tr></table></figure>
 
-<p>以上下载指定的安装包而不安装，安装包会下载到当前目录</p>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package"><a href="#The-GPG-keys-listed-for-the-“MySQL-5-7-Community-Server”-repository-are-already-installed-but-they-are-not-correct-for-this-package" class="headerlink" title="The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package"></a>The GPG keys listed for the “MySQL 5.7 Community Server” repository are already installed but they are not correct for this package</h2><p><strong>解决方法</strong></p>
-<p>修改对应 <code>yum</code> 源的配置文件，将其中的配置 <code>gpgcheck=1</code> 改为 <code>gpgcheck=0</code> ，以此跳过 key 验证</p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Zabbix + PostgreSQL 16 + TimescaleDB 2.19.x 部署</title>
-    <url>/20260328143500/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Zabbix 支持 TimescaleDB 作为 PostgreSQL 扩展，用于大规模时间序列数据。</p>
-<p><strong>TimescaleDB 不支持给 Zabbix Proxy 当数据库</strong> ，只能给中心 zabbix-server 的 PostgreSQL 后端使用。</p>
-<p>Zabbix 7.0.6 开始把 TimescaleDB 最大支持版本提升到 2.17.x，7.0.13 提升到 2.19.x。</p>
-<h1 id="使用-Docker-Compose-部署-PostgreSQL"><a href="#使用-Docker-Compose-部署-PostgreSQL" class="headerlink" title="使用 Docker Compose 部署 PostgreSQL"></a>使用 Docker Compose 部署 PostgreSQL</h1><ul>
-<li><strong>pg16</strong></li>
-<li><strong>timescaledb 2.19.x</strong></li>
-</ul>
-<p>目录结构示例：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">.</span><br><span class="line">├── config              # postgresql 等配置文件路径</span><br><span class="line">│   ├── pg_hba.conf</span><br><span class="line">│   └── postgresql.conf</span><br><span class="line">├── docker-compose.yaml</span><br><span class="line">├── .env                       # 环境变量统一存储</span><br><span class="line">├── initdb                          # 数据库初始化 sql，只有在数据库为空的情况下才会执行</span><br><span class="line">│   ├── 01-create-zabbix-user.sql</span><br><span class="line">│   ├── 02-create-timescaledb.sql</span><br><span class="line">│   └── 03-create-db.sql</span><br><span class="line">├── postgres-data      # Postgresql/scaledb 持久化数据</span><br><span class="line">│   └── pgdata</span><br><span class="line">└── zabbix-data       # zabbix 持久化数据</span><br><span class="line">    ├── alertscripts</span><br><span class="line">    ├── enc</span><br><span class="line">    ├── export</span><br><span class="line">    ├── externalscripts</span><br><span class="line">    └── ssl</span><br><span class="line"></span><br><span class="line">10 directories, 6 files</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>序卦</span></figcaption><table><tr><td class="code"><pre><span class="line">物稚不可以不养，故受之以需。需者，饮食之道也。</span><br></pre></td></tr></table></figure>
 
-<p><code>.env</code> 内容参考</p>
-<figure class="highlight text"><figcaption><span>.env</span></figcaption><table><tr><td class="code"><pre><span class="line">TZ=Asia/Shanghai</span><br><span class="line"></span><br><span class="line">POSTGRES_DB=zabbix</span><br><span class="line">POSTGRES_USER=postgres</span><br><span class="line">POSTGRES_PASSWORD=ReplaceMe_SuperStrong_Zabbix</span><br><span class="line"></span><br><span class="line">ZABBIX_DB_USER=zabbix</span><br><span class="line">ZABBIX_DB_PASSWORD=ReplaceMe_SuperStrong_Zabbix</span><br><span class="line"></span><br><span class="line">PGDATA=/var/lib/postgresql/data/pgdata</span><br></pre></td></tr></table></figure>
-
-<p><code>initdb</code> 中的初始化 SQL</p>
-<figure class="highlight text"><figcaption><span>initdb/01-create-zabbix-user.sql</span></figcaption><table><tr><td class="code"><pre><span class="line">DO</span><br><span class="line">$$</span><br><span class="line">BEGIN</span><br><span class="line">   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = &#x27;zabbix&#x27;) THEN</span><br><span class="line">      CREATE ROLE zabbix LOGIN PASSWORD &#x27;ReplaceMe_SuperStrong_Zabbix&#x27;;</span><br><span class="line">   END IF;</span><br><span class="line">END</span><br><span class="line">$$;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>initdb/02-create-timescaledb.sql</span></figcaption><table><tr><td class="code"><pre><span class="line">CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>initdb/03-create-db.sql</span></figcaption><table><tr><td class="code"><pre><span class="line">GRANT ALL PRIVILEGES ON DATABASE zabbix TO zabbix;</span><br><span class="line">ALTER DATABASE zabbix OWNER TO zabbix;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>Postgresql 主配置 <code>config/postgresql.conf</code></p>
-<figure class="highlight text"><figcaption><span>config/postgresql.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">listen_addresses = &#x27;*&#x27;</span><br><span class="line">port = 5432</span><br><span class="line">max_connections = 200</span><br><span class="line"></span><br><span class="line">shared_buffers = 8GB</span><br><span class="line">effective_cache_size = 24GB</span><br><span class="line">work_mem = 32MB</span><br><span class="line">maintenance_work_mem = 1GB</span><br><span class="line"></span><br><span class="line">wal_level = replica</span><br><span class="line">max_wal_size = 8GB</span><br><span class="line">min_wal_size = 1GB</span><br><span class="line">checkpoint_timeout = 15min</span><br><span class="line">checkpoint_completion_target = 0.9</span><br><span class="line">wal_compression = on</span><br><span class="line"></span><br><span class="line">random_page_cost = 1.1</span><br><span class="line">effective_io_concurrency = 200</span><br><span class="line"></span><br><span class="line">default_statistics_target = 200</span><br><span class="line">shared_preload_libraries = &#x27;timescaledb&#x27;</span><br><span class="line"></span><br><span class="line">autovacuum = on</span><br><span class="line">autovacuum_max_workers = 5</span><br><span class="line">autovacuum_naptime = 10s</span><br><span class="line">autovacuum_vacuum_scale_factor = 0.02</span><br><span class="line">autovacuum_analyze_scale_factor = 0.01</span><br><span class="line"></span><br><span class="line">log_timezone = &#x27;Asia/Shanghai&#x27;</span><br><span class="line">timezone = &#x27;Asia/Shanghai&#x27;</span><br><span class="line">log_min_duration_statement = 1000</span><br><span class="line">log_checkpoints = on</span><br><span class="line">log_connections = off</span><br><span class="line">log_disconnections = off</span><br><span class="line">log_lock_waits = on</span><br><span class="line"></span><br><span class="line">timescaledb.telemetry_level = off</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><code>config/pg_hba.conf</code> 配置示例</p>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line"># TYPE  DATABASE        USER            ADDRESS                 METHOD</span><br><span class="line"></span><br><span class="line">local   all             all                                     trust</span><br><span class="line">host    all             all             127.0.0.1/32            scram-sha-256</span><br><span class="line">host    all             all             ::1/128                 scram-sha-256</span><br><span class="line"></span><br><span class="line"># Docker 网段，仅示例</span><br><span class="line">host    zabbix          zabbix          10.244.0.0/16           scram-sha-256</span><br><span class="line">host    zabbix          zabbix          172.18.0.0/16           scram-sha-256</span><br><span class="line"></span><br><span class="line"># 运维堡垒机</span><br><span class="line">host    all             postgres        192.168.20.10/32        scram-sha-256</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><code>docker-compose.yaml</code> 配置示例</p>
-<figure class="highlight yaml"><figcaption><span>docker-compose.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">timescaledb:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">timescale/timescaledb:2.19.3-pg16</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">zabbix-timescaledb</span></span><br><span class="line">    <span class="attr">hostname:</span> <span class="string">zabbix-timescaledb</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">env_file:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">.env</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">environment:</span></span><br><span class="line">      <span class="attr">TZ:</span> <span class="string">$&#123;TZ&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_DB:</span> <span class="string">$&#123;POSTGRES_DB&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_USER:</span> <span class="string">$&#123;POSTGRES_USER&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_PASSWORD:</span> <span class="string">$&#123;POSTGRES_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">ZABBIX_DB_USER:</span> <span class="string">$&#123;ZABBIX_DB_USER&#125;</span></span><br><span class="line">      <span class="attr">ZABBIX_DB_PASSWORD:</span> <span class="string">$&#123;ZABBIX_DB_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">PGDATA:</span> <span class="string">$&#123;PGDATA&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_INITDB_ARGS:</span> <span class="string">&quot;--auth-host=scram-sha-256 --auth-local=trust --data-checksums&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;5432:5432&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./postgres-data:/var/lib/postgresql/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./initdb:/docker-entrypoint-initdb.d:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/postgresql.conf:/etc/postgresql/postgresql.conf:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/localtime:/etc/localtime:ro</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      [</span><br><span class="line">        <span class="string">&quot;postgres&quot;</span>,</span><br><span class="line">        <span class="string">&quot;-c&quot;</span>, <span class="string">&quot;config_file=/etc/postgresql/postgresql.conf&quot;</span>,</span><br><span class="line">        <span class="string">&quot;-c&quot;</span>, <span class="string">&quot;hba_file=/etc/postgresql/pg_hba.conf&quot;</span></span><br><span class="line">      ]</span><br><span class="line"></span><br><span class="line">    <span class="attr">healthcheck:</span></span><br><span class="line">      <span class="attr">test:</span> [<span class="string">&quot;CMD-SHELL&quot;</span>, <span class="string">&quot;pg_isready -U $&#123;POSTGRES_USER&#125; -d $&#123;POSTGRES_DB&#125;&quot;</span>]</span><br><span class="line">      <span class="attr">interval:</span> <span class="string">10s</span></span><br><span class="line">      <span class="attr">timeout:</span> <span class="string">5s</span></span><br><span class="line">      <span class="attr">retries:</span> <span class="number">12</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ulimits:</span></span><br><span class="line">      <span class="attr">nofile:</span></span><br><span class="line">        <span class="attr">soft:</span> <span class="number">65536</span></span><br><span class="line">        <span class="attr">hard:</span> <span class="number">65536</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">zabbix-server:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">zabbix/zabbix-server-pgsql:alpine-7.4-latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">zabbix-server</span></span><br><span class="line">    <span class="attr">hostname:</span> <span class="string">zabbix-server</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">env_file:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">.env</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">environment:</span></span><br><span class="line">      <span class="attr">TZ:</span> <span class="string">$&#123;TZ&#125;</span></span><br><span class="line">      <span class="attr">DB_SERVER_HOST:</span> <span class="string">timescaledb</span></span><br><span class="line">      <span class="attr">DB_SERVER_PORT:</span> <span class="number">5432</span></span><br><span class="line">      <span class="attr">POSTGRES_DB:</span> <span class="string">$&#123;POSTGRES_DB&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_USER:</span> <span class="string">$&#123;ZABBIX_DB_USER&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_PASSWORD:</span> <span class="string">$&#123;ZABBIX_DB_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">ENABLE_TIMESCALEDB:</span> <span class="string">&quot;true&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">depends_on:</span></span><br><span class="line">      <span class="attr">timescaledb:</span></span><br><span class="line">        <span class="attr">condition:</span> <span class="string">service_healthy</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;10051:10051&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/alertscripts:/usr/lib/zabbix/alertscripts:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/externalscripts:/usr/lib/zabbix/externalscripts:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/export:/var/lib/zabbix/export</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/enc:/var/lib/zabbix/enc</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/localtime:/etc/localtime:ro</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">zabbix-web:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">zabbix/zabbix-web-nginx-pgsql:alpine-7.4-latest</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">zabbix-web</span></span><br><span class="line">    <span class="attr">hostname:</span> <span class="string">zabbix-web</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">env_file:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">.env</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">environment:</span></span><br><span class="line">      <span class="attr">DB_SERVER_HOST:</span> <span class="string">timescaledb</span></span><br><span class="line">      <span class="attr">DB_SERVER_PORT:</span> <span class="number">5432</span></span><br><span class="line">      <span class="attr">POSTGRES_DB:</span> <span class="string">$&#123;POSTGRES_DB&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_USER:</span> <span class="string">$&#123;ZABBIX_DB_USER&#125;</span></span><br><span class="line">      <span class="attr">POSTGRES_PASSWORD:</span> <span class="string">$&#123;ZABBIX_DB_PASSWORD&#125;</span></span><br><span class="line">      <span class="attr">ZBX_SERVER_HOST:</span> <span class="string">zabbix-server</span></span><br><span class="line">      <span class="attr">PHP_TZ:</span> <span class="string">$&#123;TZ&#125;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">depends_on:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">zabbix-server</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;8080:8080&quot;</span></span><br><span class="line"></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./zabbix-data/ssl:/etc/ssl/nginx:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/localtime:/etc/localtime:ro</span></span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="常用操作"><a href="#常用操作" class="headerlink" title="常用操作"></a>常用操作</h1><h2 id="从-Zabbix-Server-测试-Zabbix-Agent-连通性"><a href="#从-Zabbix-Server-测试-Zabbix-Agent-连通性" class="headerlink" title="从 Zabbix Server 测试 Zabbix Agent 连通性"></a>从 Zabbix Server 测试 Zabbix Agent 连通性</h2><p>以下命令可以用于在 Zabbix Server 检查到 Zabbix Agent 的连通性，连接 Agent 正常会返回 <code>1</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker compose exec -T zabbix-server zabbix_get -s 172.247.1.1 -p 10050 -k agent.ping</span><br></pre></td></tr></table></figure>
-
-<p>如果防火墙已经放通，却依然无法连接，很可能是 <code>zabbix-agent2</code> 配置中的 <code>Server=</code> 配置的 IP 不是 Zabbix Server 实际使用的 IP。此时可以通过 <code>tcpdump</code> 抓包确定请求 Zabbix Agent 的 Zabbix Server IP</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">tcpdump -n dst port 10050</span></span><br><span class="line">tcpdump: verbose output suppressed, use -v[v]... for full protocol decode</span><br><span class="line">listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes</span><br><span class="line"></span><br><span class="line">12:39:34.936583 IP 172.18.0.3.37688 &gt; 172.247.2.14.10050: Flags [S], seq 1718798137, win 64240, options [mss 1460,sackOK,TS val 2935844814 ecr 0,nop,wscale 7], length 0</span><br><span class="line">12:39:35.946554 IP 172.18.0.3.37688 &gt; 172.247.2.14.10050: Flags [S], seq 1718798137, win 64240, options [mss 1460,sackOK,TS val 2935845824 ecr 0,nop,wscale 7], length 0</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>也可查看 <code>zabbix-agent2</code> 日志：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">tail</span> -f /var/log/zabbix/zabbix_agent2.<span class="built_in">log</span></span> </span><br><span class="line">2026/03/30 01:48:15.505489 connection from &quot;172.18.0.3&quot; rejected, allowed hosts: &quot;23.225.3.6/29&quot;</span><br><span class="line">2026/03/30 01:48:39.128438 connection from &quot;172.18.0.3&quot; rejected, allowed hosts: &quot;23.225.3.6/29&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="分路由发送告警"><a href="#分路由发送告警" class="headerlink" title="分路由发送告警"></a>分路由发送告警</h2><p>为了将不同的告警发送给不同的用户，首先需要为每个用户添加 Media，以 Admin 用户为例，为其添加 Media。定位到 <strong>Users -&gt; Users: Admin -&gt; Media -&gt; Add</strong> ，以添加 Telegram 为例，在 <code>Send to</code> 中填入 <strong>群组 ID</strong><br><img src="https://i.0920811.xyz/img_444.png"></p>
-<p><strong>配置 Medias</strong> 。定位到 <strong>Alerts -&gt; Media types</strong> 。Zabbix Server 已经配置了非常多可用的告警 Medias，选择 Telegram，将 <code>api_token</code> 修改为你自己的 Telegram Bot API Token，确保配置中的 <code>api_chat_id</code> 的值为 <code>&#123;ALERT.SENDTO&#125;</code></p>
-<blockquote>
-<p><strong>不要在这里硬编码 <code>api_chat_id</code> ，否则使用 Telegram 这个渠道只能将所有的消息发送到同一个群组，无法达到告警分流的作用，正确做法是将其配置为 <code>&#123;ALERT.SENDTO&#125;</code> ，当用户 Media 被调用时，会自动使用用户 Media 变量 <code>Send to</code> 的值达到告警分流到不通用户的 Media</strong></p>
-</blockquote>
-<p><strong>创建 Actions 触发发送告警</strong> 。告警 Medias 配置好后，需要创建一个 Action（或修改默认的），以决定什么时候触发告警</p>
-<p>定位到 <strong>Alerts -&gt; Actions -&gt; Trigger actions</strong> 。配置 Action<br><img src="https://i.0920811.xyz/img_445.png"></p>
-<p><strong>配置 Operations</strong> 发送消息。在 <strong>Alerts -&gt; Actions -&gt; Trigger actions -&gt; Action: Operations</strong> 中配置</p>
-<p><strong>确定 Actions Trigger</strong> ，在 <strong>Monitoring -&gt; Problems</strong> 中观察具体告警中的 Actions，看是否有关联，如果 <strong>Actions 为空，说明 Action 根本没有被触发</strong> ，检查 Action 配置</p>
-<blockquote>
-<p>如果 Problems 中的事件是在创建 Action 之前产生，那么它不会自动关联到新建的 Actions。此时可以 Update problems，将其关闭（Close），使其重新产生， Action 配置正常的话，会自动关联到 Action。</p>
-</blockquote>
-<p>Zabbix 告警默认只会发送一次，（未恢复）不会持续发送。要配置未恢复的问题间隔几分钟后再次发送。可以参考以下配置：</p>
-<ol>
-<li><p>在 <strong>Alerts -&gt; Actions -&gt; Trigger actions -&gt; Action: Operations</strong> 中配置时间间隔</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Default operation step duration = 5m</span><br></pre></td></tr></table></figure>
-
-<p> 每一步之间间隔 5 分钟</p>
-</li>
-<li><p>增加多个 Step</p>
-</li>
-</ol>
-<h1 id="常见问题处理"><a href="#常见问题处理" class="headerlink" title="常见问题处理"></a>常见问题处理</h1><h2 id="Zabbix-Web-中主机状态显示-Unknow"><a href="#Zabbix-Web-中主机状态显示-Unknow" class="headerlink" title="Zabbix Web 中主机状态显示 Unknow"></a>Zabbix Web 中主机状态显示 Unknow</h2><p>在 Zabbix Server 测试主机连通性返回 <code>1</code> ，说明 <strong>网络 + agent 都是 OK 的</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">root@zabbix:/opt/zabbix# docker compose exec -T zabbix-server zabbix_get -s 172.17.0.1 -p 10050 -k agent.ping</span><br><span class="line">1</span><br><span class="line"></span><br><span class="line">root@zabbix:/opt/zabbix# docker compose exec -T zabbix-server zabbix_get -s 172.17.0.1 -p 10050 -k system.uptime</span><br><span class="line">368373</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>但是 Zabbix Web 中主机状态显示 <code>Unknow</code> 。这种情况大概率是 Host 配置问题，重点检查：</p>
 <ul>
-<li><strong>是否绑定了 Templates</strong> ，如果没有模版，就没有抓取项（Items），Zabbix Server 不会被动去抓取主机指标</li>
-<li><strong>Interfaces</strong> 配置是否正确</li>
+<li><strong>有孚</strong> ： 孚，诚信、信实、守信。《周易》中，凡有异性爻来亲近应和为有孚。</li>
+<li><strong>需，须也。险在前也</strong> ： 须，等待、须待。前面有险（坎），需要等待时机在行动。</li>
+<li><strong>刚健而不陷，其义不困穷矣</strong> ：外卦为坎为陷险，内卦为乾为刚健，内有刚健可以突破艰险，不会轻易陷入陷险，不会被困。</li>
+<li><strong>位乎天位，以正中也。</strong> ： 九五尊位得中且正。为全卦主爻，符合天道，所以能守正吉祥。</li>
+<li><strong>利涉大川，往有功也</strong> ： 待时机成熟再行动，能济险，成大功</li>
+<li><strong>君子以饮食宴乐</strong> ： 饮食宴乐，象征君子在等待时，要自养（调养身心、养精蓄锐、充实自身），静待天时而动。</li>
+</ul>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于郊，利用恒，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于郊，不犯难行也。利用恒，无咎，未失常也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>需于郊。利用恒</strong> ： 郊，郊外、城外之地、郊野，邑外谓之郊，郊外谓之野；恒，常、恒常、恒心、持久。需于郊，象征着离险（坎）较远，未至危险之境，此时应该保持恒心、不动摇、不随意踏入险境。</li>
+<li><strong>需于郊，不犯难行也</strong> ：在郊外等待，不冒险强行前行（强行去做困难、超出自身能力的事）</li>
+<li><strong>未失常也</strong> ： 常，恒、恒心、坚守。指坚持守正（恒、不冒进）、坚守本心不动摇。阳刚好动，本易急躁；但能恒常，即未失其常度，故得无咎。</li>
+</ul>
+<p>初九阳爻居阳位（得位，能守正），但处全卦最下，离上坎之险最远，故曰郊。初九尚在郊外，险未当前，最忌冒进。此时唯一要做的就是保持节奏，积累实力，不轻举妄动（利用恒，不犯难行）。初九在乾卦是 <strong>潜龙勿用</strong> ，不宜动。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>在郊，未入难也。守常以待，故无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>郊者，远险之地。需而处此，不犯难，能守正则无咎。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>需于郊者，未至于难之地也。能守恒常之道，则无咎矣。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于沙，小有言，终吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于沙，衍在中也。虽小有言，以终吉也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>需于沙</strong> ： 沙，河岸浅滩、沙滩，介于郊野与深水之间。喻已靠近险境，但仍在缓冲地带。等待于沙滩，不是完全安全，但也未深陷险中。</li>
+<li><strong>小有言</strong> ： 言，议论、微词、口舌、言语非议。下互卦为兑，兑为言。</li>
+<li><strong>需于沙，衍在中也</strong> ： 衍，延展、宽裕、包容、从容不迫，象征有一定得活动空间和转圜余地。在中，指九二得中（下卦坎得第二爻）。</li>
+</ul>
+<p>九二阳爻居阴位，虽不当位，却得中；处下卦之中，离上坎之险又近一步，故象 沙。初九 郊 离险最远；九二 沙 已临水边，进退之间，最易受人议论（小有言）。但因得中（能守正），又有足够得活动空间（衍在中，能包容试错），心性宽裕，不急不躁，终能转危为安。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>需于沙，近难也。虽有小言，守中则终吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>沙者，险之渐也。九二居中，守正而待，虽有小言，终无害也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>沙，水滨也。二居中而正，虽近险而未入，故虽小有言，终吉。</code></p>
+<blockquote>
+<p><code>二居中而正</code> ，从爻位爻性来说，九二爻，中而不正，此处得 <code>二居中而正</code> 中得正，应理解为 <code>守正</code></p>
+</blockquote>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于泥，致寇至。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于泥，灾在外也。自我致寇，敬慎不败也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>需于泥</strong> ： 泥，水边得泥泞之地、沼泽，比九二沙更深、更危险之地。在泥泞之地等待，已近水边（坎险），脚已下陷，进退皆难。</li>
+<li><strong>自我致寇</strong> ： 坎为盗寇，故 <strong>自我致寇</strong></li>
+<li><strong>需于泥，灾在外也</strong> ： 灾（坎险）就在眼前，强调外部风险环境。 对此，只要能保持对外部环境得洞察和敬畏（不自大、刚健过刚），自身保持谨慎、勿要激进冒险，仍可避免失败。九三在下卦乾中，乾为健，有刚健行动力。</li>
+</ul>
+<p>九三（阳）爻，位于下卦 乾卦 最上，阳爻居阳位，过刚而不中，易阳刚用事（自身特性），但已逼近险地（上卦坎为水，象征险阻，外部环境），再前一步即入上卦坎险，正是泥象。刚而不柔，最易冒进，故 <strong>自我致寇</strong> 。这种情况下，若能及时敬畏、谨慎、审时度势，仍可避免失败（得正）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>泥者，险之渐也。三居险之渐，不知止而进，故致寇至也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>泥者，水之渐深。三以阳刚处险，若躁进则自招寇难，若能敬慎以待，则虽有外患，犹可免也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>泥，险之渐。三以阳刚而居险中，躁而进，则必致寇至矣。然灾在外，非自内出；能敬慎以守，则虽有外寇，不至于败。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于血，出自穴。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：需于血，顺以听也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>需于血</strong> ： 血，坎之象，象征处于危险中、已流血受伤（创伤与代价）。</li>
+<li><strong>出自穴</strong> ： 穴，险中之地。</li>
+<li><strong>顺以听也</strong> ： 能从穴（险）中出，是因为六四位正（阴爻居阴位），上承九五阳刚，下应初九（有援），能顺从正位（九五），顺而听命，不妄自行动。</li>
+</ul>
+<p>六四已入坎（险陷）中，但阴爻居阴位，位正，上承九五阳刚，下正应初九，虽陷险害，但以柔顺之德顺于时势、听取建议吸收教训（顺以听也），因而得以脱险</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>血者，伤害之象也。穴者，险之处也。四以阴居阴，得位而顺，虽遇险害，能顺以听，故能出穴而免于害也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>坎为血，穴亦险也。四以阴居阴，能守顺听上，虽陷险害，犹可出也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>血，坎之象。穴，险中也。六四以阴居阴，得位而顺，能听乎九五，故虽在险中，犹可以出也。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">需于酒食，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：酒食贞吉，以中正也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>需于酒食，贞吉</strong> ： 酒食象征安乐、宴饮，喻示 安然处需，从容等待，心不躁动。守持正道，必得吉祥。</li>
+<li><strong>以中正也</strong> ： 九五阳爻居阳位，处尊位而得中得正，为全卦之主，象征 <strong>雷雨已具，但须待时</strong> 。既不失刚健（乾），又能以 酒食 示宽缓养气，正是 <strong>刚健而不陷</strong> 的最高境界</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>酒食者，安乐之事也。居尊中之位，以刚中正，虽处需时，而能以中正守之，安而有待，故曰酒食贞吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五居中得正，需之极也，而能安处以中正，故曰需于酒食。酒食者，宴乐之象。能安于正道而不忧困，吉也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五以阳居尊位，中正而得体。虽当需时，而能以中正守正，不失其道，故可以安宴而待，贞而吉也。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">入于穴，有不速之客三人来，敬之终吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不速之客来，敬之终吉。虽不当位，未大失也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不速之客</strong> ： 未被邀请、非所召、意外出现的人或事。待时而动，但不能一直等待，会错失机遇，面对机遇（不速之客），要谨慎忖度，能抓住就要抓住（敬之终吉）</li>
+<li><strong>虽不当位，未大失也</strong> ： 不当位指 <strong>阴爻居坎险之极（坎最上爻）</strong> ，虽 <strong>得正 但乘九五之刚，不顺，上六正应九三，未大失</strong></li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>穴者，险之处也。上六阴柔居险之极，不能自出，必有客来援之。客者，阳也。三人者，三阳也。虽不速而自至，若能敬之，则终吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>险极而不能自出，必赖阳刚之助。不速之客，谓下卦三阳也。来而敬之，则终吉。虽不当位，未大失也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>穴，险极之象。上六居之，柔而不当，不能自出，必待阳来救之。三人者，下卦三阳也。敬而顺之，则终吉。</code></p>
+</li>
 </ul>
 ]]></content>
       <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 上部署 Nacos</title>
-    <url>/20260502033711/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="nacos-使用-NFS-持久化安装部署"><a href="#nacos-使用-NFS-持久化安装部署" class="headerlink" title="nacos 使用 NFS 持久化安装部署"></a>nacos 使用 NFS 持久化安装部署</h1><h2 id="部署-NFS"><a href="#部署-NFS" class="headerlink" title="部署 NFS"></a>部署 NFS</h2><p>在 NFS Server 上执行以下命令：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update </span><br><span class="line">sudo apt install nfs-kernel-server -y</span><br></pre></td></tr></table></figure>
-
-<h3 id="创建用于存放-Nacos-数据的目录"><a href="#创建用于存放-Nacos-数据的目录" class="headerlink" title="创建用于存放 Nacos 数据的目录"></a>创建用于存放 Nacos 数据的目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo mkdir -p /data/nfs/nacos </span><br></pre></td></tr></table></figure>
-
-<p>调整权限，生产环境建议更精细的权限控制</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo chown nobody:nogroup /data/nfs/nacos </span><br><span class="line">sudo chmod 777 /data/nfs/nacos</span><br></pre></td></tr></table></figure>
-
-<h3 id="配置-NFS-服务"><a href="#配置-NFS-服务" class="headerlink" title="配置 NFS 服务"></a>配置 NFS 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo nano /etc/exports</span><br><span class="line"></span><br><span class="line">/data/nfs/nacos  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)</span><br></pre></td></tr></table></figure>
-
-<p>启动服务：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo exportfs -a </span><br><span class="line">sudo systemctl restart nfs-kernel-server</span><br></pre></td></tr></table></figure>
-
-<h2 id="在-Kubernetes-中配置-NFS-客户端"><a href="#在-Kubernetes-中配置-NFS-客户端" class="headerlink" title="在 Kubernetes 中配置 NFS 客户端"></a>在 Kubernetes 中配置 NFS 客户端</h2><p>为了让 K8S 节点能挂载 NFS，所有 Worker 节点都必须安装客户端工具：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt install nfs-common -y</span><br></pre></td></tr></table></figure>
-
-<h3 id="部署-NFS-动态存储类-StorageClass"><a href="#部署-NFS-动态存储类-StorageClass" class="headerlink" title="部署 NFS 动态存储类 (StorageClass)"></a>部署 NFS 动态存储类 (StorageClass)</h3><p>手动创建 PV 非常麻烦，在 K8S 中我们通常使用 <code>nfs-subdir-external-provisioner</code> 来实现自动创建 PV。</p>
-<h4 id="使用-Helm-快速部署-推荐"><a href="#使用-Helm-快速部署-推荐" class="headerlink" title="使用 Helm 快速部署 (推荐)"></a>使用 Helm 快速部署 (推荐)</h4><p>这是目前最简单、最标准的方式，添加仓库</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/ </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>安装 <code>nfs-provisioner</code> 作为 <strong>存储 Provisioner</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install nfs-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \</span><br><span class="line">     --set nfs.server=192.168.1.100 \</span><br><span class="line">     --set nfs.path=/data/nfs/nacos \</span><br><span class="line">     --set storageClass.name=nfs-storage \</span><br><span class="line">     --set storageClass.defaultClass=true</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><code>kubectl get sc</code> 验证 StorageClass</p>
-<h2 id="Nacos-关联-NFS-存储"><a href="#Nacos-关联-NFS-存储" class="headerlink" title="Nacos 关联 NFS 存储"></a>Nacos 关联 NFS 存储</h2><p>现在可以在 Nacos 的部署配置中使用这个 <code>nfs-storage</code> 的 StorageClass 了。参考以下资源清单部署单节点的 Nacos 完整服务，包括 Nginx Ingress 以及鉴权</p>
-<figure class="highlight yaml"><figcaption><span>nacos-single-node.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span>            </span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/whitelist-source-range:</span> <span class="string">&quot;54.251.236.229/24,206.119.115.76/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>部署完成后通过 <code>nacos.example.click</code> 登录后台，初始默认密码为 <code>nacos/nacos</code></p>
-<h1 id="nacos-使用-Mysql-持久化安装部署"><a href="#nacos-使用-Mysql-持久化安装部署" class="headerlink" title="nacos 使用 Mysql 持久化安装部署"></a>nacos 使用 Mysql 持久化安装部署</h1><p>要使用 Mysql 存储数据，只需修改资源清单为以下内容即可：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span>          </span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">SPRING_DATASOURCE_PLATFORM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;mysql&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_HOST</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_HOST&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PORT</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;3306&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_NAME</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_DB_NAME&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_USER</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_USER&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PASSWORD</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_PASSWORD&gt;&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_PARAM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;characterEncoding=utf8&amp;connectTimeout=1000&amp;socketTimeout=3000&amp;autoReconnect=true&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        </span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">rpc</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">9848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">9848</span>      </span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="comment"># nginx.ingress.kubernetes.io/whitelist-source-range: &quot;54.251.236.2/24,206.119.115.7/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
+        <category>易学</category>
       </categories>
   </entry>
   <entry>
-    <title>安装 Mysql</title>
-    <url>/202211021345/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 kernel 5.4</li>
-<li>Mysql Server 5.7</li>
+    <title>六十四卦之泽雷随</title>
+    <url>/20251001132040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽雷随"><a href="#泽雷随" class="headerlink" title="泽雷随"></a>泽雷随</h1><p><img src="https://i.0920811.xyz/img_357.png"></p>
+<p>随，上（外）兑（泽、悦）下（内）震（雷、动），动而悦，象征着顺应（时势）、顺势而为、随时势而动。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随，元亨，利贞，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：随，刚来而下柔，动而说，随。大亨贞，无咎，而天下随时。随时之义大矣哉!</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：泽中有雷，随;君子以向晦入宴息。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>刚来而下柔，动而悦</strong> ： 随卦从否卦变来，否卦上九和初六交换，上九下到随卦初九位，处柔爻之下。否卦天地不通，上下两爻交换，天地往来，阴阳交流，变得通常，故元亨 0</li>
+<li><strong>君子以向晦入宴息</strong> ： 晦，夜晚、日暮、黄昏。君子效法卦象，随时而行：白天活动，夜晚歇息，动静有度，随顺自然。随之为义，随时而动，不失其正。</li>
 </ul>
-<h1 id="Mysql-Server-安装步骤"><a href="#Mysql-Server-安装步骤" class="headerlink" title="Mysql Server 安装步骤"></a>Mysql Server 安装步骤</h1><h2 id="yum-方式安装"><a href="#yum-方式安装" class="headerlink" title="yum 方式安装"></a>yum 方式安装</h2><h3 id="安装-MySQL-5-7-的-yum-源"><a href="#安装-MySQL-5-7-的-yum-源" class="headerlink" title="安装  MySQL 5.7 的 yum 源"></a>安装  MySQL 5.7 的 yum 源</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span><br></pre></td></tr></table></figure>
-
-<p>如果因为源冲突，类似如下错误</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Processing Conflict: mysql80-community-release-el7-2.noarch conflicts mysql57-community-release</span><br></pre></td></tr></table></figure>
-
-<p>可以卸载旧的 <code>yum</code> 源安装包，重新安装</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep mysql</span></span><br><span class="line">mysql80-community-release-el7-2.noarch</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum remove mysql80-community-release-el7-2</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span></span><br></pre></td></tr></table></figure>
-
-<p>检查 <code>yum</code> 源中的 <code>mysql-community-server</code> 信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum info mysql-community-server</span></span><br><span class="line">Loaded plugins: fastestmirror</span><br><span class="line">Loading mirror speeds from cached hostfile</span><br><span class="line"> * base: download.cf.centos.org</span><br><span class="line"> * elrepo: reflector.westga.edu</span><br><span class="line"> * epel: coresite.mm.fcix.net</span><br><span class="line"> * extras: download.cf.centos.org</span><br><span class="line"> * updates: download.cf.centos.org</span><br><span class="line">Available Packages</span><br><span class="line">Name        : mysql-community-server</span><br><span class="line">Arch        : x86_64</span><br><span class="line">Version     : 5.7.40</span><br><span class="line">Release     : 1.el7</span><br><span class="line">Size        : 178 M</span><br><span class="line">Repo        : mysql57-community/x86_64</span><br><span class="line">Summary     : A very fast and reliable SQL database server</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h3 id="安装-mysql-community-server"><a href="#安装-mysql-community-server" class="headerlink" title="安装 mysql-community-server"></a>安装 mysql-community-server</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mysql-community-server</span><br></pre></td></tr></table></figure>
-
-<h3 id="启动-mysql-server"><a href="#启动-mysql-server" class="headerlink" title="启动 mysql server"></a>启动 mysql server</h3><p>配置 mysql server 开机启动，同时启动服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable mysqld --now</span><br></pre></td></tr></table></figure>
-
-<p>MySQL5.7 会为 root 用户随机生成一个临时密码，密码记录在日志 <code>/var/log/mysqld.log</code> 中</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grep &#x27;temporary password&#x27; /var/log/mysqld.log </span><br><span class="line">2022-11-02T06:09:54.520945Z 1 [Note] A temporary password is generated for root@localhost: ZQc6OCFidi:g</span><br></pre></td></tr></table></figure>
-
-<p>使用临时密码登陆，修改密码，临时密码登陆后不能做任何操作，必须先更改密码</p>
-<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">ALTER USER &#x27;root&#x27;@&#x27;localhost&#x27; IDENTIFIED BY &#x27;WadgyWwRdgDNEb+5Pw==&#x27;;</span><br></pre></td></tr></table></figure>
-
-<h1 id="Mariadb-安装"><a href="#Mariadb-安装" class="headerlink" title="Mariadb 安装"></a>Mariadb 安装</h1><h2 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
-<li>Mariadb 5.5</li>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>随者，随时也。随时以动，则无往不利。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随时而动者，非附和而已，乃因时顺理之谓。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>随，从也。随时而动，随理而行，则元亨利贞无咎。</code></p>
+</li>
 </ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mariadb-server</span><br></pre></td></tr></table></figure>
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">官有渝，贞吉。出门交有功。</span><br></pre></td></tr></table></figure>
 
-<p>安装后启动，默认密码为空，登陆后使用以下命令修改密码</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">SET PASSWORD FOR &#x27;root&#x27;@&#x27;localhost&#x27; = PASSWORD(&#x27;your_password&#x27;);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：官有渝，从正吉也。出门交有功，不失也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>官有渝</strong> ： 官，犹常（道）也。有渝者，变革旧常。能随时改正，必吉。渝，改变、变动、变化。</li>
+</ul>
+<p>初九刚来而下柔，阳爻居阳位，得正，为随卦主爻。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>官有渝者，变常也。能变旧而随时，不失正，则吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随者，当随时而动，不可执常。初九刚正，能随时改易，所以吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>官有渝，谓能变通。随时而变，从正则吉；交际而守正，亦有功。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系小子，失丈夫。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系小子，弗兼与也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>系小子，失丈夫</strong> ： 系，依附、追随、束缚。六二和九五为正应，可以为丈夫，初九为随卦主爻，六二比邻初九，初九为震，为长子，可为小子。若为女性，则顾念子而失丈夫，有离异之象；若男性，丈夫也可为德厚长者，小子为平庸之辈。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六二以柔居中，本应九五。若系初九，则失九五。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随在得其所随。六二应九五而正，若舍之而系于初九，是失正也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>小子，指初九；丈夫，指九五。六二居中得正，应于九五，正随之道也。若系初九，则失九五矣。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">系丈夫，失小子。随有求，得，利居贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：系丈夫，志舍下也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>系丈夫，失小子</strong> ： 舍初九而随九四。</li>
+<li><strong>志舍下也</strong> ： 三欲随上，舍近而求远，是舍小子而随丈夫。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>二则随小子而失丈夫，三则随丈夫而失小子。志舍下也，故利居贞。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随在择所随，三能舍近就远，志在上也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>小子谓初九，丈夫谓九五。三舍近随远，志在随正也。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">随有获，贞凶。有孚在道，以明，何咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：随有获，其义凶也。有孚在道，明功也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>随有获，贞凶</strong> ： 获，获利、获得。九四阳爻居阴位，刚而位不当，又处于近君位，易因刚健（锋芒过露）而居功逐利，招致凶险。</li>
+<li><strong>有孚在道，明功也</strong> ： 孚，诚心、诚信、诚实、真诚。明，明辨、清晰。随人做事，居功获利，其义凶。心怀诚信，明辨所处，则无咎害。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九四失位，随而有获，非正也，故贞凶。唯有孚守道，乃可以免咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九四以刚居阴位，非正。若随而得，必有凶。然能诚信守道，则虽得，亦无咎。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>随有获，非正也，故凶。有孚在道，则虽获亦可，无咎。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">孚于嘉，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：孚于嘉，吉;位正中也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>孚于嘉</strong> ： 嘉，美好、优秀、善的人或事。</li>
+</ul>
+<p>九五居尊位，阳爻居阳位，又在全卦的中位，正中而得正。以刚健中正之德居尊位，又能以孚随正道、美善之事（嘉），所以合随道。为全卦最好的一爻。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五刚中居尊，孚信在上，下应六二，故孚于嘉而吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五以刚中正居尊位，应六二之柔顺，君臣相孚，随从正道，吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>孚于嘉，言以诚信随美善也。九五中正居尊，正应六二，吉之道也。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拘系之，乃从维之。王用亨于西山。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：拘系之，上穷也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>拘系之，乃从维之</strong> ： 拘系，拘束、束缚、捆绑。从、跟从、追随、顺从。维，维系、维持、加固。</li>
+<li><strong>王用亨于西山</strong> ： 用亨，通享，祭祀、祭礼。西山，西周的重要祭祀之地（传为周文王祭祀先祖或天地的场所，象征 “庄重、终结性的仪式”）</li>
+</ul>
+<p>上六阴爻处随卦最上（极），随之至极，随之穷尽，只知（能、过渡）追随，反而被束缚、限制。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上六随之极，柔而无正，故拘系。然犹能随正，则乃可维。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>随之至极，必至困穷。然能返正，从维大道，犹可以济。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>拘系之，随极而困也。乃从维之，犹可以归正。王用亨于西山，言随正以大祭，归于至诚。</code></p>
+</li>
+</ul>
 ]]></content>
       <categories>
-        <category>Mysql</category>
+        <category>易学</category>
       </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 主从复制相关原理简述</title>
-    <url>/2207211114/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><blockquote>
-<h2 id="Mysql-主从同步基本原理"><a href="#Mysql-主从同步基本原理" class="headerlink" title="Mysql 主从同步基本原理"></a>Mysql 主从同步基本原理</h2></blockquote>
-<p>复制的基本过程如下：  </p>
-<ol>
-<li><p>Slave 上面的 IO 进程连接上 Master，并请求从指定日志文件的指定位置（或者从最开始的日志）之后的日志内容；</p>
-</li>
-<li><p>Master 接收到来自 Slave 的 IO 进程的请求后，通过负责复制的 IO 进程,根据请求信息,读取指定日志指定位置之后的日志信息，返回给 Slave 的 IO 进程。返回信息中除了日志所包含的信息之外，还包括本次返回的信息已经到 Master 端的 bin-log 文件的名称以及 bin-log 的位置；</p>
-</li>
-<li><p>Slave 的 IO 进程接收到信息后，将接收到的日志内容依次添加到 Slave 端的 relay-log 文件的最末端，并将读取到的 Master 端的 bin-log 的文件名和位置记录到 master-info 文件中，以便在下一次读取的时候能够清楚的告诉 Master “我需要从某个 bin-log 的哪个位置开始往后的日志内容，请发给我”；</p>
-</li>
-<li><p>Slave 的 Sql 进程检测到 relay-log 中新增加了内容后，会马上解析 relay-log 的内容，获得在 Master 端真实执行的那些可执行的内容，并在自身执行。</p>
-</li>
-</ol>
-<p>双主情况下，禁止同时写入，建议还是按照主从的方式工作，防止数据冲突。双主场景下，主要是切换主备方便。</p>
-<span id="more"></span>
-
-<blockquote>
-<h2 id="Mysql-复制方式"><a href="#Mysql-复制方式" class="headerlink" title="Mysql 复制方式"></a>Mysql 复制方式</h2></blockquote>
-<blockquote>
-<h3 id="异步复制（Asynchronous-replication）"><a href="#异步复制（Asynchronous-replication）" class="headerlink" title="异步复制（Asynchronous replication）"></a>异步复制（Asynchronous replication）</h3></blockquote>
-<p>MySQL 默认的复制即是异步的，主库在执行完客户端提交的事务后会立即将结果返给给客户端，并不关心从库是否已经接收并处理，这样就会有一个问题，主如果 crash 掉了，此时主上已经提交的事务可能并没有传到从上，如果此时，强行将从提升为主，可能导致新主上的数据不完整。</p>
-<blockquote>
-<h3 id="全同步复制（Fully-synchronous-replication）"><a href="#全同步复制（Fully-synchronous-replication）" class="headerlink" title="全同步复制（Fully synchronous replication）"></a>全同步复制（Fully synchronous replication）</h3></blockquote>
-<p>指当主库执行完一个事务，所有的从库都执行了该事务才返回给客户端。因为需要等待所有从库执行完该事务才能返回，所以全同步复制的性能必然会收到严重的影响。</p>
-<blockquote>
-<h3 id="半同步复制（Semisynchronous-replication）"><a href="#半同步复制（Semisynchronous-replication）" class="headerlink" title="半同步复制（Semisynchronous replication）"></a>半同步复制（Semisynchronous replication）</h3></blockquote>
-<p>介于异步复制和全同步复制之间，主库在执行完客户端提交的事务后不是立刻返回给客户端，而是等待至少一个从库接收到并写到 relay log 中才返回给客户端。相对于异步复制，半同步复制提高了数据的安全性，同时它也造成了一定程度的延迟，这个延迟最少是一个 TCP&#x2F;IP 往返的时间。所以，半同步复制最好在低延时的网络中使用。半同步复制失败(配置超时时间)，自动转为异步复制  </p>
-<h4 id="半同步复制配置步骤"><a href="#半同步复制配置步骤" class="headerlink" title="半同步复制配置步骤"></a>半同步复制配置步骤</h4><ol>
-<li>加载使用的插件</li>
-</ol>
-<p>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_master SONAME &#x27;semisync_master.so&#x27;;</span><br></pre></td></tr></table></figure>
-
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">INSTALL PLUGIN rpl_semi_sync_slave SONAME &#x27;semisync_slave.so&#x27;;</span><br></pre></td></tr></table></figure>
-
-<p>通过 <code>show plugins;</code> 可查看已加载的插件</p>
-<ol start="2">
-<li>启动半同步复制</li>
-</ol>
-<p>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_master_enabled = 1;</span><br></pre></td></tr></table></figure>
-
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SET GLOBAL rpl_semi_sync_slave_enabled = 1;</span><br></pre></td></tr></table></figure>
-
-<p>执行以下命令重启从库上的 IO 线程</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">STOP SLAVE IO_THREAD;</span><br><span class="line">START SLAVE IO_THREAD;</span><br></pre></td></tr></table></figure>
-
-<ol start="3">
-<li>检查半同步复制插件是否在运行</li>
-</ol>
-<p>主库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>master</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_master_status&#x27;;</span><br></pre></td></tr></table></figure>
-
-<p>从库执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">show status like &#x27;Rpl_semi_sync_slave_status&#x27;;</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<h2 id="Mysql-复制级别说明"><a href="#Mysql-复制级别说明" class="headerlink" title="Mysql 复制级别说明"></a>Mysql 复制级别说明</h2></blockquote>
-<p>不同复制级别的设置会影响到 Master 端的 bin-log 记录成不同的形式。<br>配置方式:</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">binlog_format=&#x27;row&#x27;</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<h3 id="基于-sql-语句（Statement-level）"><a href="#基于-sql-语句（Statement-level）" class="headerlink" title="基于 sql 语句（Statement level）"></a>基于 sql 语句（Statement level）</h3></blockquote>
-<p>每一条会修改数据的 sql 都会记录到 master 的 bin-log 中。slave 在复制的时候，sql 进程会解析成和原来 master 端执行过的相同的 sql 来再次执行。</p>
-<p><strong>优点</strong> ：statement level 下的优点首先就是解决了<a href="#%E5%9F%BA%E4%BA%8E%E4%B8%80%E6%9D%A1%E8%AE%B0%E5%BD%95%EF%BC%88Row-level%EF%BC%89">row level</a>下的缺点，不需要记录每一行数据的变化，减少 bin-log 日志量，节约 IO，提高性能。因为他只需要记录在 Master 上所执行的语句的细节，以及执行语句时候的上下文的信息。</p>
-<p><strong>缺点</strong> ：由于他是记录的执行语句，所以，为了让这些语句在 slave 端也能正确执行，那么他还必须记录每条语句在执行的时候的一些相关信息，也就是上下文信息，以保证所有语句在 slave 端被执行的时候能够得到和在 master 端执行时候相同的结果。<br>另外就是，由于 Mysql 现在发展比较快，很多的新功能不断的加入，使 mysql 的复制遇到了不小的挑战，复制的时候涉及到越复杂的内容，bug 也就越容易出现。在 statement level 下，目前已经发现的就有不少情况会造成 mysql 的复制出现问题，主要是修改数据的时候使用了某些特定的函数或者功能的时候会出现，比如：sleep()函数在有些版本中就不能真确复制，在存储过程中使用了 last_insert_id()函数，可能会使 slave 和 master 上得到不一致的 id 等等。<br>由于 row level 是基于每一行来记录的变化，所以不会出现类似的问题。</p>
-<blockquote>
-<h3 id="基于一条记录（Row-level）"><a href="#基于一条记录（Row-level）" class="headerlink" title="基于一条记录（Row level）"></a>基于一条记录（Row level）</h3></blockquote>
-<p>日志中会记录成每一行数据被修改的形式，然后在 slave 端再对相同的数据进行修改</p>
-<p><strong>优点</strong> ： 在 row level 模式下，bin-log 中可以不记录执行的 sql 语句的上下文相关的信息，仅仅只需要记录那一条记录被修改了，修改成什么样了。所以 row level 的日志内容会非常清楚的记录下每一行数据修改的细节，非常容易理解。而且不会出现某些特定情况下的存储过程，或 function，以及 trigger 的调用和触发无法被正确复制的问题。<br>任何情况都可以被复制，这对复制来说是最安全可靠的；和其他大多数数据库系统的复制技术一样；多数情况下，从服务器上的表如果有主键的话，复制就会快了很多,更少的锁</p>
-<p><strong>缺点</strong> ： row level 下，所有的执行的语句当记录到日志中的时候，都将以每行记录的修改来记录，这样可能会产生大量的日志内容，比如有这样一条 update 语句：update product set owner_member_id &#x3D; ‘b’ where owner_member_id &#x3D; ‘a’，执行之后，日志中记录的不是这条 update 语句所对应的事件（mysql 以事件的形式来记录 bin-log 日志），而是这条语句所更新的每一条记录的变化情况，这样就记录成很多条记录被更新的很多个事件。自然，bin-log 日志的量就会很大。尤其是当执行 alter table 之类的语句的时候，产生的日志量是惊人的。因为 Mysql 对于 alter table 之类的表结构变更语句的处理方式是整个表的每一条记录都需要变动，实际上就是重建了整个表。那么该表的每一条记录都会被记录到日志中。</p>
-<blockquote>
-<h3 id="Mixed"><a href="#Mixed" class="headerlink" title="Mixed"></a>Mixed</h3></blockquote>
-<p>在 Mixed 模式下，Mysql 会根据执行的每一条具体的 sql 语句,来区分对待记录的日志形式，也就是在 Statement 和 Row 之间选择一种。新版本中的 Statment level 还是和以前一样，仅仅记录执行的语句。而新版本的 Mysql 中对 row level 模式也被做了优化，并不是所有的修改都会以 row level 来记录，像遇到表结构变更的时候就会以 statement 模式来记录，如果 sql 语句确实就是 update 或者 delete 等修改数据的语句，那么还是会记录所有行的变更。</p>
-<blockquote>
-<h3 id="GTID-模式"><a href="#GTID-模式" class="headerlink" title="GTID 模式"></a>GTID 模式</h3></blockquote>
-<p>需要基于 row 模式，mysql-5.6.2 支持,mysql5.6.10 后完善</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log_bin=on</span><br><span class="line">binlog_format=&#x27;row&#x27;</span><br><span class="line">gtid_mode=on</span><br><span class="line">enforce-gtid-consistency=on</span><br><span class="line">log-slave-updates=1</span><br></pre></td></tr></table></figure>
-
-<p>限制：</p>
-<ol>
-<li>不支持非事务引擎(从库报错, stop slave; start slave ; 忽略)</li>
-<li>不支持 create table … select 语句(主库直接报错)</li>
-<li>不支持一个 sql 同时更新一个事务引擎和非事务引擎的表</li>
-<li>在一个复制组中,必须要求统一开启 gtid 或是关闭 gtid</li>
-<li>开启 gtid 需要重启</li>
-<li>开启 gtid 后,就不在使用原来传统的复制方式</li>
-<li>对于 create temporary table 和 drop temporary table 语句不支持</li>
-<li>不支持 sql_slave_skip_counter</li>
-</ol>
-<blockquote>
-<h2 id="MySQL（主从）配置相关参数"><a href="#MySQL（主从）配置相关参数" class="headerlink" title="MySQL（主从）配置相关参数"></a>MySQL（主从）配置相关参数</h2></blockquote>
-<p>master 相关配置  </p>
-<figure class="highlight shell"><figcaption><span>master my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 1</span><br><span class="line">log-bin = mysql-bin    #要生成的二进制日志文件名称</span><br><span class="line">binlog_format=statement/row/mixed        ###复制实现模式/级别</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-do-db = rtzc_pnc_base       <span class="comment">##要同步的库.应该尽可能的在从库上使用replicate_wild_*，不建议在主库上使用</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">binlog-ignore-db = mysql   <span class="comment">#不同步的数据库,应该在从库上尽可能的使用replicate_wild_*</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#### 一般不再主服务器上过滤，虽然可以减少主的开销，但这样会导致二进制日志不完整</span></span></span><br><span class="line">sync_binlog=0</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#######</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">0      表示MySQL 不控制binlog的刷新，由文件系统自己控制它的缓存的刷新。这时候的性能是最好的，但是风险也是最大的。因为一旦系统Crash，在binlog_cache中的所有binlog信息都会被丢失。</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">sync_binlog&gt;0    表示每N个sync_binlog次事务提交，MySQL调用文件系统的刷新操作将缓存刷下去。最安全的就是sync_binlog=1了，表示每次事务提交，MySQL都会把binlog刷下去，是最安全但是性能损耗最大的设置。这样的话，在数据库所在的主机操作系统损坏或者突然掉电的情况下，系统才有可能丢失1个事务的数据。但是binlog虽然是顺序IO，但是设置sync_binlog=1，多个事务同时提交，同样很大的影响MySQL和IO性能。对于高并发事务的系统来说，“sync_binlog”设置为0和设置为1的系统写入性能差距可能高达5倍甚至更多。</span></span><br><span class="line"></span><br><span class="line">innodb_flush_log_at_trx_commit = 1</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">##########innodb特有参数</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=0     每隔一秒，把事务日志缓存区的数据写到日志文件中，以及把日志文件的数据刷新到磁盘上；在这种情况下，MySQL性能最好，但如果 mysqld 进程崩溃，通常会导致最后 1s 的日志丢失。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=1     每个事务提交时候，把事务日志从缓存区写到日志文件中，并且刷新日志文件的数据到磁盘上；每次事务提交时，<span class="built_in">log</span> buffer 会被写入到日志文件并刷写到磁盘。这也是默认值。这是最安全的配置，但由于每次事务都需要进行磁盘I/O，所以也最慢。</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">N=2    当取值为 2 时，每次事务提交会写入日志文件，但并不会立即刷写到磁盘，日志文件会每秒刷写一次到磁盘。这时如果 mysqld 进程崩溃，由于日志已经写入到系统缓存，所以并不会丢失数据；在操作系统崩溃的情况下，通常会导致最后 1s 的日志丢失。 对于一些数据一致性和完整性要求不高的应用，配置为 2 就足够了；如果为了最高性能，可以设置为 0。有些应用，如支付服务，对一致性和完整性要求很高，所以即使最慢，也最好设置为 1.</span> </span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">replicate-wild-ignore-table=db.*               <span class="comment">###应该在从库上尽可能的使用replicate_wild_</span></span></span><br><span class="line"></span><br><span class="line">max_binlog_size</span><br><span class="line">expire_logs_days = 7          ##日志保存天数</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>slave 相关配置</p>
-<figure class="highlight shell"><figcaption><span>my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">server-id = 2</span><br><span class="line">relay-log = mysql-relay-bin</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-db = rtzc_pnc_base     <span class="comment">##应该在从库上尽可能的使用replicate_wild_*，并不会减少主往从复制数据占用带宽</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate-do-table = db.table      <span class="comment">##表级过滤</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment">#replicate-ignore-table = db.table</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_ignore_db=<span class="built_in">test</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_do_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">replicate_wild_ignore_table=DB_NAME.%</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">slave-skip-errors = 1032,1062     <span class="comment">###跳过某些同步错误号</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">log-slave-updates=1          <span class="comment">###从库需要记录binlog，如级联从库场景，级联从库必须有此参数</span></span></span><br><span class="line">log-bin = mysql-bin</span><br><span class="line"></span><br><span class="line">expire_logs_days = 7</span><br><span class="line"></span><br><span class="line">read-only         ###从库Slave中使用read-only参数，确保从库数据不被非法更新。</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">innodb_read_only = 1         <span class="comment">###控制root用户，慎用</span></span></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
   </entry>
 </search>
