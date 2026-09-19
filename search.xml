@@ -1295,65 +1295,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
-    <url>/b12589a5/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7</li>
-</ul>
-<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
-<blockquote>
-<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
-</blockquote>
-<span id="more"></span>
-
-<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了-relay-log-中的全部更新"><a href="#确保所有从库已经执行了-relay-log-中的全部更新" class="headerlink" title="确保所有从库已经执行了 relay log 中的全部更新"></a>确保所有从库已经执行了 relay log 中的全部更新</h4><p>登录 mysql 从库，在每个从库上，执行 <code>stop slave io_thread</code> ,停止 IO 线程, 通过以下 2 个命令之一检查从库 relay log 的执行情况</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
-
-<p><img src="https://i.0920811.xyz/img_6.png"></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
-
-<p><img src="https://i.0920811.xyz/img_7.png">  </p>
-<p>当输出中 <code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code> ，表示更新都执行完毕。  </p>
-<blockquote>
-<ul>
-<li>正常情况下，此时在每个从库上面查看 slave 状态( <code>show slave status\G</code> ), 每个从库读取的主库的 <code>Master_Log_File</code> 和 <code>Read_Master_Log_Pos</code> 都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.0920811.xyz/img_8.png"></li>
-<li>如果，从库上面查看 slave 状态，各个从库读取的主库的 <code>Master_Log_File</code> 和 <code>Read_Master_Log_Pos</code> 不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择 position 最大的一个从库，作为新选定的主库。对其他从库，应该通过从 binlog 中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
-</ul>
-</blockquote>
-<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认 <code>/etc/my.cnf</code> )中开启 binlog，如已配置，跳过</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
-
-<p>新选定的主库上，如果配置了 readonly，在配置文件(默认 <code>/etc/my.cnf</code> )中取消 readonly 配置</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>更改 mysql 配置文件后，重启 mysql 生效</p>
-</blockquote>
-<p>在新选定的主库上，执行以下命令，重置从库配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
-
-<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
-
-<p>在新选定的主库上，执行以下命令，查看当前主库的 master 位置信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
-
-<p><img src="https://i.0920811.xyz/img_9.png"></p>
-<blockquote>
-<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看 master status，显示的 <code>File</code> 和 <code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
-</blockquote>
-<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的 <code>master_log_file</code> 和 <code>master_log_pos</code> 从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
-
-<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Spinnaker 安装配置</title>
     <url>/202210121639/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -1466,6 +1407,65 @@ width: 20%;
       <tags>
         <tag>Spinnaker</tag>
         <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Mysql 从库提升为主库，原来的其他从库成为新的主库的从库</title>
+    <url>/b12589a5/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7</li>
+</ul>
+<h3 id="场景说明"><a href="#场景说明" class="headerlink" title="场景说明"></a>场景说明</h3><p>Mysql 一主多从的情况下，主库宕机（或其他无法使用的情况），将其中一台从库提升为主库，同时将原来其他的从库配置为新的主库的从库。  </p>
+<blockquote>
+<p>主从恢复正常之前，数据库不应该有新的数据写入</p>
+</blockquote>
+<span id="more"></span>
+
+<h3 id="操作步骤"><a href="#操作步骤" class="headerlink" title="操作步骤"></a>操作步骤</h3><h4 id="确保所有从库已经执行了-relay-log-中的全部更新"><a href="#确保所有从库已经执行了-relay-log-中的全部更新" class="headerlink" title="确保所有从库已经执行了 relay log 中的全部更新"></a>确保所有从库已经执行了 relay log 中的全部更新</h4><p>登录 mysql 从库，在每个从库上，执行 <code>stop slave io_thread</code> ,停止 IO 线程, 通过以下 2 个命令之一检查从库 relay log 的执行情况</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show processlist;</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://i.0920811.xyz/img_6.png"></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show slave status\G</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://i.0920811.xyz/img_7.png">  </p>
+<p>当输出中 <code>Slave_SQL_Running_State</code> 为 <code>Slave has read all relay log; waiting for more updates</code> ，表示更新都执行完毕。  </p>
+<blockquote>
+<ul>
+<li>正常情况下，此时在每个从库上面查看 slave 状态( <code>show slave status\G</code> ), 每个从库读取的主库的 <code>Master_Log_File</code> 和 <code>Read_Master_Log_Pos</code> 都应该是一样的，意味着所有的从库都已经更新到了主库宕机时的状态。此种情况下，可随便选择从库作为新的主库。<br><img src="https://i.0920811.xyz/img_8.png"></li>
+<li>如果，从库上面查看 slave 状态，各个从库读取的主库的 <code>Master_Log_File</code> 和 <code>Read_Master_Log_Pos</code> 不一致，说明主库宕机之前各个从库和主库的主从延迟情况可能不一，导致各个从库的状态不一致，此种情况下，从数据完整性的角度考虑，应该选择 position 最大的一个从库，作为新选定的主库。对其他从库，应该通过从 binlog 中读取缺失的数据，补足数据。或者直接通过<a href="/94ee2c23/" title="备份恢复">备份恢复</a>的方式，和新选定的主库，重新建立主从连接。</li>
+</ul>
+</blockquote>
+<h4 id="更新新的主库的配置"><a href="#更新新的主库的配置" class="headerlink" title="更新新的主库的配置"></a>更新新的主库的配置</h4><p>在新选定的主库上，配置文件(默认 <code>/etc/my.cnf</code> )中开启 binlog，如已配置，跳过</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">log-bin=mysql-bin</span><br></pre></td></tr></table></figure>
+
+<p>新选定的主库上，如果配置了 readonly，在配置文件(默认 <code>/etc/my.cnf</code> )中取消 readonly 配置</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">read_only=0</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>更改 mysql 配置文件后，重启 mysql 生效</p>
+</blockquote>
+<p>在新选定的主库上，执行以下命令，重置从库配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;  </span><br><span class="line">reset master;</span><br><span class="line">reset slave all;  </span><br></pre></td></tr></table></figure>
+
+<p>在新选定的主库上，执行以下命令，创建具有同步权限的账号，如果已存在，跳过</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br><span class="line">flush privileges;</span><br></pre></td></tr></table></figure>
+
+<p>在新选定的主库上，执行以下命令，查看当前主库的 master 位置信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">show master status\G</span><br></pre></td></tr></table></figure>
+
+<p><img src="https://i.0920811.xyz/img_9.png"></p>
+<blockquote>
+<p>在主从重新建立之前，不应该有新的数据写入数据库，在此前提之下，多次查看 master status，显示的 <code>File</code> 和 <code>Position</code> 应该是确定不变的值，后续可根据此值，让其他从库和新选定的主库建立主从连接。  </p>
+</blockquote>
+<h4 id="建立新的主从"><a href="#建立新的主从" class="headerlink" title="建立新的主从"></a>建立新的主从</h4><p>在其他从库上，执行以下命令，和新选定的主库，建立主从连接，其中需要的 <code>master_log_file</code> 和 <code>master_log_pos</code> 从<a href="#%E6%9B%B4%E6%96%B0%E6%96%B0%E7%9A%84%E4%B8%BB%E5%BA%93%E7%9A%84%E9%85%8D%E7%BD%AE">上一步</a>中获得。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">stop slave;</span><br><span class="line">change master to master_host=&#x27;1.1.1.1&#x27;,master_user=&#x27;repl&#x27;,master_password=&#x27;123456&#x27;,master_port=3306,master_log_file=&#x27;mysql-bin.000982&#x27;,master_log_pos=638932979;</span><br><span class="line">start slave</span><br></pre></td></tr></table></figure>
+
+<h3 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h3>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
       </tags>
   </entry>
   <entry>
@@ -1743,6 +1743,33 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>Runway ML Gen-4 使用简介</title>
+    <url>/20250526110624/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>Runway ML Gen-4 的关键要点</strong></p>
+<ul>
+<li><p><strong>前所未有的世界一致性</strong> ： Gen-4 实现了视频生成中的世界一致性，确保场景、角色和物体在不同镜头之间保持连贯。</p>
+</li>
+<li><p><strong>更高质量的图像和视频生成</strong> ： 相比之前的模型，Gen-4 在生成质量上有了显著提升，能够创造更逼真、更细腻的视觉效果。</p>
+</li>
+<li><p><strong>增强叙事能力</strong> ： 世界一致性的提升，使得创作者能够构建更长的、更连贯的故事叙述。</p>
+</li>
+<li><p><strong>简化的内容创作流程</strong> ： AI 驱动的视频生成技术，降低了视频创作的门槛，让更多人能够参与到内容创作中来。</p>
+</li>
+<li><p><strong>多样的应用场景</strong> ： Gen-4 可以应用于电影制作、广告、营销、教育等多个领域，为各行业带来创新。</p>
+</li>
+</ul>
+<p><strong>Runway ML 的计费是根据调用模型的次数收费的，最新模型通常比较贵，Standard Plan 也用不了几次，需要注意</strong><br><img src="https://i.0920811.xyz/img_312.png"></p>
+<h1 id="不足之处"><a href="#不足之处" class="headerlink" title="不足之处"></a>不足之处</h1><ul>
+<li>对复杂图片中的细微处修改（如 <code>Erase And Replacement</code> ）非常的不理想</li>
+</ul>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.toolify.ai/zh/ai-news-cn/runway-gen4ai%E8%A7%86%E9%A2%91%E7%94%9F%E6%88%90%E6%96%B0%E7%BA%AA%E5%85%83%E4%B8%8E%E6%97%A0%E9%99%90%E5%88%9B%E6%84%8F%E5%8F%AF%E8%83%BD-3330567">Runway Gen-4：AI视频生成新纪元与无限创意可能</a></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>AI</category>
+      </categories>
+  </entry>
+  <entry>
     <title>Open Claude Proxy</title>
     <url>/20260515130001/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://github.com/dtzp555-max/ocp">项目 GitHub 地址</a></p>
@@ -1800,33 +1827,6 @@ width: 20%;
       <tags>
         <tag>AI</tag>
       </tags>
-  </entry>
-  <entry>
-    <title>Runway ML Gen-4 使用简介</title>
-    <url>/20250526110624/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><strong>Runway ML Gen-4 的关键要点</strong></p>
-<ul>
-<li><p><strong>前所未有的世界一致性</strong> ： Gen-4 实现了视频生成中的世界一致性，确保场景、角色和物体在不同镜头之间保持连贯。</p>
-</li>
-<li><p><strong>更高质量的图像和视频生成</strong> ： 相比之前的模型，Gen-4 在生成质量上有了显著提升，能够创造更逼真、更细腻的视觉效果。</p>
-</li>
-<li><p><strong>增强叙事能力</strong> ： 世界一致性的提升，使得创作者能够构建更长的、更连贯的故事叙述。</p>
-</li>
-<li><p><strong>简化的内容创作流程</strong> ： AI 驱动的视频生成技术，降低了视频创作的门槛，让更多人能够参与到内容创作中来。</p>
-</li>
-<li><p><strong>多样的应用场景</strong> ： Gen-4 可以应用于电影制作、广告、营销、教育等多个领域，为各行业带来创新。</p>
-</li>
-</ul>
-<p><strong>Runway ML 的计费是根据调用模型的次数收费的，最新模型通常比较贵，Standard Plan 也用不了几次，需要注意</strong><br><img src="https://i.0920811.xyz/img_312.png"></p>
-<h1 id="不足之处"><a href="#不足之处" class="headerlink" title="不足之处"></a>不足之处</h1><ul>
-<li>对复杂图片中的细微处修改（如 <code>Erase And Replacement</code> ）非常的不理想</li>
-</ul>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://www.toolify.ai/zh/ai-news-cn/runway-gen4ai%E8%A7%86%E9%A2%91%E7%94%9F%E6%88%90%E6%96%B0%E7%BA%AA%E5%85%83%E4%B8%8E%E6%97%A0%E9%99%90%E5%88%9B%E6%84%8F%E5%8F%AF%E8%83%BD-3330567">Runway Gen-4：AI视频生成新纪元与无限创意可能</a></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>AI</category>
-      </categories>
   </entry>
   <entry>
     <title>AI 工具常用提示词</title>
@@ -2282,6 +2282,163 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>Ansible playbook 使用介绍</title>
+    <url>/202309011341/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>ansible 2.9.27</li>
+</ul>
+<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
+<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
+<span id="more"></span>
+<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
+
+<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
+<ul>
+<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></li>
+<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
+</ul>
+<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>action </code></td>
+<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain</code></td>
+<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>table </code></td>
+<td>This option specifies the packet matching table which the command should operate on</td>
+<td></td>
+</tr>
+<tr>
+<td><code>chain_management </code></td>
+<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>comment </code></td>
+<td>规则的注释说明</td>
+<td></td>
+</tr>
+<tr>
+<td><code>ctstate </code><br/><code>list / elements=string</code></td>
+<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>source </code></td>
+<td>Source specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination</code> <br/><code>string</code></td>
+<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_port </code><br/><code>string</code></td>
+<td>Destination port or port range specification</td>
+<td></td>
+</tr>
+<tr>
+<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
+<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
+<td></td>
+</tr>
+<tr>
+<td><code>dst_range </code><br/><code>string</code></td>
+<td>Specifies the destination IP range to match in the iprange module.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>source_port </code></td>
+<td>Source port or port range specification.</td>
+<td></td>
+</tr>
+<tr>
+<td><code>flush</code><br/><code>boolean</code></td>
+<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>jump </code></td>
+<td>This specifies the target of the rule</td>
+<td></td>
+</tr>
+<tr>
+<td><code>protocol </code></td>
+<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>rule_num </code></td>
+<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="lineinfile"><a href="#lineinfile" class="headerlink" title="lineinfile"></a>lineinfile</h2><p><code>lineinfile</code> 用于以下场景：</p>
+<ul>
+<li>确定文件中存在特定的一行，替换存在的行</li>
+<li>修改文件中特定的一行</li>
+</ul>
+<p>常用参数：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>state</code></td>
+<td>指定的行是否应该存在。<br/> - <code>absent</code><br/> - <code>present</code> 默认值</td>
+<td></td>
+</tr>
+<tr>
+<td><code>path</code><br/>aliases: <code>dest</code>, <code>destfile</code>, <code>name</code><br/><em><strong>required</strong></em></td>
+<td>要修改的目标文件</td>
+<td></td>
+</tr>
+<tr>
+<td><code>line</code>     <br/>aliases: <code>value</code></td>
+<td>要插入或者替换修改的行<br/><code>state=present</code> 时为必须参数 <br/>如果 <code>backrefs=true</code>，可以使用 <code>regexp</code> 正则表达式捕获的值，使用 <code>\g&lt;1&gt;</code>、<code>\g&lt;2&gt;</code> 的方式引用捕获到的内容</td>
+<td></td>
+</tr>
+<tr>
+<td><code>backup</code>               <br/>boolean</td>
+<td>默认值 <code>false</code> 。是否创建备份文件</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>修改防火墙中某个 IP 示例</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Modify iptables rule in /etc/sysconfig/iptables</span><br><span class="line">  hosts: nginx_1</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line"></span><br><span class="line">    - name: Replace the IP address in iptables rule</span><br><span class="line">      lineinfile:</span><br><span class="line">        path: /etc/sysconfig/iptables</span><br><span class="line">        regexp: (.*)18\.32\.100\.90(.*)</span><br><span class="line">        line: \g&lt;1&gt;180.232.100.99\g&lt;2&gt;</span><br><span class="line"></span><br><span class="line">        state: present</span><br><span class="line">        backup: yes</span><br><span class="line">        backrefs: true</span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html#ansible-collections-ansible-builtin-lineinfile-module-parameter-state">ansible.builtin.lineinfile</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+        <tag>ansible</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Ansible playbooks 使用介绍</title>
     <url>/202405231459/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -2701,163 +2858,6 @@ width: 20%;
 
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_intro.html#ansible-playbooks">Ansible playbooks</a><br><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#where-to-set-variables">Where to set variables</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_vars_facts.html">Discovering variables: facts and magic variables</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#registering-variables">Registering variables</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>ansible</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Ansible playbook 使用介绍</title>
-    <url>/202309011341/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>ansible 2.9.27</li>
-</ul>
-<h1 id="Playbook-语法示例"><a href="#Playbook-语法示例" class="headerlink" title="Playbook 语法示例"></a>Playbook 语法示例</h1><p>ansible playbook 使用的是 YAML 格式的语法。</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">---</span><br><span class="line">- hosts: webservers</span><br><span class="line">  vars:</span><br><span class="line">    http_port: 80</span><br><span class="line">    max_clients: 200</span><br><span class="line">  remote_user: root</span><br><span class="line">  tasks:</span><br><span class="line">  - name: ensure apache is at the latest version</span><br><span class="line">    yum: pkg=httpd state=latest</span><br><span class="line">  - name: write the apache config file</span><br><span class="line">    template: src=/srv/httpd.j2 dest=/etc/httpd.conf</span><br><span class="line">    notify:</span><br><span class="line">    - restart apache</span><br><span class="line">  - name: ensure apache is running</span><br><span class="line">    service: name=httpd state=started</span><br><span class="line">  handlers:</span><br><span class="line">    - name: restart apache</span><br><span class="line">      service: name=httpd state=restarted</span><br></pre></td></tr></table></figure>
-<p>playbook 由一个或多个 <code>play</code> 组成。它的内容是一个以 <code>play</code> 为元素的列表。以上示例仅包含一个 <code>play</code></p>
-<span id="more"></span>
-<h1 id="playbook-基础"><a href="#playbook-基础" class="headerlink" title="playbook 基础"></a>playbook 基础</h1><h2 id="module"><a href="#module" class="headerlink" title="module"></a>module</h2><p>palybook 中的每个 <code>task</code> 都是为了运行某个 <code>module</code>。在 <code>task</code> 中配置 <code>module</code>，是以 <code>module: options</code> 的格式</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- hosts: webservers</span><br><span class="line">  tasks:</span><br><span class="line">    - name: test connection</span><br><span class="line">      ping:</span><br><span class="line">    - name: make sure apache is running</span><br><span class="line">      service: name=httpd state=running</span><br><span class="line">    - name: disable selinux</span><br><span class="line">      shell: setenforce 0</span><br></pre></td></tr></table></figure>
-
-<h1 id="ansible-playbook-常用模块参考"><a href="#ansible-playbook-常用模块参考" class="headerlink" title="ansible playbook 常用模块参考"></a>ansible playbook 常用模块参考</h1><h2 id="iptables"><a href="#iptables" class="headerlink" title="iptables"></a>iptables</h2><p><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a></p>
-<ul>
-<li><code>iptables</code> 模块用于配置 Linux iptables 防火墙 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></li>
-<li><em><strong><code>iptables</code> 模块只修改当前系统生效的 <code>iptables</code> 规则（动态），不会将规则写入 <code>iptables</code> 服务的配置文件以实现静态（持久）配置，它的行为和 <code>iptables</code> 命令相同</strong></em></li>
-</ul>
-<p><code>iptables</code> 模块参数参考 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[ansible iptables 模块官方文档](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html)">[1]</span></a></sup></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>action </code></td>
-<td>rule 是被 append 到最后还是插入到最前面。<br/><strong>默认 <code>append</code></strong><br/>如果 rule 已经存在，不会做变更</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain</code></td>
-<td>要操作的 chain。<br/>可以是自定义的 chain 或者默认存在的 chain 如 <code>INPUT</code>, <code>FORWARD</code>, <code>OUTPUT</code>, <code>PREROUTING</code>, <code>POSTROUTING</code>, <code>SECMARK</code> or <code>CONNSECMARK</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>table </code></td>
-<td>This option specifies the packet matching table which the command should operate on</td>
-<td></td>
-</tr>
-<tr>
-<td><code>chain_management </code></td>
-<td>If <code>true</code> and <code>state</code> is <code>present</code>, the chain will be created if needed. <br/>If <code>true</code> and <code>state</code> is <code>absent</code>, the chain will be deleted if the only other parameter passed are <code>chain</code> and optionally <code>table</code>. 默认为 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>comment </code></td>
-<td>规则的注释说明</td>
-<td></td>
-</tr>
-<tr>
-<td><code>ctstate </code><br/><code>list / elements=string</code></td>
-<td>A list of the connection states to match in the conntrack module.<br/>Possible values are <code>INVALID</code>, <code>NEW</code>, <code>ESTABLISHED</code>, <code>RELATED</code>, <code>UNTRACKED</code>, <code>SNAT</code>, <code>DNAT</code>.<br/>Default: <code>[]</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>source </code></td>
-<td>Source specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination</code> <br/><code>string</code></td>
-<td>Destination specification.<br/>Address can be either a network name, a hostname, a network IP address (with &#x2F;mask), or a plain IP address.<br/>Hostnames will be resolved once only, before the rule is submitted to the kernel. Please note that specifying any name to be resolved with a remote query such as DNS is a really bad idea.<br/>The mask can be either a network mask or a plain number, specifying the number of 1’s at the left side of the network mask. Thus, a mask of 24 is equivalent to 255.255.255.0. A ! argument before the address specification inverts the sense of the address.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_port </code><br/><code>string</code></td>
-<td>Destination port or port range specification</td>
-<td></td>
-</tr>
-<tr>
-<td><code>destination_ports </code><br/><code>list / elements=string</code></td>
-<td>This specifies multiple destination port numbers or port ranges to match in the <code>multiport</code> module</td>
-<td></td>
-</tr>
-<tr>
-<td><code>dst_range </code><br/><code>string</code></td>
-<td>Specifies the destination IP range to match in the iprange module.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>source_port </code></td>
-<td>Source port or port range specification.</td>
-<td></td>
-</tr>
-<tr>
-<td><code>flush</code><br/><code>boolean</code></td>
-<td>Flushes the specified <code>table</code> and <code>chain</code> of all rules.<br/>If no <code>chain</code> is specified then the <strong>entire table is purged</strong>.<br/>       默认值 <code>false</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>jump </code></td>
-<td>This specifies the target of the rule</td>
-<td></td>
-</tr>
-<tr>
-<td><code>protocol </code></td>
-<td>The protocol of the rule or of the packet to check.<br/>The specified protocol can be one of <code>tcp</code>, <code>udp</code>, <code>udplite</code>, <code>icmp</code>, <code>ipv6-icmp</code> or <code>icmpv6</code>, <code>esp</code>, <code>ah</code>, <code>sctp</code> or the special keyword <code>all</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>rule_num </code></td>
-<td>Insert the rule as the given rule number.<br/>This works only with <code>action=insert</code>.</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="lineinfile"><a href="#lineinfile" class="headerlink" title="lineinfile"></a>lineinfile</h2><p><code>lineinfile</code> 用于以下场景：</p>
-<ul>
-<li>确定文件中存在特定的一行，替换存在的行</li>
-<li>修改文件中特定的一行</li>
-</ul>
-<p>常用参数：</p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>state</code></td>
-<td>指定的行是否应该存在。<br/> - <code>absent</code><br/> - <code>present</code> 默认值</td>
-<td></td>
-</tr>
-<tr>
-<td><code>path</code><br/>aliases: <code>dest</code>, <code>destfile</code>, <code>name</code><br/><em><strong>required</strong></em></td>
-<td>要修改的目标文件</td>
-<td></td>
-</tr>
-<tr>
-<td><code>line</code>     <br/>aliases: <code>value</code></td>
-<td>要插入或者替换修改的行<br/><code>state=present</code> 时为必须参数 <br/>如果 <code>backrefs=true</code>，可以使用 <code>regexp</code> 正则表达式捕获的值，使用 <code>\g&lt;1&gt;</code>、<code>\g&lt;2&gt;</code> 的方式引用捕获到的内容</td>
-<td></td>
-</tr>
-<tr>
-<td><code>backup</code>               <br/>boolean</td>
-<td>默认值 <code>false</code> 。是否创建备份文件</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>修改防火墙中某个 IP 示例</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">- name: Modify iptables rule in /etc/sysconfig/iptables</span><br><span class="line">  hosts: nginx_1</span><br><span class="line">  become: yes</span><br><span class="line">  tasks:</span><br><span class="line"></span><br><span class="line">    - name: Replace the IP address in iptables rule</span><br><span class="line">      lineinfile:</span><br><span class="line">        path: /etc/sysconfig/iptables</span><br><span class="line">        regexp: (.*)18\.32\.100\.90(.*)</span><br><span class="line">        line: \g&lt;1&gt;180.232.100.99\g&lt;2&gt;</span><br><span class="line"></span><br><span class="line">        state: present</span><br><span class="line">        backup: yes</span><br><span class="line">        backrefs: true</span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html#control-node-requirements">ansible 官方文档</a><br><a href="https://ansible-tran.readthedocs.io/en/latest/docs/intro_adhoc.html">Ansible中文权威指南</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/iptables_module.html">ansible iptables 模块官方文档</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html#ansible-collections-ansible-builtin-lineinfile-module-parameter-state">ansible.builtin.lineinfile</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Linux</category>
       </categories>
@@ -20879,6 +20879,426 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>linux 常用目录和文件说明</title>
+    <url>/202208180923/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="常用目录和文件说明"><a href="#常用目录和文件说明" class="headerlink" title="常用目录和文件说明"></a>常用目录和文件说明</h1><h2 id="etc-目录常用文件说明"><a href="#etc-目录常用文件说明" class="headerlink" title="etc 目录常用文件说明"></a>etc 目录常用文件说明</h2><table>
+<thead>
+<tr>
+<th>文件路径</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&#x2F;etc&#x2F;motd</td>
+<td>登录成功后的欢迎信息，ssh 登录和 console 登录成功后都会显示</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;issue</td>
+<td>在登录系统输入用户名之前显示的信息，远程 ssh 连接的时候并不会显示此信息</td>
+<td><a href="#x2F-etc-x2F-issue">说明示例</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;services</td>
+<td>记录网络服务名和它们对应使用的端口号及协议</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;protocols</td>
+<td>该文件是网络协议定义文件，里面记录了 <code>TCP/IP</code> 协议族的所有协议类型。文件中的每一行对应一个协议类型，它有 3 个字段，分别表示 <code>协议名称</code> 、 <code>协议号</code> 和 <code>协议别名</code></td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;vimrc<br/>~&#x2F;.vimrc</td>
+<td><code>vim</code> 启动时会读取 <code>/etc/vimrc</code> （全局配置） 和 <code>~/.vimrc</code> （用户配置）</td>
+<td><a href="/202208181117/" title="vim">vim</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;passwd<br/>&#x2F;etc&#x2F;shadow<br/>&#x2F;etc&#x2F;group</td>
+<td>用户数据库，其中记录了 <code>用户名</code> ， <code>id</code> ， <code>用户家目录</code> ， <code>shell</code> 等<br/>用户密码文件<br/>组信息</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;fstab</td>
+<td>系统启动时需要自动挂载的文件系统列表</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;mtab</td>
+<td>当前系统已挂载的文件系统，并由 <code>mount</code> 命令自动更新。当需要当前挂载的文件系统的列表时使用(例如 df 命令)</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;shells</td>
+<td>系统可使用的 <code>shell</code></td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;filesystems</td>
+<td>系统可使用的 <code>文件系统</code></td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;hostname</td>
+<td>存放这主机名</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;hosts</td>
+<td>主机名查询静态表，域名和 ip 本地静态表</td>
+<td></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;nsswitch.conf</td>
+<td>它规定通过哪些途径以及按照什么顺序以及通过这些途径来查找特定类型的信息，还可以指定某个方法奏效或失效时系统将采取什么动作</td>
+<td><code>hosts:      files dns myhostname</code> <br/>此配置设定：在查找域名解析的时候，先查找本地 <code>/etc/hosts</code> ，再发送给 DNS 服务器查询</td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;rsyslog.conf</td>
+<td><code>rsyslog</code> 服务的配置文件，用来托管其他服务的日志</td>
+<td><a href="/202208191014/" title="linux rsyslog 服务">linux rsyslog 服务</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;logrotate.conf</td>
+<td>linux 日志切割工具</td>
+<td><a href="/202208191317/" title="linux logrotate 服务">linux logrotate 服务</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;rsyncd.conf</td>
+<td><code>rsync</code> 服务的配置文件</td>
+<td><a href="/36f703dc/" title="rsyncd 服务">rsyncd 服务</a></td>
+</tr>
+<tr>
+<td>&#x2F;etc&#x2F;sysctl.conf<br/>&#x2F;etc&#x2F;sysctl.d&#x2F;</td>
+<td>内核的运行参数配置文件， <code>sysctl</code> 命令对内核参数的修改仅在当前生效，重启系统后参数丢失，如果希望参数永久生效可以修改此配置文件</td>
+<td><a href="/202302131009/" title="Linux 常用内核参数说明">Linux 常用内核参数说明</a></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+
+<h2 id="x2F-usr-x2F-src-x2F"><a href="#x2F-usr-x2F-src-x2F" class="headerlink" title="&#x2F;usr&#x2F;src&#x2F;"></a>&#x2F;usr&#x2F;src&#x2F;</h2><p><code>/usr/src/</code> 目录下面一般会放置 Linux 发行版所使用的 <strong>内核源代码</strong> ，具体路径可能类似 <code>/usr/src/kernels/3.10.0-1160.11.1.el7.x86_64</code></p>
+<h2 id="x2F-proc-x2F-目录"><a href="#x2F-proc-x2F-目录" class="headerlink" title="&#x2F;proc&#x2F; 目录"></a>&#x2F;proc&#x2F; 目录</h2><p><code>/proc/</code> 目录是一个 <code>虚假的（pseudo）</code> 的仅存在于内存中的文件系统， 存储了系统运行时的内核状态统计信息。大多数检测系统运行指标的工具（如 <code>top</code> 、 <code>vmstat</code> 等）都是从此接口中读取统计数据。</p>
+<p>其中的大多数内容都是 <em>只读</em> 的，是进程在内核中的相关数据结构的映射和统计数据。部分是 <em>可写</em> 的，用于控制进程状态或者是内核的行为（如 <code>sysctl</code> ）。</p>
+<p><code>/proc/</code> 中包括的内容取决于具体的内核版本。关于 <code>/proc/</code> 的帮助文档，请查看 <code>man 5 proc</code> 。</p>
+<p>以下内容为全局（System Wide）范围的统计数据接口</p>
+<table>
+<thead>
+<tr>
+<th>文件路径</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/proc/cmdline</code></td>
+<td>全局统计数据。存储了系统启动时使用的内核及选项（参数）<br/> <code>BOOT_IMAGE</code> 是系统加载的内核镜像<br/> <code>root</code> 是 <code>root file system</code> 的 UID</td>
+<td><code># cat /proc/cmdline</code> <br/> <code>BOOT_IMAGE=/boot/vmlinuz-6.8.9-1.el7.elrepo.x86_64 root=UUID=44a6a613-4e21-478b-a909-ab653c9d39df ro console=tty0 crashkernel=auto net.ifnames=0 console=ttyS0</code></td>
+</tr>
+<tr>
+<td><code>/proc/cpuinfo</code></td>
+<td>物理 CPU 处理器信息（Physical Processors），包括 Virtual CPU、Model Name、Clock Speed、Cache Sizes 等</td>
+<td><code>lscpu</code></td>
+</tr>
+<tr>
+<td><code>/proc/diskstatus</code></td>
+<td>所有存储设备的 Disk I&#x2F;O 统计信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/interrupts</code></td>
+<td>每个 CPU 的中断计数器信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/loadavg</code></td>
+<td>系统的负载信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/meminfo</code></td>
+<td>系统内存使用统计</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/net/dev</code></td>
+<td>Network Interface 统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/net/netstat</code></td>
+<td>网络统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/net/tcp</code> <br/> <code>/proc/net/udp</code></td>
+<td>Active TCP&#x2F;UDP Socket 信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/pressure</code></td>
+<td>Pressure stall information (PSI) files</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/schedstat</code></td>
+<td>全局范围的 CPU 调度统计</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/self</code></td>
+<td>链接到当前 Process ID 目录</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/slabinfo</code></td>
+<td>内核 Slab 分配器缓存（Slab Allocator Cache）  统计信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/stat</code></td>
+<td>内核和系统资源的简略统计，包括： CPUs, Disks, Paging, Swap, Processes</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/zoneinfo</code></td>
+<td>内存区域信息（Memory Zone Information）</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>以下是针对 Process 的统计数据接口</p>
+<table>
+<thead>
+<tr>
+<th>文件路径</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/proc/&lt;PID&gt;/cmdline</code></td>
+<td>存储了程启动时的命令行参数。 <code>ps</code> 命令显示的 <code>command</code> 内容来自此处</td>
+<td><code># cat /proc/1/cmdline</code> <br/> <code>/usr/lib/systemd/systemd --switched-root --system--deserialize 21</code></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/comm</code></td>
+<td>存储了进程的名称，一般为进程启动的 <strong>文件名</strong> ，如 <code>systemd</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/status</code></td>
+<td>进程的详细状态信息,包括进程的基本属性、内存使用情况、权限和调度策略等</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/stat</code></td>
+<td>进程的状态以及使用的 CPU 和 Memory 统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/statm</code></td>
+<td>进程使用的内存统计，基于 Pages 为单位</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/task/</code></td>
+<td>进程的子任务（Per-task）相关的统计数据目录</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/limits</code></td>
+<td>进程使用的资源限制</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/maps</code></td>
+<td>映射的内存区域</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/sched</code></td>
+<td>CPU 调度统计数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/schedstat</code></td>
+<td>CPU 运行时（Runtime） 、延迟（Latency）和时间分片（Time Slices）数据</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/smaps</code></td>
+<td>映射的内存区域（Mapped Memroy Regions）以及使用的内存统计</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/fd/</code> <br/> <code>/proc/&lt;PID&gt;/fdinfo/</code></td>
+<td>包含文件描述符的目录</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/proc/&lt;PID&gt;/cgroup</code></td>
+<td>Cgroup 信息</td>
+<td></td>
+</tr>
+</tbody></table>
+<p><code>/proc/&lt;PID&gt;/status</code> 记录内容</p>
+<table>
+<thead>
+<tr>
+<th>记录字段</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>voluntary_ctxt_switches</code> <br/> <code>nonvoluntary_ctxt_switches</code></td>
+<td>Context Switch 的次数，包括 <code>voluntary</code> 和 <code>nonvoluntary</code> 类型的 Context Switch</td>
+<td></td>
+</tr>
+</tbody></table>
+<h1 id="说明示例"><a href="#说明示例" class="headerlink" title="说明示例"></a>说明示例</h1><h2 id="x2F-etc-x2F-issue"><a href="#x2F-etc-x2F-issue" class="headerlink" title="&#x2F;etc&#x2F;issue"></a>&#x2F;etc&#x2F;issue</h2><p><img src="https://i.0920811.xyz/img_40.png"></p>
+<p>文件内容可使用的各个变量说明如下</p>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>\d</td>
+<td>显示当前日期</td>
+</tr>
+<tr>
+<td>\l</td>
+<td>显示虚拟控制台号</td>
+</tr>
+<tr>
+<td>\m</td>
+<td>显示机器类型，即 CPU 架构，如 i386 或 x86_64 等（相当于 uname -m）</td>
+</tr>
+<tr>
+<td>\n</td>
+<td>显示主机的网络名（相当于 uname -n）</td>
+</tr>
+<tr>
+<td>\o</td>
+<td>显示域名</td>
+</tr>
+<tr>
+<td>\r</td>
+<td>显示 Kernel 内核版本号（相当于 uname -r）</td>
+</tr>
+<tr>
+<td>\t</td>
+<td>显示当前时间</td>
+</tr>
+<tr>
+<td>\s</td>
+<td>显示当前操作系统名称</td>
+</tr>
+<tr>
+<td>\u</td>
+<td>显示当前登录用户的编号</td>
+</tr>
+<tr>
+<td>\U</td>
+<td>显示当前登录用户的编号和用户</td>
+</tr>
+<tr>
+<td>\v</td>
+<td>显示当前操作系统的版本日期</td>
+</tr>
+</tbody></table>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux 常见系统进程及参数说明</title>
+    <url>/20240718134326/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h1><p>内存管理相关的系统关键进程</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Path</th>
+<th>Info</th>
+<th>Demonstrate</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>[kswapd0]</code></td>
+<td><strong>由内核启动</strong></td>
+<td>Linux 内核中的一个内存管理守护进程，负责内存交换（ <code>swap</code> ）.当系统内存不足时，触发内存回收机制，释放不常用的内存页。<br/>内存回收使用 Page Replacement 算法（新版本使用）</td>
+<td><a href="#kswapd">kswapd</a></td>
+</tr>
+</tbody></table>
+<span id="more"></span>
+
+<h2 id="kswapd"><a href="#kswapd" class="headerlink" title="kswapd"></a>kswapd</h2><p><code>kswapd</code> 是 Linux 内核中的一个内存管理守护进程，负责系统内存不足时进行页面回收（即将不活跃的页面移至内存交换（Swap）空间）。它确保系统有足够的可用内存，以维持系统稳定性和性能。主要功能包括：</p>
+<ul>
+<li>监控系统的内存使用情况。</li>
+<li>当系统内存不足时（低于设定的阈值），触发内存回收机制，释放不常用的内存页。</li>
+<li>将内存页交换到交换分区（ <code>swap space</code> ），以确保系统有足够的可用内存。</li>
+</ul>
+<p><code>kswapd</code> 进程是由内核自动启动的，不需要用户手动启动。它的代码位于 Linux 内核源代码的内存管理部分，主要文件包括：</p>
+<ul>
+<li><code>mm/vmscan.c</code> ： <code>kswapd</code> 相关功能的实现。</li>
+<li><code>mm/page_alloc.c</code> ：内存分配和回收的相关代码。</li>
+</ul>
+<p>目前大多数内核使用 <a href="https://0920811.xyz/202405311003/#Page-Relpacement">Page Replacement Algorithm（页面置换算法）</a>，常用算法实现包括：</p>
+<ul>
+<li>LRU (Least Recently Used) ： 最常用的算法，基于页面最近使用的时间进行置换。</li>
+<li>FIFO (First In, First Out) ： 基于页面进入内存的顺序进行置换。</li>
+<li>Clock Algorithm ： 一种改进的 LRU 算法，使用一个 ‘时钟’ 指针循环扫描页面。</li>
+</ul>
+<h3 id="kswapd-相关配置"><a href="#kswapd-相关配置" class="headerlink" title="kswapd 相关配置"></a>kswapd 相关配置</h3><ul>
+<li><p><code>swappiness</code> 参数 <strong>控制系统在内存不足时使用交换空间的频率，值越高，系统越倾向于使用交换空间。默认值通常为 60，取值范围是 0 到 100</strong> 。</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 60 &gt; /proc/sys/vm/swappiness</span><br></pre></td></tr></table></figure>
+
+<p>持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
+  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.swappiness = 60</span><br></pre></td></tr></table></figure>
+</li>
+<li><p><code>min_free_kbytes</code> 参数 <strong>设置内核保持的最小空闲内存量</strong> ，该值确保系统始终有一定的空闲内存，防止内存耗尽</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 65536 &gt; /proc/sys/vm/min_free_kbytes</span><br></pre></td></tr></table></figure>
+
+<p>  持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
+  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.min_free_kbytes = 65536</span><br></pre></td></tr></table></figure></li>
+</ul>
+]]></content>
+      <categories>
+        <category>Linux</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux 压缩解压缩</title>
+    <url>/202209301257/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
+
+<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
+
+<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>cp 命令用法</title>
     <url>/202210281406/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>常用选项</p>
@@ -33935,426 +34355,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Linux 压缩解压缩</title>
-    <url>/202209301257/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h2 id="gzip"><a href="#gzip" class="headerlink" title="gzip"></a>gzip</h2><h3 id="解压缩"><a href="#解压缩" class="headerlink" title="解压缩"></a>解压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file test.gz</span> </span><br><span class="line">test.gz: gzip compressed data, from FAT filesystem (MS-DOS, OS/2, NT)</span><br><span class="line"></span><br><span class="line">gzip -d test.gz </span><br></pre></td></tr></table></figure>
-
-<h3 id="压缩"><a href="#压缩" class="headerlink" title="压缩"></a>压缩</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">gzip test.txt</span><br></pre></td></tr></table></figure>
-
-<p>压缩后默认生成压缩文件 <code>test.txt.gz</code></p>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Linux 常见系统进程及参数说明</title>
-    <url>/20240718134326/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Memory"><a href="#Memory" class="headerlink" title="Memory"></a>Memory</h1><p>内存管理相关的系统关键进程</p>
-<table>
-<thead>
-<tr>
-<th>Name</th>
-<th>Path</th>
-<th>Info</th>
-<th>Demonstrate</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>[kswapd0]</code></td>
-<td><strong>由内核启动</strong></td>
-<td>Linux 内核中的一个内存管理守护进程，负责内存交换（ <code>swap</code> ）.当系统内存不足时，触发内存回收机制，释放不常用的内存页。<br/>内存回收使用 Page Replacement 算法（新版本使用）</td>
-<td><a href="#kswapd">kswapd</a></td>
-</tr>
-</tbody></table>
-<span id="more"></span>
-
-<h2 id="kswapd"><a href="#kswapd" class="headerlink" title="kswapd"></a>kswapd</h2><p><code>kswapd</code> 是 Linux 内核中的一个内存管理守护进程，负责系统内存不足时进行页面回收（即将不活跃的页面移至内存交换（Swap）空间）。它确保系统有足够的可用内存，以维持系统稳定性和性能。主要功能包括：</p>
-<ul>
-<li>监控系统的内存使用情况。</li>
-<li>当系统内存不足时（低于设定的阈值），触发内存回收机制，释放不常用的内存页。</li>
-<li>将内存页交换到交换分区（ <code>swap space</code> ），以确保系统有足够的可用内存。</li>
-</ul>
-<p><code>kswapd</code> 进程是由内核自动启动的，不需要用户手动启动。它的代码位于 Linux 内核源代码的内存管理部分，主要文件包括：</p>
-<ul>
-<li><code>mm/vmscan.c</code> ： <code>kswapd</code> 相关功能的实现。</li>
-<li><code>mm/page_alloc.c</code> ：内存分配和回收的相关代码。</li>
-</ul>
-<p>目前大多数内核使用 <a href="https://0920811.xyz/202405311003/#Page-Relpacement">Page Replacement Algorithm（页面置换算法）</a>，常用算法实现包括：</p>
-<ul>
-<li>LRU (Least Recently Used) ： 最常用的算法，基于页面最近使用的时间进行置换。</li>
-<li>FIFO (First In, First Out) ： 基于页面进入内存的顺序进行置换。</li>
-<li>Clock Algorithm ： 一种改进的 LRU 算法，使用一个 ‘时钟’ 指针循环扫描页面。</li>
-</ul>
-<h3 id="kswapd-相关配置"><a href="#kswapd-相关配置" class="headerlink" title="kswapd 相关配置"></a>kswapd 相关配置</h3><ul>
-<li><p><code>swappiness</code> 参数 <strong>控制系统在内存不足时使用交换空间的频率，值越高，系统越倾向于使用交换空间。默认值通常为 60，取值范围是 0 到 100</strong> 。</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 60 &gt; /proc/sys/vm/swappiness</span><br></pre></td></tr></table></figure>
-
-<p>持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
-  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.swappiness = 60</span><br></pre></td></tr></table></figure>
-</li>
-<li><p><code>min_free_kbytes</code> 参数 <strong>设置内核保持的最小空闲内存量</strong> ，该值确保系统始终有一定的空闲内存，防止内存耗尽</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">echo 65536 &gt; /proc/sys/vm/min_free_kbytes</span><br></pre></td></tr></table></figure>
-
-<p>  持久化配置，写入 <code>/etc/sysctl.conf</code> 配置中：</p>
-  <figure class="highlight shell"><figcaption><span>/etc/sysctl.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vm.min_free_kbytes = 65536</span><br></pre></td></tr></table></figure></li>
-</ul>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>linux 常用目录和文件说明</title>
-    <url>/202208180923/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="常用目录和文件说明"><a href="#常用目录和文件说明" class="headerlink" title="常用目录和文件说明"></a>常用目录和文件说明</h1><h2 id="etc-目录常用文件说明"><a href="#etc-目录常用文件说明" class="headerlink" title="etc 目录常用文件说明"></a>etc 目录常用文件说明</h2><table>
-<thead>
-<tr>
-<th>文件路径</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>&#x2F;etc&#x2F;motd</td>
-<td>登录成功后的欢迎信息，ssh 登录和 console 登录成功后都会显示</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;issue</td>
-<td>在登录系统输入用户名之前显示的信息，远程 ssh 连接的时候并不会显示此信息</td>
-<td><a href="#x2F-etc-x2F-issue">说明示例</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;services</td>
-<td>记录网络服务名和它们对应使用的端口号及协议</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;protocols</td>
-<td>该文件是网络协议定义文件，里面记录了 <code>TCP/IP</code> 协议族的所有协议类型。文件中的每一行对应一个协议类型，它有 3 个字段，分别表示 <code>协议名称</code> 、 <code>协议号</code> 和 <code>协议别名</code></td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;vimrc<br/>~&#x2F;.vimrc</td>
-<td><code>vim</code> 启动时会读取 <code>/etc/vimrc</code> （全局配置） 和 <code>~/.vimrc</code> （用户配置）</td>
-<td><a href="/202208181117/" title="vim">vim</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;passwd<br/>&#x2F;etc&#x2F;shadow<br/>&#x2F;etc&#x2F;group</td>
-<td>用户数据库，其中记录了 <code>用户名</code> ， <code>id</code> ， <code>用户家目录</code> ， <code>shell</code> 等<br/>用户密码文件<br/>组信息</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;fstab</td>
-<td>系统启动时需要自动挂载的文件系统列表</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;mtab</td>
-<td>当前系统已挂载的文件系统，并由 <code>mount</code> 命令自动更新。当需要当前挂载的文件系统的列表时使用(例如 df 命令)</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;shells</td>
-<td>系统可使用的 <code>shell</code></td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;filesystems</td>
-<td>系统可使用的 <code>文件系统</code></td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;hostname</td>
-<td>存放这主机名</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;hosts</td>
-<td>主机名查询静态表，域名和 ip 本地静态表</td>
-<td></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;nsswitch.conf</td>
-<td>它规定通过哪些途径以及按照什么顺序以及通过这些途径来查找特定类型的信息，还可以指定某个方法奏效或失效时系统将采取什么动作</td>
-<td><code>hosts:      files dns myhostname</code> <br/>此配置设定：在查找域名解析的时候，先查找本地 <code>/etc/hosts</code> ，再发送给 DNS 服务器查询</td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;rsyslog.conf</td>
-<td><code>rsyslog</code> 服务的配置文件，用来托管其他服务的日志</td>
-<td><a href="/202208191014/" title="linux rsyslog 服务">linux rsyslog 服务</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;logrotate.conf</td>
-<td>linux 日志切割工具</td>
-<td><a href="/202208191317/" title="linux logrotate 服务">linux logrotate 服务</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;rsyncd.conf</td>
-<td><code>rsync</code> 服务的配置文件</td>
-<td><a href="/36f703dc/" title="rsyncd 服务">rsyncd 服务</a></td>
-</tr>
-<tr>
-<td>&#x2F;etc&#x2F;sysctl.conf<br/>&#x2F;etc&#x2F;sysctl.d&#x2F;</td>
-<td>内核的运行参数配置文件， <code>sysctl</code> 命令对内核参数的修改仅在当前生效，重启系统后参数丢失，如果希望参数永久生效可以修改此配置文件</td>
-<td><a href="/202302131009/" title="Linux 常用内核参数说明">Linux 常用内核参数说明</a></td>
-</tr>
-</tbody></table>
-<span id="more"></span>
-
-<h2 id="x2F-usr-x2F-src-x2F"><a href="#x2F-usr-x2F-src-x2F" class="headerlink" title="&#x2F;usr&#x2F;src&#x2F;"></a>&#x2F;usr&#x2F;src&#x2F;</h2><p><code>/usr/src/</code> 目录下面一般会放置 Linux 发行版所使用的 <strong>内核源代码</strong> ，具体路径可能类似 <code>/usr/src/kernels/3.10.0-1160.11.1.el7.x86_64</code></p>
-<h2 id="x2F-proc-x2F-目录"><a href="#x2F-proc-x2F-目录" class="headerlink" title="&#x2F;proc&#x2F; 目录"></a>&#x2F;proc&#x2F; 目录</h2><p><code>/proc/</code> 目录是一个 <code>虚假的（pseudo）</code> 的仅存在于内存中的文件系统， 存储了系统运行时的内核状态统计信息。大多数检测系统运行指标的工具（如 <code>top</code> 、 <code>vmstat</code> 等）都是从此接口中读取统计数据。</p>
-<p>其中的大多数内容都是 <em>只读</em> 的，是进程在内核中的相关数据结构的映射和统计数据。部分是 <em>可写</em> 的，用于控制进程状态或者是内核的行为（如 <code>sysctl</code> ）。</p>
-<p><code>/proc/</code> 中包括的内容取决于具体的内核版本。关于 <code>/proc/</code> 的帮助文档，请查看 <code>man 5 proc</code> 。</p>
-<p>以下内容为全局（System Wide）范围的统计数据接口</p>
-<table>
-<thead>
-<tr>
-<th>文件路径</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/proc/cmdline</code></td>
-<td>全局统计数据。存储了系统启动时使用的内核及选项（参数）<br/> <code>BOOT_IMAGE</code> 是系统加载的内核镜像<br/> <code>root</code> 是 <code>root file system</code> 的 UID</td>
-<td><code># cat /proc/cmdline</code> <br/> <code>BOOT_IMAGE=/boot/vmlinuz-6.8.9-1.el7.elrepo.x86_64 root=UUID=44a6a613-4e21-478b-a909-ab653c9d39df ro console=tty0 crashkernel=auto net.ifnames=0 console=ttyS0</code></td>
-</tr>
-<tr>
-<td><code>/proc/cpuinfo</code></td>
-<td>物理 CPU 处理器信息（Physical Processors），包括 Virtual CPU、Model Name、Clock Speed、Cache Sizes 等</td>
-<td><code>lscpu</code></td>
-</tr>
-<tr>
-<td><code>/proc/diskstatus</code></td>
-<td>所有存储设备的 Disk I&#x2F;O 统计信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/interrupts</code></td>
-<td>每个 CPU 的中断计数器信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/loadavg</code></td>
-<td>系统的负载信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/meminfo</code></td>
-<td>系统内存使用统计</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/net/dev</code></td>
-<td>Network Interface 统计数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/net/netstat</code></td>
-<td>网络统计数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/net/tcp</code> <br/> <code>/proc/net/udp</code></td>
-<td>Active TCP&#x2F;UDP Socket 信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/pressure</code></td>
-<td>Pressure stall information (PSI) files</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/schedstat</code></td>
-<td>全局范围的 CPU 调度统计</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/self</code></td>
-<td>链接到当前 Process ID 目录</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/slabinfo</code></td>
-<td>内核 Slab 分配器缓存（Slab Allocator Cache）  统计信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/stat</code></td>
-<td>内核和系统资源的简略统计，包括： CPUs, Disks, Paging, Swap, Processes</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/zoneinfo</code></td>
-<td>内存区域信息（Memory Zone Information）</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>以下是针对 Process 的统计数据接口</p>
-<table>
-<thead>
-<tr>
-<th>文件路径</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/proc/&lt;PID&gt;/cmdline</code></td>
-<td>存储了程启动时的命令行参数。 <code>ps</code> 命令显示的 <code>command</code> 内容来自此处</td>
-<td><code># cat /proc/1/cmdline</code> <br/> <code>/usr/lib/systemd/systemd --switched-root --system--deserialize 21</code></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/comm</code></td>
-<td>存储了进程的名称，一般为进程启动的 <strong>文件名</strong> ，如 <code>systemd</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/status</code></td>
-<td>进程的详细状态信息,包括进程的基本属性、内存使用情况、权限和调度策略等</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/stat</code></td>
-<td>进程的状态以及使用的 CPU 和 Memory 统计数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/statm</code></td>
-<td>进程使用的内存统计，基于 Pages 为单位</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/task/</code></td>
-<td>进程的子任务（Per-task）相关的统计数据目录</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/limits</code></td>
-<td>进程使用的资源限制</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/maps</code></td>
-<td>映射的内存区域</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/sched</code></td>
-<td>CPU 调度统计数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/schedstat</code></td>
-<td>CPU 运行时（Runtime） 、延迟（Latency）和时间分片（Time Slices）数据</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/smaps</code></td>
-<td>映射的内存区域（Mapped Memroy Regions）以及使用的内存统计</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/fd/</code> <br/> <code>/proc/&lt;PID&gt;/fdinfo/</code></td>
-<td>包含文件描述符的目录</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/proc/&lt;PID&gt;/cgroup</code></td>
-<td>Cgroup 信息</td>
-<td></td>
-</tr>
-</tbody></table>
-<p><code>/proc/&lt;PID&gt;/status</code> 记录内容</p>
-<table>
-<thead>
-<tr>
-<th>记录字段</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>voluntary_ctxt_switches</code> <br/> <code>nonvoluntary_ctxt_switches</code></td>
-<td>Context Switch 的次数，包括 <code>voluntary</code> 和 <code>nonvoluntary</code> 类型的 Context Switch</td>
-<td></td>
-</tr>
-</tbody></table>
-<h1 id="说明示例"><a href="#说明示例" class="headerlink" title="说明示例"></a>说明示例</h1><h2 id="x2F-etc-x2F-issue"><a href="#x2F-etc-x2F-issue" class="headerlink" title="&#x2F;etc&#x2F;issue"></a>&#x2F;etc&#x2F;issue</h2><p><img src="https://i.0920811.xyz/img_40.png"></p>
-<p>文件内容可使用的各个变量说明如下</p>
-<table>
-<thead>
-<tr>
-<th>变量</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>\d</td>
-<td>显示当前日期</td>
-</tr>
-<tr>
-<td>\l</td>
-<td>显示虚拟控制台号</td>
-</tr>
-<tr>
-<td>\m</td>
-<td>显示机器类型，即 CPU 架构，如 i386 或 x86_64 等（相当于 uname -m）</td>
-</tr>
-<tr>
-<td>\n</td>
-<td>显示主机的网络名（相当于 uname -n）</td>
-</tr>
-<tr>
-<td>\o</td>
-<td>显示域名</td>
-</tr>
-<tr>
-<td>\r</td>
-<td>显示 Kernel 内核版本号（相当于 uname -r）</td>
-</tr>
-<tr>
-<td>\t</td>
-<td>显示当前时间</td>
-</tr>
-<tr>
-<td>\s</td>
-<td>显示当前操作系统名称</td>
-</tr>
-<tr>
-<td>\u</td>
-<td>显示当前登录用户的编号</td>
-</tr>
-<tr>
-<td>\U</td>
-<td>显示当前登录用户的编号和用户</td>
-</tr>
-<tr>
-<td>\v</td>
-<td>显示当前操作系统的版本日期</td>
-</tr>
-</tbody></table>
-]]></content>
-      <categories>
-        <category>Linux</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Vault 概念</title>
     <url>/202307111710/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="Policy"><a href="#Policy" class="headerlink" title="Policy"></a>Policy</h1><p>Vault 模拟了一个文件系统，Vault 中的所有信息，包括 Secret、配置等，都是依照各自的路径来使用和授权的。 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Vault 中文参考手册-策略](https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/9.%E7%AD%96%E7%95%A5.html)
@@ -36584,6 +36584,155 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>六十四卦之风地观</title>
+    <url>/20251007102040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="风地观"><a href="#风地观" class="headerlink" title="风地观"></a>风地观</h1><p><img src="https://i.0920811.xyz/img_360.png"></p>
+<p>观，上（外）巽（风、入、顺）下（内）坤（地，顺），风行地上，与 <a href="https://0920811.xyz/20251006102040/">地泽临卦</a> 成覆卦卦， <strong>临 是上临下，观 是下观上</strong> 。观卦由否卦再长一柔爻而来。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观，盥而不荐，有孚颙若</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：大观在上，顺而巽，中正以观天下。观，盥而不荐，有孚颙若，下观而化也。观天之神道，而四时不忒，圣人以神道设教，而天下服矣。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风行地上，观;先王以省方，观民设教。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>盥而不荐</strong> ： 盥，盥礼（古人祭祀前会用清水洗手，以示 洁净身心、恭敬待神，是祭祀中 最核心的虔诚仪式）、洗手、净身。荐，进献祭品（如牛羊、酒食）、</li>
+<li><strong>有孚颙（yóng）若，下观而化也</strong> ： 孚，诚信、真诚。颙，严肃端正、庄重恭敬、庄严肃穆。上位者以诚敬为本，不尚虚礼，百姓因此观化而从。</li>
+<li><strong>先王以省方，观民设教</strong> ： 省，巡视、考察、观察。方，四方诸侯之地、百姓聚居之处。巡视四方，观察民情而设教化之法。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>临者上临下，观者下观上；观在下而仰上，故以诚敬为本。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>观者，示人以所当观也。君子以身作则，民观而化。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>盥而不荐，洁诚以观，不尚虚礼。有孚颙若，诚信充中而形于外。</code></p>
+</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童观，小人无咎，君子吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：初六童观，小人道也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>童观，小人无咎，君子吝</strong> ： 以稚童般的方式（幼稚、肤浅、不全面）观察世界或看待事物，浅见而未有深察，对地位较低或职责有限的普通人来说，并无不妥（无需看清事物本质，只需应对眼前的现实需求）；对君子（有身份、有责任、需担当全局的人，需洞察本质、谋划长远、引领方向）而言，有缺憾、有隐患</li>
+<li><strong>初六童观，小人道也</strong> ： 符合普通人身份与需求的认知方式，君子需超越童观，君子若止于浅见、见而不察，则为吝</li>
+</ul>
+<p>初六阴爻居最下位，柔弱未进，象征处于观的起始阶段。小人浅见不足责，故无咎；君子识理而不察，则吝。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>童观者，浅见之谓也。处观之初，未能深察。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>童观者，未有定见。小人居下，浅见无害；君子不察则失德。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>童观，以浅识观事。小人无咎，君子可羞。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">窥观，利女贞。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：窥观女贞，亦可丑也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>窥观，利女贞</strong> ： 窥，从小孔、缝隙中窥视、窥探、偷看，喻视野局促、认识有限。位置低、视野窄，只能局部观察。对坚守被动、守内、安于本分角色的人（女贞）有利</li>
+<li><strong>窥观女贞，亦可丑也</strong> ： 丑，不美、羞耻、缺憾。窥观 虽对守本分者有利，但从 追求更高认知、更优角色的角度看，它仍是一种 有局限的、不应满足的观察方式</li>
+</ul>
+<p>六二阴爻居阴位，处下卦居中得位，虽有局限，却未偏离本分。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>窥观者，视有所限。利女贞言守柔顺之道尚可，然不足美。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>六二得中以柔，处下观上，所见不广，故曰窥观。守正则安，不守则丑。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居卑而观高，见局而识偏。阴柔守正可安，然非君子之道。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>窥观，小见也。利女贞，言妇人守其常也。君子若如此，则可羞也。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，进退。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，进退;未失道也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>观我生，进退</strong> ： 观察自己的生活、行为和处境，即自我反省、内观己德，由外观而转内观。根据自我审视结果，决定前进或退守。</li>
+</ul>
+<p>六三阴爻居阳位（不当），是下卦（坤☷）的最后一爻，即将衔接上卦（巽☴），象征 从下位者被动观上（如初六童观、六二窥观），转向中位者主动观己。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>观我生者，反观己也。能观己则知进退，故未失道。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>由观人而反观己，是自省之道。知进退，则守道不失。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观我生，内省也。进退皆得其宜，故未失道。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观国之光，利用宾于王。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观国之光，尚宾也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>观国之光，利用宾于王</strong> ： 国之光，即国家之文明、礼乐、政教之光辉；当以宾客之礼、谦敬之态亲近君上；</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>观国之光，以见君德也。能守礼以近上，则无咎，故利宾于王。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居近君之位，当以礼观政，知敬而不干，是宾于王之义。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观国之光，观礼乐教化之盛也。以谦敬近上，故利用宾于王。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，君子无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，观民也。</span><br></pre></td></tr></table></figure>
+
+<p>阳爻居尊位（天子之位），刚中而正，德位兼备，是君位之正，</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九五居尊位而中正，以身为法。观己之生德，则民观而化，故无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居尊位，当自观己德，使下有所观。观己而民观，是以化成。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观我生者，君子以身为天下法。观民也者，民观君而化。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">上九：观其生，君子无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观其生，志未平也。</span><br></pre></td></tr></table></figure>
+
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>观其生者，观天道也。居观之极，明而未中，知而未化，故志未平。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五观我生者，人道也；上九观其生者，天道也。虽无咎，而犹未平。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>观其生’，观天之生物之理也。处卦之极，明而不中，故志未平。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
     <title>六十四卦之地泽临</title>
     <url>/20251006102040/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地泽临"><a href="#地泽临" class="headerlink" title="地泽临"></a>地泽临</h1><p><img src="https://i.0920811.xyz/img_359.png"></p>
@@ -36731,155 +36880,6 @@ width: 20%;
 </li>
 <li><p>朱熹</p>
 <p>  <code>敦，厚也。处上位而能敦厚以临下，志在内修，不为外名，吉而无咎。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之风地观</title>
-    <url>/20251007102040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="风地观"><a href="#风地观" class="headerlink" title="风地观"></a>风地观</h1><p><img src="https://i.0920811.xyz/img_360.png"></p>
-<p>观，上（外）巽（风、入、顺）下（内）坤（地，顺），风行地上，与 <a href="https://0920811.xyz/20251006102040/">地泽临卦</a> 成覆卦卦， <strong>临 是上临下，观 是下观上</strong> 。观卦由否卦再长一柔爻而来。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观，盥而不荐，有孚颙若</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：大观在上，顺而巽，中正以观天下。观，盥而不荐，有孚颙若，下观而化也。观天之神道，而四时不忒，圣人以神道设教，而天下服矣。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：风行地上，观;先王以省方，观民设教。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>盥而不荐</strong> ： 盥，盥礼（古人祭祀前会用清水洗手，以示 洁净身心、恭敬待神，是祭祀中 最核心的虔诚仪式）、洗手、净身。荐，进献祭品（如牛羊、酒食）、</li>
-<li><strong>有孚颙（yóng）若，下观而化也</strong> ： 孚，诚信、真诚。颙，严肃端正、庄重恭敬、庄严肃穆。上位者以诚敬为本，不尚虚礼，百姓因此观化而从。</li>
-<li><strong>先王以省方，观民设教</strong> ： 省，巡视、考察、观察。方，四方诸侯之地、百姓聚居之处。巡视四方，观察民情而设教化之法。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>临者上临下，观者下观上；观在下而仰上，故以诚敬为本。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>观者，示人以所当观也。君子以身作则，民观而化。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>盥而不荐，洁诚以观，不尚虚礼。有孚颙若，诚信充中而形于外。</code></p>
-</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">童观，小人无咎，君子吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：初六童观，小人道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>童观，小人无咎，君子吝</strong> ： 以稚童般的方式（幼稚、肤浅、不全面）观察世界或看待事物，浅见而未有深察，对地位较低或职责有限的普通人来说，并无不妥（无需看清事物本质，只需应对眼前的现实需求）；对君子（有身份、有责任、需担当全局的人，需洞察本质、谋划长远、引领方向）而言，有缺憾、有隐患</li>
-<li><strong>初六童观，小人道也</strong> ： 符合普通人身份与需求的认知方式，君子需超越童观，君子若止于浅见、见而不察，则为吝</li>
-</ul>
-<p>初六阴爻居最下位，柔弱未进，象征处于观的起始阶段。小人浅见不足责，故无咎；君子识理而不察，则吝。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>童观者，浅见之谓也。处观之初，未能深察。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>童观者，未有定见。小人居下，浅见无害；君子不察则失德。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>童观，以浅识观事。小人无咎，君子可羞。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">窥观，利女贞。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：窥观女贞，亦可丑也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>窥观，利女贞</strong> ： 窥，从小孔、缝隙中窥视、窥探、偷看，喻视野局促、认识有限。位置低、视野窄，只能局部观察。对坚守被动、守内、安于本分角色的人（女贞）有利</li>
-<li><strong>窥观女贞，亦可丑也</strong> ： 丑，不美、羞耻、缺憾。窥观 虽对守本分者有利，但从 追求更高认知、更优角色的角度看，它仍是一种 有局限的、不应满足的观察方式</li>
-</ul>
-<p>六二阴爻居阴位，处下卦居中得位，虽有局限，却未偏离本分。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>窥观者，视有所限。利女贞言守柔顺之道尚可，然不足美。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>六二得中以柔，处下观上，所见不广，故曰窥观。守正则安，不守则丑。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居卑而观高，见局而识偏。阴柔守正可安，然非君子之道。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>窥观，小见也。利女贞，言妇人守其常也。君子若如此，则可羞也。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，进退。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，进退;未失道也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>观我生，进退</strong> ： 观察自己的生活、行为和处境，即自我反省、内观己德，由外观而转内观。根据自我审视结果，决定前进或退守。</li>
-</ul>
-<p>六三阴爻居阳位（不当），是下卦（坤☷）的最后一爻，即将衔接上卦（巽☴），象征 从下位者被动观上（如初六童观、六二窥观），转向中位者主动观己。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>观我生者，反观己也。能观己则知进退，故未失道。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>由观人而反观己，是自省之道。知进退，则守道不失。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观我生，内省也。进退皆得其宜，故未失道。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观国之光，利用宾于王。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观国之光，尚宾也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>观国之光，利用宾于王</strong> ： 国之光，即国家之文明、礼乐、政教之光辉；当以宾客之礼、谦敬之态亲近君上；</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>观国之光，以见君德也。能守礼以近上，则无咎，故利宾于王。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居近君之位，当以礼观政，知敬而不干，是宾于王之义。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观国之光，观礼乐教化之盛也。以谦敬近上，故利用宾于王。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">观我生，君子无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我生，观民也。</span><br></pre></td></tr></table></figure>
-
-<p>阳爻居尊位（天子之位），刚中而正，德位兼备，是君位之正，</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九五居尊位而中正，以身为法。观己之生德，则民观而化，故无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居尊位，当自观己德，使下有所观。观己而民观，是以化成。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观我生者，君子以身为天下法。观民也者，民观君而化。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">上九：观其生，君子无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观其生，志未平也。</span><br></pre></td></tr></table></figure>
-
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>观其生者，观天道也。居观之极，明而未中，知而未化，故志未平。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五观我生者，人道也；上九观其生者，天道也。虽无咎，而犹未平。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>观其生’，观天之生物之理也。处卦之极，明而不中，故志未平。</code></p>
 </li>
 </ul>
 ]]></content>
