@@ -5324,6 +5324,251 @@ width: 20%;
 <p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
 <ul>
 <li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
+<li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现“能出不能进”的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
+</ul>
+</blockquote>
+<ul>
+<li><strong>路由表（Route Tables）</strong> 分为主路由表和自定义路由表<ul>
+<li><strong>主路由表（Main route table）</strong> 随 VPC 自动生成，它控制未与任何其他路由表显式关联的所有子网的路由，也就是 VPC 中的默认路由。</li>
+<li><strong>自定义路由表</strong> 为新建的路由表。</li>
+<li>一个子网只能关联一个路由表，一个路由表可以关联多个子网</li>
+</ul>
+</li>
+</ul>
+<p><strong>流量如何进出</strong></p>
+<p>VPC 与外界互联网通信可以使用以下方式：</p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>作用</th>
+<th>流量方向</th>
+<th>用法说明｜</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Internet Gateway (IGW，互联网网关)</td>
+<td>允许 VPC 连接互联网。</td>
+<td>双向 (In&#x2F;Out)</td>
+<td>实例必须分配公网 IP 或弹性 IP (EIP)</td>
+</tr>
+<tr>
+<td>NAT Gateway (NAT 网关)</td>
+<td>允许私有实例上外网，但防止外部主动连接。</td>
+<td>单向 (Outbound only)</td>
+<td>仅需私有 IP</td>
+</tr>
+<tr>
+<td>VPC Peering （对等连接）</td>
+<td>连接两个不同的 VPC，使其像在一个网络内通信。</td>
+<td>跨 VPC</td>
+<td></td>
+</tr>
+<tr>
+<td>Transit Gateway</td>
+<td>充当“中央枢纽”，连接数千个 VPC 和本地网络。</td>
+<td>复杂网络拓扑</td>
+<td></td>
+</tr>
+<tr>
+<td>Virtual Private Gateway</td>
+<td>用于建立 VPN 连接。</td>
+<td>混合云</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="部署-NAT-Gateway-网关并关联子网"><a href="#部署-NAT-Gateway-网关并关联子网" class="headerlink" title="部署 NAT Gateway 网关并关联子网"></a>部署 NAT Gateway 网关并关联子网</h2><p>通过 NAT Gateway 可以实现子网中的实例的对外互联网出口 IP 都是 NAT Gateway 绑定的 EIP，子网中的实例对互联网不可见。NAT Gateway 典型使用场景：</p>
+<ul>
+<li>为了安全，生产环境通常将 <strong>EKS 工作节点、RDS 数据库</strong> 或 <strong>缓存服务器（Redis）</strong> 放在私有子网中，这些资源不需要（也不应该）被互联网直接访问。</li>
+<li>应用需要调用外部服务（如支付网关、银行接口或第三方 API）时，对方的防火墙通常需要你提供一个白名单 IP。由于 EKS 节点是动态变化的，IP 并不固定。</li>
+<li>减少受攻击面，防止外部扫描。</li>
+</ul>
+<p>以下为创建 NAT Gateway 并关联子网的相关步骤：</p>
+<figure class="highlight shell"><figcaption><span>正确的整体架构</span></figcaption><table><tr><td class="code"><pre><span class="line">VPC</span><br><span class="line">├── Public Subnet</span><br><span class="line">│   ├── NAT Gateway（有 EIP）</span><br><span class="line">│   └── Route Table (Public RT)</span><br><span class="line">│       └── 0.0.0.0/0 → Internet Gateway</span><br><span class="line">│</span><br><span class="line">└── Private Subnet</span><br><span class="line">    ├── EC2 / ECS / EKS Node</span><br><span class="line">    └── Route Table (Private RT)</span><br><span class="line">        └── 0.0.0.0/0 → NAT Gateway</span><br></pre></td></tr></table></figure>
+<p>关键点：</p>
+<ul>
+<li><strong>NAT Gateway 必须在公有子网</strong></li>
+<li><strong>私有子网的默认路由指向 NAT Gateway</strong></li>
+</ul>
+<ol>
+<li><p><strong>确认 Public Subnet 存在</strong></p>
+<p> VPC 默认的 Main Route Table 已经满足这个条件，其默认网关为 Internet Gateway<br> <img src="https://i.0920811.xyz/img_390.png"></p>
+</li>
+<li><p><strong>创建 NAT Gateway</strong></p>
+<p> 在 <strong>NAT gateways</strong> 标签页面中，点击 <strong>Create NAT gateway</strong> ， <strong>Connectivity type</strong> 选择 <strong>Public</strong> ， <strong>Elastic IP (EIP) association</strong> 选择 <strong>手动分配 EIP（Manual）</strong><br> <img src="https://i.0920811.xyz/img_391.png"><br> 创建完成后，状态应为 <strong>Available</strong> 。在路由表（Route Tables）中，这时会多一个路由表，其 <strong>Edge associations（边缘关联）</strong> 关联到了刚刚创建的 NAT Gateway<br> <img src="https://i.0920811.xyz/img_392.png"></p>
+</li>
+<li><p><strong>创建一个新的子网（私有、Private Subnet）</strong></p>
+<p> 在 <strong>VPC → Subnets → Create subnet</strong> 标签页面中创建新的子网， <strong>不要勾选 Auto-assign public IPv4</strong> ，如此处于此子网中的实例，不会为其分配公网地址<br> <img src="https://i.0920811.xyz/img_394.png"></p>
+</li>
+<li><p><strong>创建 Private Route Table</strong></p>
+<p> 在 <strong>VPC → Route tables → Create route table</strong> 标签页面中创建新的路由表，本示例名为 <code>private-rt</code></p>
+</li>
+<li><p><strong>配置路由规则</strong></p>
+<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Routes</strong> 中 <strong>编辑路由（Edit Routes）</strong> ，添加一条路由规则： </p>
+ <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| Destination | Target          |</span><br><span class="line">| ----------- | --------------- |</span><br><span class="line">| 0.0.0.0/0   | NAT Gateway |</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p> <img src="https://i.0920811.xyz/img_395.png"></p>
+</li>
+<li><p><strong>关联 Private Subnet</strong></p>
+<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Subnet associations(子网关联)</strong> 中 <strong>Edit subnet associations（编辑子网关联）</strong> ，选择目标子网进行关联<br> <img src="https://i.0920811.xyz/img_396.png"></p>
+</li>
+<li><p><strong>最终的 VPC 整体路由可以在 VPC 的 Resource map 中进行检查</strong><br> <img src="https://i.0920811.xyz/img_397.png"></p>
+</li>
+</ol>
+<h1 id="EKS-中的授权机制"><a href="#EKS-中的授权机制" class="headerlink" title="EKS 中的授权机制"></a>EKS 中的授权机制</h1><p>Kubernetes 原生提供 <strong>RBAC（Role-Based Access Control）</strong> 来控制集群中的 <strong>用户和服务账户（ServiceAccount）</strong> 对资源的访问权限。</p>
+<table>
+<thead>
+<tr>
+<th>对象</th>
+<th>描述</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Role</strong></td>
+<td>命名空间级别（Namespace）权限，指定某个命名空间内允许的操作和资源类型。</td>
+</tr>
+<tr>
+<td><strong>ClusterRole</strong></td>
+<td>集群级别权限，可以跨命名空间使用。</td>
+</tr>
+<tr>
+<td><strong>RoleBinding</strong></td>
+<td>将 Role 绑定到一个用户或 ServiceAccount。</td>
+</tr>
+<tr>
+<td><strong>ClusterRoleBinding</strong></td>
+<td>将 ClusterRole 绑定到一个用户或 ServiceAccount。</td>
+</tr>
+</tbody></table>
+<p><strong>核心字段</strong></p>
+<ul>
+<li><p><code>apiGroups</code> ：资源所属 API 组，例如 <code>&quot;&quot;</code> 代表 <strong>core API</strong> 。</p>
+</li>
+<li><p><code>resources</code> ：允许访问的资源类型，如 pods、deployments。</p>
+</li>
+<li><p><code>verbs</code> ：允许的操作，如 <code>get, list, create, delete</code> 。</p>
+</li>
+</ul>
+<p>RBAC 示例：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">apiGroups:</span> [<span class="string">&quot;&quot;</span>]</span><br><span class="line">    <span class="attr">resources:</span> [<span class="string">&quot;pods&quot;</span>]</span><br><span class="line">    <span class="attr">verbs:</span> [<span class="string">&quot;get&quot;</span>, <span class="string">&quot;list&quot;</span>]</span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">RoleBinding</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">read-pods</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">subjects:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">kind:</span> <span class="string">ServiceAccount</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">my-serviceaccount</span></span><br><span class="line"><span class="attr">roleRef:</span></span><br><span class="line">  <span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">apiGroup:</span> <span class="string">rbac.authorization.k8s.io</span></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><p><strong>RBAC 控制的是 Kubernetes 资源访问权限</strong> 。</p>
+</li>
+<li><p><strong>RBAC 对象绑定的是 Kubernetes 用户或 ServiceAccount，而不是 AWS IAM 用户</strong> 。</p>
+</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>全称</th>
+<th>解决的问题</th>
+<th>作用范围</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>RBAC</strong></td>
+<td>Role-Based Access Control</td>
+<td>决定 “用户&#x2F;进程” 在 K8s 集群内能做什么（如：查看 Pod）</td>
+<td>K8s 集群内部</td>
+</tr>
+<tr>
+<td><strong>Role</strong></td>
+<td>Kubernetes Role</td>
+<td>RBAC 的一部分，定义一组具体的集群内操作权限</td>
+<td>命名空间 (Namespace)</td>
+</tr>
+<tr>
+<td><strong>IRSA</strong></td>
+<td>IAM Roles for Service Accounts</td>
+<td>决定 “Pod 里的应用” 对 AWS 外部资源（如 S3&#x2F;RDS）的访问权限</td>
+<td>AWS 云环境</td>
+</tr>
+</tbody></table>
+<p><strong>AWS IAM Role</strong> 是 AWS 层面的权限机制，用于授权 AWS 资源访问，例如 S3、DynamoDB、Secrets Manager 等。</p>
+<p>AWS IAM Role 的特点：</p>
+<ul>
+<li><p>可以被 IAM 用户、服务或 EC2&#x2F;EKS Pod 假设（Assume）。</p>
+</li>
+<li><p>权限通过 IAM Policy 定义。</p>
+</li>
+</ul>
+<p><strong>AWS IAM Role</strong> 在 EKS 中的应用:</p>
+<ul>
+<li><p>管理集群本身访问 AWS 资源，例如节点组（NodeGroup）访问 S3。</p>
+</li>
+<li><p>可以通过 IAM 用户&#x2F;Role 管理集群级别的操作权限，例如 <code>eks:DescribeCluster</code> 。</p>
+</li>
+</ul>
+<blockquote>
+<p>💡 核心点：IAM Role 本身无法直接控制 Kubernetes 资源，它管理的是 AWS 资源访问。</p>
+</blockquote>
+<p><strong>IRSA（IAM Roles for Service Accounts）</strong> 是 AWS EKS 引入的将 Kubernetes ServiceAccount 与 AWS IAM Role 绑定，实现 Pod 级别的 AWS 权限控制的机制。其大致原理如下：</p>
+<ul>
+<li><strong>EKS 集群开启 OIDC Provider</strong></li>
+<li><strong>创建 IAM Role 并信任该 OIDC Provider</strong></li>
+<li><strong>Role 上定义 IAM Policy（如访问 S3）</strong></li>
+<li><strong>Kubernetes ServiceAccount 指定注解 <code>eks.amazonaws.com/role-arn</code>。</strong></li>
+<li><strong>Pod 使用该 ServiceAccount 时自动获取 Role 权限</strong></li>
+</ul>
+<p><strong>实践建议：</strong></p>
+<ul>
+<li><p>不要在 Pod 内放 AWS AccessKey，使用 IRSA。</p>
+</li>
+<li><p>最小权限原则：</p>
+<ul>
+<li><p>RBAC：只给 Pod 或用户真正需要的 Kubernetes 权限。</p>
+</li>
+<li><p>IAM Role &#x2F; IRSA：只给访问 AWS 资源的最小权限。</p>
+</li>
+</ul>
+</li>
+<li><p>多集群管理：可以通过 ClusterRole + RoleBinding 管理跨命名空间权限。</p>
+</li>
+<li><p>审计：</p>
+<ul>
+<li><p>使用 CloudTrail 监控 IRSA 调用。</p>
+</li>
+<li><p>Kubernetes API Server 日志审计 RBAC 权限。</p>
+</li>
+</ul>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Aws</category>
+      </categories>
+      <tags>
+        <tag>Aws</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Amazon AWS 概念及相关操作步骤</title>
+    <url>/20260207135211/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="AWS-虚拟私有云-VPC"><a href="#AWS-虚拟私有云-VPC" class="headerlink" title="AWS 虚拟私有云 VPC"></a>AWS 虚拟私有云 VPC</h1><p>在进入具体的网络配置前，必须理解 AWS 的地理隔离：</p>
+<ul>
+<li><p><strong>区域 (Region)</strong> ：地理上的独立区域（如新加坡、弗吉尼亚）。区域之间完全隔离。</p>
+</li>
+<li><p><strong>可用区 (Availability Zone, AZ)</strong> ：一个区域内由多个物理机房组成。AZ 之间通过高速、低延迟光纤连接。高可用架构必须跨 AZ 部署。跨 AZ 之间的流量需要付费。</p>
+</li>
+</ul>
+<p>VPC 是你在 AWS 云中的逻辑隔离网络。你可以完全控制其 IP 地址范围、子网、路由表和网络网关。</p>
+<p>核心组件：</p>
+<ul>
+<li><p><strong>CIDR 范围</strong> ：你为 VPC 定义的私有 IP 地址块（如 <code>10.0.0.0/16</code> ）。</p>
+</li>
+<li><p><strong>子网 (Subnets)</strong> ：将 VPC 划分为更小的网段。子网必须位于特定的可用区内。</p>
+</li>
+<li><p><strong>公有子网 (Public Subnet)</strong> ：路由指向互联网网关 (IGW)，实例可以有公网 IP。</p>
+</li>
+<li><p><strong>私有子网 (Private Subnet)</strong> ：没有指向 IGW 的直接路由，通常通过 <strong>NAT 网关 访问外网</strong> 。</p>
+</li>
+</ul>
+<blockquote>
+<p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
+<ul>
+<li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
 <li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现 “能出不能进” 的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
 </ul>
 </blockquote>
@@ -10531,6 +10776,86 @@ width: 20%;
         <category>Django</category>
       </categories>
       <tags>
+        <tag>Django</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Django 模板语言</title>
+    <url>/202303241517/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11</li>
+<li>Django 4.1</li>
+</ul>
+<h1 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h1><p>在 Django 4.1 中，使用静态文件的方法与之前的版本相同。以下是使用静态文件的步骤：</p>
+<ol>
+<li><p>在 <code>settings.py</code> 中设置静态文件目录：</p>
+ <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">STATIC_URL = <span class="string">&#x27;/static/&#x27;</span></span><br><span class="line">STATICFILES_DIRS = [</span><br><span class="line">    BASE_DIR / <span class="string">&quot;static&quot;</span>,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><code>STATIC_URL</code> 是静态文件 URL 的前缀。</li>
+<li><code>STATICFILES_DIRS</code> 是一个列表，其中包含要在其中查找静态文件的目录。</li>
+</ul>
+</li>
+<li><p>在 HTML 文件中使用静态文件</p>
+ <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Static File Example<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> <span class="attr">type</span>=<span class="string">&quot;text/css&quot;</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;css/style.css&#x27; %&#125;&quot;</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">img</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;images/logo.png&#x27; %&#125;&quot;</span> <span class="attr">alt</span>=<span class="string">&quot;My logo&quot;</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;js/script.js&#x27; %&#125;&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<p> 在上面的示例中，我们使用了 Django 模板语言的 <code>&#123;% static %&#125;</code> 标记来引用静态文件。<code>&#123;% load static %&#125;</code> 指令必须在使用 <code>&#123;% static %&#125;</code> 标记之前加载，以确保 Django 能够正确解析它们。</p>
+</li>
+<li><p>运行 <code>collectstatic</code> 命令：<br>  当您准备部署您的 Django 应用程序时，您需要将静态文件收集到一个单独的目录中，以便可以轻松地在生产服务器上提供它们。您可以使用 Django 的 <code>collectstatic</code> 命令来完成此操作。在命令行中运行以下命令：</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py collectstatic</span><br></pre></td></tr></table></figure>
+
+<p> Django 将在 <code>STATIC_ROOT</code> 目录中创建一个新的静态文件目录，并将您的静态文件从 <code>STATICFILES_DIRS</code> 中指定的目录复制到该目录中。您可以在 <code>settings.py</code> 文件中设置 <code>STATIC_ROOT</code> 目录的路径</p>
+</li>
+</ol>
+<h1 id="DTL-语法"><a href="#DTL-语法" class="headerlink" title="DTL 语法"></a>DTL 语法</h1><h2 id="load-static"><a href="#load-static" class="headerlink" title="load static"></a>load static</h2><p><a href="#%E5%9C%A8-HTML-%E6%96%87%E4%BB%B6%E4%B8%AD%E4%BD%BF%E7%94%A8%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6">参考说明</a></p>
+<h2 id="block-super"><a href="#block-super" class="headerlink" title="block.super"></a>block.super</h2><p>用来从父 block 中继承选项</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrahead %&#125;</span><br><span class="line">&#123;&#123; block.super &#125;&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/bootstrap.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/base.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="include"><a href="#include" class="headerlink" title="include"></a>include</h2><p>假设有两个 HTML 文件：<code>header.html</code> 和 <code>content.html</code>。<br><code>header.html</code> 包含页面的头部内容。</p>
+<figure class="highlight html"><figcaption><span>header.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- header.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">header</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h1</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">h1</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">nav</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 导航栏内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">nav</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">header</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p><code>content.html</code> 包含页面的主要内容。</p>
+<figure class="highlight html"><figcaption><span>content.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- content.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">section</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h2</span>&gt;</span>Welcome to our website!<span class="tag">&lt;/<span class="name">h2</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>This is the main content of the page.<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">section</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p>现在，可以在另一个 HTML 文件中使用 <code>&#123;% include %&#125;</code> 标签来包含这些内容。</p>
+<figure class="highlight html"><figcaption><span>main_template.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- main_template.html --&gt;</span></span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    &#123;% include &#x27;header.html&#x27; %&#125;</span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span> <span class="attr">class</span>=<span class="string">&quot;content&quot;</span>&gt;</span></span><br><span class="line">        &#123;% include &#x27;content.html&#x27; %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line">    </span><br><span class="line">    <span class="tag">&lt;<span class="name">footer</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 页脚内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">footer</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p>在这个示例中，<code>&#123;% include 'header.html' %&#125;</code> 和 <code>&#123;% include 'content.html' %&#125;</code> 标签会将相应的模板文件的内容包含在 <code>main_template.html</code> 中。这样，就可以在一个模板中包含另一个模板的内容了。</p>
+<h2 id="url-反向解析"><a href="#url-反向解析" class="headerlink" title="url 反向解析"></a>url 反向解析</h2><p>在模板中不推荐使用 url 硬编码，建议使用 url 反向解析功能，在 <code>urls.py</code> 中定义 url 时，给 url 命名，在模板中 可以使用反向解析使用 url，避免使用 url 硬编码。<strong>需要在 <code>urls.py</code> 中配置 <code>app_name = &#39;polls&#39;</code>，否则会因为 namespace 不清楚而报错：<code>&#39;polls&#39; is not a registered namespace</code></strong></p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> django.urls <span class="keyword">import</span> path</span><br><span class="line"><span class="keyword">from</span> . <span class="keyword">import</span> views</span><br><span class="line"></span><br><span class="line">app_name = <span class="string">&#x27;polls&#x27;</span></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(<span class="string">&#x27;&#x27;</span>, views.IndexView.as_view(), name=<span class="string">&#x27;index&#x27;</span>),</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
+<p>以上事例中，<code>name=&#39;index&#39;</code> 为 url 命名，在模板中通过以下方式使用 url 名称 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[反向命名空间 URLs](https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls)">[1]</span></a></sup></p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;polls:index&#x27; %&#125;&quot;</span>&gt;</span>首页<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+<h2 id="for-循环"><a href="#for-循环" class="headerlink" title="for 循环"></a>for 循环</h2><h3 id="根据-model-中的值实现下拉选择菜单"><a href="#根据-model-中的值实现下拉选择菜单" class="headerlink" title="根据 model 中的值实现下拉选择菜单"></a>根据 model 中的值实现下拉选择菜单</h3><p>假如需要实现下拉表单中的可选值来自于某个 <code>model</code>，可以参考以下实现</p>
+<figure class="highlight shell"><figcaption><span>models.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.db import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your models here.</span></span><br><span class="line">class Account(models.Model):</span><br><span class="line">    name = models.CharField(max_length=16, unique=True)</span><br></pre></td></tr></table></figure>
+
+<p>视图函数代码如下：</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line">from cloudclient import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br></pre></td></tr></table></figure>
+<p>HTML 模板主要代码如下：</p>
+<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">    &#123;% csrf_token %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;category&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line">       &#123;% for account in accounts %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endfor %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
+<p><strong>其中使用 <code>for</code> 循环将视图函数传过来的参数列表（<code>accounts</code>）中的对象添加到下拉菜单中作为下拉选项。</strong><br><img src="https://i.0920811.xyz/img_216.png"></p>
+<p>表单提交后，服务端口会收到 POST 的数据(<code>request.POST</code>)：<code>account=1</code>。参考以下代码处理接收到的表单数据</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    if request.method == &#x27;GET&#x27;:</span><br><span class="line">        accounts = models.Account.objects.all()</span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        # data = request.body</span><br><span class="line">        account_id = request.POST.get(&#x27;account&#x27;)</span><br><span class="line">        logging.info(f&quot;POST DATA: &#123;&#125;&quot;)</span><br></pre></td></tr></table></figure>
+
+<p>如果想在 POST 处理后返回给客户端的 HTML 表单中的默认选中的值任然是客户端 POST 提交时选中的值，可以参考以下代码</p>
+<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def cf_add_domains(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        data = request.POST</span><br><span class="line">        account_id = data[&#x27;account&#x27;]</span><br><span class="line">        account = models.Account.objects.get(id=account_id)</span><br><span class="line"></span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts, &#x27;selected_account_id&#x27;: account_id&#125;)</span><br></pre></td></tr></table></figure>
+
+<p>HTML 模板中使用 <code>option</code> 的 <code>selected</code> 标签选择指定的值。<em><strong>要注意其中的类型转换 <code>account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot;，将变量值转换一致，否则条件判断会失败</code></strong></em> </p>
+<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">&#123;% csrf_token %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;account&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line"></span><br><span class="line">   &#123;% for account in accounts %&#125;</span><br><span class="line">       &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% else %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endif %&#125;</span><br><span class="line">   &#123;% endfor %&#125;</span><br><span class="line"><span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="if-条件判断"><a href="#if-条件判断" class="headerlink" title="if 条件判断"></a>if 条件判断</h2><p><code>if</code> 语法如下</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% if condition %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为真 --&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为假 --&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% if user.is_authenticated %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>欢迎回来，&#123;&#123; user.username &#125;&#125;！<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;logout&#x27; %&#125;&quot;</span>&gt;</span>退出登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>您还未登录。<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;login&#x27; %&#125;&quot;</span>&gt;</span>立即登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="类型转换"><a href="#类型转换" class="headerlink" title="类型转换"></a>类型转换</h2><p>如果在模板中需要对变量类型进行转换，参考以下语法</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% else %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% endif %&#125;</span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
+
+<p>更精简的写法</p>
+<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    </span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> &#123;% <span class="attr">if</span> <span class="attr">account.id</span>|<span class="attr">stringformat:</span>&quot;<span class="attr">s</span>&quot; == <span class="string">selected_account_id|stringformat:</span>&quot;<span class="attr">s</span>&quot; %&#125;<span class="attr">selected</span>&#123;% <span class="attr">endif</span> %&#125;&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls">反向命名空间 URLs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Python</category>
+        <category>Django</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
         <tag>Django</tag>
       </tags>
   </entry>
@@ -27639,6 +27964,115 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>安装 Mysql</title>
+    <url>/202211021345/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 kernel 5.4</li>
+<li>Mysql Server 5.7</li>
+</ul>
+<h1 id="Mysql-Server-安装步骤"><a href="#Mysql-Server-安装步骤" class="headerlink" title="Mysql Server 安装步骤"></a>Mysql Server 安装步骤</h1><h2 id="yum-方式安装"><a href="#yum-方式安装" class="headerlink" title="yum 方式安装"></a>yum 方式安装</h2><h3 id="安装-MySQL-5-7-的-yum-源"><a href="#安装-MySQL-5-7-的-yum-源" class="headerlink" title="安装  MySQL 5.7 的 yum 源"></a>安装  MySQL 5.7 的 yum 源</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span><br></pre></td></tr></table></figure>
+
+<p>如果因为源冲突，类似如下错误</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Processing Conflict: mysql80-community-release-el7-2.noarch conflicts mysql57-community-release</span><br></pre></td></tr></table></figure>
+
+<p>可以卸载旧的 <code>yum</code> 源安装包，重新安装</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep mysql</span></span><br><span class="line">mysql80-community-release-el7-2.noarch</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum remove mysql80-community-release-el7-2</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span></span><br></pre></td></tr></table></figure>
+
+<p>检查 <code>yum</code> 源中的 <code>mysql-community-server</code> 信息</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum info mysql-community-server</span></span><br><span class="line">Loaded plugins: fastestmirror</span><br><span class="line">Loading mirror speeds from cached hostfile</span><br><span class="line"> * base: download.cf.centos.org</span><br><span class="line"> * elrepo: reflector.westga.edu</span><br><span class="line"> * epel: coresite.mm.fcix.net</span><br><span class="line"> * extras: download.cf.centos.org</span><br><span class="line"> * updates: download.cf.centos.org</span><br><span class="line">Available Packages</span><br><span class="line">Name        : mysql-community-server</span><br><span class="line">Arch        : x86_64</span><br><span class="line">Version     : 5.7.40</span><br><span class="line">Release     : 1.el7</span><br><span class="line">Size        : 178 M</span><br><span class="line">Repo        : mysql57-community/x86_64</span><br><span class="line">Summary     : A very fast and reliable SQL database server</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h3 id="安装-mysql-community-server"><a href="#安装-mysql-community-server" class="headerlink" title="安装 mysql-community-server"></a>安装 mysql-community-server</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mysql-community-server</span><br></pre></td></tr></table></figure>
+
+<h3 id="启动-mysql-server"><a href="#启动-mysql-server" class="headerlink" title="启动 mysql server"></a>启动 mysql server</h3><p>配置 mysql server 开机启动，同时启动服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable mysqld --now</span><br></pre></td></tr></table></figure>
+
+<p>MySQL5.7 会为 root 用户随机生成一个临时密码，密码记录在日志 <code>/var/log/mysqld.log</code> 中</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grep &#x27;temporary password&#x27; /var/log/mysqld.log </span><br><span class="line">2022-11-02T06:09:54.520945Z 1 [Note] A temporary password is generated for root@localhost: ZQc6OCFidi:g</span><br></pre></td></tr></table></figure>
+
+<p>使用临时密码登陆，修改密码，临时密码登陆后不能做任何操作，必须先更改密码</p>
+<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">ALTER USER &#x27;root&#x27;@&#x27;localhost&#x27; IDENTIFIED BY &#x27;WadgyWwRdgDNEb+5Pw==&#x27;;</span><br></pre></td></tr></table></figure>
+
+<h1 id="Mariadb-安装"><a href="#Mariadb-安装" class="headerlink" title="Mariadb 安装"></a>Mariadb 安装</h1><h2 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
+<li>Mariadb 5.5</li>
+</ul>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mariadb-server</span><br></pre></td></tr></table></figure>
+
+<p>安装后启动，默认密码为空，登陆后使用以下命令修改密码</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">SET PASSWORD FOR &#x27;root&#x27;@&#x27;localhost&#x27; = PASSWORD(&#x27;your_password&#x27;);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes 上部署 Nacos</title>
+    <url>/20260502033711/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="nacos-使用-NFS-持久化安装部署"><a href="#nacos-使用-NFS-持久化安装部署" class="headerlink" title="nacos 使用 NFS 持久化安装部署"></a>nacos 使用 NFS 持久化安装部署</h1><h2 id="部署-NFS"><a href="#部署-NFS" class="headerlink" title="部署 NFS"></a>部署 NFS</h2><p>在 NFS Server 上执行以下命令：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update </span><br><span class="line">sudo apt install nfs-kernel-server -y</span><br></pre></td></tr></table></figure>
+
+<h3 id="创建用于存放-Nacos-数据的目录"><a href="#创建用于存放-Nacos-数据的目录" class="headerlink" title="创建用于存放 Nacos 数据的目录"></a>创建用于存放 Nacos 数据的目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo mkdir -p /data/nfs/nacos </span><br></pre></td></tr></table></figure>
+
+<p>调整权限，生产环境建议更精细的权限控制</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo chown nobody:nogroup /data/nfs/nacos </span><br><span class="line">sudo chmod 777 /data/nfs/nacos</span><br></pre></td></tr></table></figure>
+
+<h3 id="配置-NFS-服务"><a href="#配置-NFS-服务" class="headerlink" title="配置 NFS 服务"></a>配置 NFS 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo nano /etc/exports</span><br><span class="line"></span><br><span class="line">/data/nfs/nacos  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)</span><br></pre></td></tr></table></figure>
+
+<p>启动服务：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo exportfs -a </span><br><span class="line">sudo systemctl restart nfs-kernel-server</span><br></pre></td></tr></table></figure>
+
+<h2 id="在-Kubernetes-中配置-NFS-客户端"><a href="#在-Kubernetes-中配置-NFS-客户端" class="headerlink" title="在 Kubernetes 中配置 NFS 客户端"></a>在 Kubernetes 中配置 NFS 客户端</h2><p>为了让 K8S 节点能挂载 NFS，所有 Worker 节点都必须安装客户端工具：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt install nfs-common -y</span><br></pre></td></tr></table></figure>
+
+<h3 id="部署-NFS-动态存储类-StorageClass"><a href="#部署-NFS-动态存储类-StorageClass" class="headerlink" title="部署 NFS 动态存储类 (StorageClass)"></a>部署 NFS 动态存储类 (StorageClass)</h3><p>手动创建 PV 非常麻烦，在 K8S 中我们通常使用 <code>nfs-subdir-external-provisioner</code> 来实现自动创建 PV。</p>
+<h4 id="使用-Helm-快速部署-推荐"><a href="#使用-Helm-快速部署-推荐" class="headerlink" title="使用 Helm 快速部署 (推荐)"></a>使用 Helm 快速部署 (推荐)</h4><p>这是目前最简单、最标准的方式，添加仓库</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/ </span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>安装 <code>nfs-provisioner</code> 作为 <strong>存储 Provisioner</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install nfs-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \</span><br><span class="line">     --set nfs.server=192.168.1.100 \</span><br><span class="line">     --set nfs.path=/data/nfs/nacos \</span><br><span class="line">     --set storageClass.name=nfs-storage \</span><br><span class="line">     --set storageClass.defaultClass=true</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>kubectl get sc</code> 验证 StorageClass</p>
+<h2 id="Nacos-关联-NFS-存储"><a href="#Nacos-关联-NFS-存储" class="headerlink" title="Nacos 关联 NFS 存储"></a>Nacos 关联 NFS 存储</h2><p>现在可以在 Nacos 的部署配置中使用这个 <code>nfs-storage</code> 的 StorageClass 了。参考以下资源清单部署单节点的 Nacos 完整服务，包括 Nginx Ingress 以及鉴权</p>
+<figure class="highlight yaml"><figcaption><span>nacos-single-node.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span>            </span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/whitelist-source-range:</span> <span class="string">&quot;54.251.236.229/24,206.119.115.76/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>部署完成后通过 <code>nacos.example.click</code> 登录后台，初始默认密码为 <code>nacos/nacos</code></p>
+<h1 id="nacos-使用-Mysql-持久化安装部署"><a href="#nacos-使用-Mysql-持久化安装部署" class="headerlink" title="nacos 使用 Mysql 持久化安装部署"></a>nacos 使用 Mysql 持久化安装部署</h1><p>要使用 Mysql 存储数据，只需修改资源清单为以下内容即可：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span>          </span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">SPRING_DATASOURCE_PLATFORM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;mysql&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_HOST</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_HOST&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PORT</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;3306&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_NAME</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_DB_NAME&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_USER</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_USER&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PASSWORD</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_PASSWORD&gt;&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_PARAM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;characterEncoding=utf8&amp;connectTimeout=1000&amp;socketTimeout=3000&amp;autoReconnect=true&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        </span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">rpc</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">9848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">9848</span>      </span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="comment"># nginx.ingress.kubernetes.io/whitelist-source-range: &quot;54.251.236.2/24,206.119.115.7/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>namesilo api 使用</title>
+    <url>/202303031036/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.namesilo.com/api-reference">Namesilo api 官方文档</a></p>
+<p>Python SDK 为 <a href="https://pypi.org/project/python-namesilo/">python-namesilo</a>，安装方法</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">pip install python-namesilo</span><br></pre></td></tr></table></figure>
+
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Python 3.11.2</li>
+<li>python-namesilo&#x3D;&#x3D;1.1.3</li>
+</ul>
+<h1 id="python-namesilo-常见用法示例"><a href="#python-namesilo-常见用法示例" class="headerlink" title="python-namesilo 常见用法示例"></a>python-namesilo 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><p>使用 SDK 之前需要先登陆账号创建 API Token，详细使用方法可以查看帮助信息，获取所有域名使用方法 <code>list_domains</code></p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">from</span> namesilo.core <span class="keyword">import</span> NameSilo</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>key = <span class="string">&#x27;KKKKKKKKKKKKKKKKKK&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = NameSilo(token=key, sandbox=<span class="literal">False</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(client)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.list_domains()</span><br></pre></td></tr></table></figure>
+
+<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><p>获取指定域名的详细信息使用 <code>get_domain_info</code> ，此方法返回一个 <code>DomainInfo</code> 对象，里面包括域名创建时间，过期时间，nameserver 等信息</p>
+<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br><span class="line">&lt;namesilo.common.models.DomainInfo <span class="built_in">object</span> at <span class="number">0x7f71a0530a50</span>&gt;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">dir</span>(client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>))</span><br><span class="line">[<span class="string">&#x27;auto_renew&#x27;</span>, <span class="string">&#x27;contacts&#x27;</span>, <span class="string">&#x27;created&#x27;</span>, <span class="string">&#x27;expires&#x27;</span>, <span class="string">&#x27;locked&#x27;</span>, <span class="string">&#x27;name_servers&#x27;</span>, <span class="string">&#x27;private&#x27;</span>, <span class="string">&#x27;status&#x27;</span>, <span class="string">&#x27;traffic_type&#x27;</span>]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Namesilo</category>
+      </categories>
+      <tags>
+        <tag>Namesilo</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux TCP 网络重传问题定位步骤</title>
     <url>/20260429103526/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Prometnehs 告警规则如下：</p>
@@ -32177,251 +32611,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Amazon AWS 概念及相关操作步骤</title>
-    <url>/20260207135211/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="AWS-虚拟私有云-VPC"><a href="#AWS-虚拟私有云-VPC" class="headerlink" title="AWS 虚拟私有云 VPC"></a>AWS 虚拟私有云 VPC</h1><p>在进入具体的网络配置前，必须理解 AWS 的地理隔离：</p>
-<ul>
-<li><p><strong>区域 (Region)</strong> ：地理上的独立区域（如新加坡、弗吉尼亚）。区域之间完全隔离。</p>
-</li>
-<li><p><strong>可用区 (Availability Zone, AZ)</strong> ：一个区域内由多个物理机房组成。AZ 之间通过高速、低延迟光纤连接。高可用架构必须跨 AZ 部署。跨 AZ 之间的流量需要付费。</p>
-</li>
-</ul>
-<p>VPC 是你在 AWS 云中的逻辑隔离网络。你可以完全控制其 IP 地址范围、子网、路由表和网络网关。</p>
-<p>核心组件：</p>
-<ul>
-<li><p><strong>CIDR 范围</strong> ：你为 VPC 定义的私有 IP 地址块（如 <code>10.0.0.0/16</code> ）。</p>
-</li>
-<li><p><strong>子网 (Subnets)</strong> ：将 VPC 划分为更小的网段。子网必须位于特定的可用区内。</p>
-</li>
-<li><p><strong>公有子网 (Public Subnet)</strong> ：路由指向互联网网关 (IGW)，实例可以有公网 IP。</p>
-</li>
-<li><p><strong>私有子网 (Private Subnet)</strong> ：没有指向 IGW 的直接路由，通常通过 <strong>NAT 网关 访问外网</strong> 。</p>
-</li>
-</ul>
-<blockquote>
-<p><strong>公有子网</strong> 和 <strong>私有子网</strong> 在配置上几乎一摸一样，唯一区别在于： <strong>该子网关联的路由表（Route Table）中默认路由（0.0.0.0&#x2F;0）是如何配置的。</strong></p>
-<ul>
-<li><strong>公有子网 (Public Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>互联网网关 (Internet Gateway, ID 格式通常为 igw-xxxxxx)</strong> 。由于它直接连接到互联网大门，且子网内的实例拥有公网 IP，因此外部用户可以主动访问它，它也可以直接访问外部。</li>
-<li><strong>私有子网 (Private Subnet)</strong> 其路由表中默认路由（0.0.0.0&#x2F;0）指向 <strong>NAT 网关 (NAT Gateway, ID 格式通常为 nat-xxxxxx)，或者干脆没有任何去往外网的路由</strong> 。它没有直通互联网的大门。它通过 NAT 网关（单向出口）实现“能出不能进”的效果。<br>下图所示子网为 <strong>公有子网</strong><br><img src="https://i.0920811.xyz/img_388.png"><br><img src="https://i.0920811.xyz/img_389.png"></li>
-</ul>
-</blockquote>
-<ul>
-<li><strong>路由表（Route Tables）</strong> 分为主路由表和自定义路由表<ul>
-<li><strong>主路由表（Main route table）</strong> 随 VPC 自动生成，它控制未与任何其他路由表显式关联的所有子网的路由，也就是 VPC 中的默认路由。</li>
-<li><strong>自定义路由表</strong> 为新建的路由表。</li>
-<li>一个子网只能关联一个路由表，一个路由表可以关联多个子网</li>
-</ul>
-</li>
-</ul>
-<p><strong>流量如何进出</strong></p>
-<p>VPC 与外界互联网通信可以使用以下方式：</p>
-<table>
-<thead>
-<tr>
-<th>组件</th>
-<th>作用</th>
-<th>流量方向</th>
-<th>用法说明｜</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Internet Gateway (IGW，互联网网关)</td>
-<td>允许 VPC 连接互联网。</td>
-<td>双向 (In&#x2F;Out)</td>
-<td>实例必须分配公网 IP 或弹性 IP (EIP)</td>
-</tr>
-<tr>
-<td>NAT Gateway (NAT 网关)</td>
-<td>允许私有实例上外网，但防止外部主动连接。</td>
-<td>单向 (Outbound only)</td>
-<td>仅需私有 IP</td>
-</tr>
-<tr>
-<td>VPC Peering （对等连接）</td>
-<td>连接两个不同的 VPC，使其像在一个网络内通信。</td>
-<td>跨 VPC</td>
-<td></td>
-</tr>
-<tr>
-<td>Transit Gateway</td>
-<td>充当“中央枢纽”，连接数千个 VPC 和本地网络。</td>
-<td>复杂网络拓扑</td>
-<td></td>
-</tr>
-<tr>
-<td>Virtual Private Gateway</td>
-<td>用于建立 VPN 连接。</td>
-<td>混合云</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="部署-NAT-Gateway-网关并关联子网"><a href="#部署-NAT-Gateway-网关并关联子网" class="headerlink" title="部署 NAT Gateway 网关并关联子网"></a>部署 NAT Gateway 网关并关联子网</h2><p>通过 NAT Gateway 可以实现子网中的实例的对外互联网出口 IP 都是 NAT Gateway 绑定的 EIP，子网中的实例对互联网不可见。NAT Gateway 典型使用场景：</p>
-<ul>
-<li>为了安全，生产环境通常将 <strong>EKS 工作节点、RDS 数据库</strong> 或 <strong>缓存服务器（Redis）</strong> 放在私有子网中，这些资源不需要（也不应该）被互联网直接访问。</li>
-<li>应用需要调用外部服务（如支付网关、银行接口或第三方 API）时，对方的防火墙通常需要你提供一个白名单 IP。由于 EKS 节点是动态变化的，IP 并不固定。</li>
-<li>减少受攻击面，防止外部扫描。</li>
-</ul>
-<p>以下为创建 NAT Gateway 并关联子网的相关步骤：</p>
-<figure class="highlight shell"><figcaption><span>正确的整体架构</span></figcaption><table><tr><td class="code"><pre><span class="line">VPC</span><br><span class="line">├── Public Subnet</span><br><span class="line">│   ├── NAT Gateway（有 EIP）</span><br><span class="line">│   └── Route Table (Public RT)</span><br><span class="line">│       └── 0.0.0.0/0 → Internet Gateway</span><br><span class="line">│</span><br><span class="line">└── Private Subnet</span><br><span class="line">    ├── EC2 / ECS / EKS Node</span><br><span class="line">    └── Route Table (Private RT)</span><br><span class="line">        └── 0.0.0.0/0 → NAT Gateway</span><br></pre></td></tr></table></figure>
-<p>关键点：</p>
-<ul>
-<li><strong>NAT Gateway 必须在公有子网</strong></li>
-<li><strong>私有子网的默认路由指向 NAT Gateway</strong></li>
-</ul>
-<ol>
-<li><p><strong>确认 Public Subnet 存在</strong></p>
-<p> VPC 默认的 Main Route Table 已经满足这个条件，其默认网关为 Internet Gateway<br> <img src="https://i.0920811.xyz/img_390.png"></p>
-</li>
-<li><p><strong>创建 NAT Gateway</strong></p>
-<p> 在 <strong>NAT gateways</strong> 标签页面中，点击 <strong>Create NAT gateway</strong> ， <strong>Connectivity type</strong> 选择 <strong>Public</strong> ， <strong>Elastic IP (EIP) association</strong> 选择 <strong>手动分配 EIP（Manual）</strong><br> <img src="https://i.0920811.xyz/img_391.png"><br> 创建完成后，状态应为 <strong>Available</strong> 。在路由表（Route Tables）中，这时会多一个路由表，其 <strong>Edge associations（边缘关联）</strong> 关联到了刚刚创建的 NAT Gateway<br> <img src="https://i.0920811.xyz/img_392.png"></p>
-</li>
-<li><p><strong>创建一个新的子网（私有、Private Subnet）</strong></p>
-<p> 在 <strong>VPC → Subnets → Create subnet</strong> 标签页面中创建新的子网， <strong>不要勾选 Auto-assign public IPv4</strong> ，如此处于此子网中的实例，不会为其分配公网地址<br> <img src="https://i.0920811.xyz/img_394.png"></p>
-</li>
-<li><p><strong>创建 Private Route Table</strong></p>
-<p> 在 <strong>VPC → Route tables → Create route table</strong> 标签页面中创建新的路由表，本示例名为 <code>private-rt</code></p>
-</li>
-<li><p><strong>配置路由规则</strong></p>
-<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Routes</strong> 中 <strong>编辑路由（Edit Routes）</strong> ，添加一条路由规则： </p>
- <figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| Destination | Target          |</span><br><span class="line">| ----------- | --------------- |</span><br><span class="line">| 0.0.0.0/0   | NAT Gateway |</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-<p> <img src="https://i.0920811.xyz/img_395.png"></p>
-</li>
-<li><p><strong>关联 Private Subnet</strong></p>
-<p> 选择刚刚创建的新路由表 <code>private-rt</code>，在 <strong>Subnet associations(子网关联)</strong> 中 <strong>Edit subnet associations（编辑子网关联）</strong> ，选择目标子网进行关联<br> <img src="https://i.0920811.xyz/img_396.png"></p>
-</li>
-<li><p><strong>最终的 VPC 整体路由可以在 VPC 的 Resource map 中进行检查</strong><br> <img src="https://i.0920811.xyz/img_397.png"></p>
-</li>
-</ol>
-<h1 id="EKS-中的授权机制"><a href="#EKS-中的授权机制" class="headerlink" title="EKS 中的授权机制"></a>EKS 中的授权机制</h1><p>Kubernetes 原生提供 <strong>RBAC（Role-Based Access Control）</strong> 来控制集群中的 <strong>用户和服务账户（ServiceAccount）</strong> 对资源的访问权限。</p>
-<table>
-<thead>
-<tr>
-<th>对象</th>
-<th>描述</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Role</strong></td>
-<td>命名空间级别（Namespace）权限，指定某个命名空间内允许的操作和资源类型。</td>
-</tr>
-<tr>
-<td><strong>ClusterRole</strong></td>
-<td>集群级别权限，可以跨命名空间使用。</td>
-</tr>
-<tr>
-<td><strong>RoleBinding</strong></td>
-<td>将 Role 绑定到一个用户或 ServiceAccount。</td>
-</tr>
-<tr>
-<td><strong>ClusterRoleBinding</strong></td>
-<td>将 ClusterRole 绑定到一个用户或 ServiceAccount。</td>
-</tr>
-</tbody></table>
-<p><strong>核心字段</strong></p>
-<ul>
-<li><p><code>apiGroups</code> ：资源所属 API 组，例如 <code>&quot;&quot;</code> 代表 <strong>core API</strong> 。</p>
-</li>
-<li><p><code>resources</code> ：允许访问的资源类型，如 pods、deployments。</p>
-</li>
-<li><p><code>verbs</code> ：允许的操作，如 <code>get, list, create, delete</code> 。</p>
-</li>
-</ul>
-<p>RBAC 示例：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">apiGroups:</span> [<span class="string">&quot;&quot;</span>]</span><br><span class="line">    <span class="attr">resources:</span> [<span class="string">&quot;pods&quot;</span>]</span><br><span class="line">    <span class="attr">verbs:</span> [<span class="string">&quot;get&quot;</span>, <span class="string">&quot;list&quot;</span>]</span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">rbac.authorization.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">RoleBinding</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">read-pods</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">dev</span></span><br><span class="line"><span class="attr">subjects:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">kind:</span> <span class="string">ServiceAccount</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">my-serviceaccount</span></span><br><span class="line"><span class="attr">roleRef:</span></span><br><span class="line">  <span class="attr">kind:</span> <span class="string">Role</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">pod-reader</span></span><br><span class="line">  <span class="attr">apiGroup:</span> <span class="string">rbac.authorization.k8s.io</span></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><p><strong>RBAC 控制的是 Kubernetes 资源访问权限</strong> 。</p>
-</li>
-<li><p><strong>RBAC 对象绑定的是 Kubernetes 用户或 ServiceAccount，而不是 AWS IAM 用户</strong> 。</p>
-</li>
-</ul>
-<table>
-<thead>
-<tr>
-<th>概念</th>
-<th>全称</th>
-<th>解决的问题</th>
-<th>作用范围</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>RBAC</strong></td>
-<td>Role-Based Access Control</td>
-<td>决定 “用户&#x2F;进程” 在 K8s 集群内能做什么（如：查看 Pod）</td>
-<td>K8s 集群内部</td>
-</tr>
-<tr>
-<td><strong>Role</strong></td>
-<td>Kubernetes Role</td>
-<td>RBAC 的一部分，定义一组具体的集群内操作权限</td>
-<td>命名空间 (Namespace)</td>
-</tr>
-<tr>
-<td><strong>IRSA</strong></td>
-<td>IAM Roles for Service Accounts</td>
-<td>决定 “Pod 里的应用” 对 AWS 外部资源（如 S3&#x2F;RDS）的访问权限</td>
-<td>AWS 云环境</td>
-</tr>
-</tbody></table>
-<p><strong>AWS IAM Role</strong> 是 AWS 层面的权限机制，用于授权 AWS 资源访问，例如 S3、DynamoDB、Secrets Manager 等。</p>
-<p>AWS IAM Role 的特点：</p>
-<ul>
-<li><p>可以被 IAM 用户、服务或 EC2&#x2F;EKS Pod 假设（Assume）。</p>
-</li>
-<li><p>权限通过 IAM Policy 定义。</p>
-</li>
-</ul>
-<p><strong>AWS IAM Role</strong> 在 EKS 中的应用:</p>
-<ul>
-<li><p>管理集群本身访问 AWS 资源，例如节点组（NodeGroup）访问 S3。</p>
-</li>
-<li><p>可以通过 IAM 用户&#x2F;Role 管理集群级别的操作权限，例如 <code>eks:DescribeCluster</code> 。</p>
-</li>
-</ul>
-<blockquote>
-<p>💡 核心点：IAM Role 本身无法直接控制 Kubernetes 资源，它管理的是 AWS 资源访问。</p>
-</blockquote>
-<p><strong>IRSA（IAM Roles for Service Accounts）</strong> 是 AWS EKS 引入的将 Kubernetes ServiceAccount 与 AWS IAM Role 绑定，实现 Pod 级别的 AWS 权限控制的机制。其大致原理如下：</p>
-<ul>
-<li><strong>EKS 集群开启 OIDC Provider</strong></li>
-<li><strong>创建 IAM Role 并信任该 OIDC Provider</strong></li>
-<li><strong>Role 上定义 IAM Policy（如访问 S3）</strong></li>
-<li><strong>Kubernetes ServiceAccount 指定注解 <code>eks.amazonaws.com/role-arn</code>。</strong></li>
-<li><strong>Pod 使用该 ServiceAccount 时自动获取 Role 权限</strong></li>
-</ul>
-<p><strong>实践建议：</strong></p>
-<ul>
-<li><p>不要在 Pod 内放 AWS AccessKey，使用 IRSA。</p>
-</li>
-<li><p>最小权限原则：</p>
-<ul>
-<li><p>RBAC：只给 Pod 或用户真正需要的 Kubernetes 权限。</p>
-</li>
-<li><p>IAM Role &#x2F; IRSA：只给访问 AWS 资源的最小权限。</p>
-</li>
-</ul>
-</li>
-<li><p>多集群管理：可以通过 ClusterRole + RoleBinding 管理跨命名空间权限。</p>
-</li>
-<li><p>审计：</p>
-<ul>
-<li><p>使用 CloudTrail 监控 IRSA 调用。</p>
-</li>
-<li><p>Kubernetes API Server 日志审计 RBAC 权限。</p>
-</li>
-</ul>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Aws</category>
-      </categories>
-      <tags>
-        <tag>Aws</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Rancher 安装及使用</title>
     <url>/202210071716/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -33666,86 +33855,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>云平台</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Django 模板语言</title>
-    <url>/202303241517/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.11</li>
-<li>Django 4.1</li>
-</ul>
-<h1 id="使用方法"><a href="#使用方法" class="headerlink" title="使用方法"></a>使用方法</h1><p>在 Django 4.1 中，使用静态文件的方法与之前的版本相同。以下是使用静态文件的步骤：</p>
-<ol>
-<li><p>在 <code>settings.py</code> 中设置静态文件目录：</p>
- <figure class="highlight python"><figcaption><span>settings.py</span></figcaption><table><tr><td class="code"><pre><span class="line">STATIC_URL = <span class="string">&#x27;/static/&#x27;</span></span><br><span class="line">STATICFILES_DIRS = [</span><br><span class="line">    BASE_DIR / <span class="string">&quot;static&quot;</span>,</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><code>STATIC_URL</code> 是静态文件 URL 的前缀。</li>
-<li><code>STATICFILES_DIRS</code> 是一个列表，其中包含要在其中查找静态文件的目录。</li>
-</ul>
-</li>
-<li><p>在 HTML 文件中使用静态文件</p>
- <figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Static File Example<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> <span class="attr">type</span>=<span class="string">&quot;text/css&quot;</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;css/style.css&#x27; %&#125;&quot;</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">img</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;images/logo.png&#x27; %&#125;&quot;</span> <span class="attr">alt</span>=<span class="string">&quot;My logo&quot;</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;&#123;% static &#x27;js/script.js&#x27; %&#125;&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<p> 在上面的示例中，我们使用了 Django 模板语言的 <code>&#123;% static %&#125;</code> 标记来引用静态文件。<code>&#123;% load static %&#125;</code> 指令必须在使用 <code>&#123;% static %&#125;</code> 标记之前加载，以确保 Django 能够正确解析它们。</p>
-</li>
-<li><p>运行 <code>collectstatic</code> 命令：<br>  当您准备部署您的 Django 应用程序时，您需要将静态文件收集到一个单独的目录中，以便可以轻松地在生产服务器上提供它们。您可以使用 Django 的 <code>collectstatic</code> 命令来完成此操作。在命令行中运行以下命令：</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">python manage.py collectstatic</span><br></pre></td></tr></table></figure>
-
-<p> Django 将在 <code>STATIC_ROOT</code> 目录中创建一个新的静态文件目录，并将您的静态文件从 <code>STATICFILES_DIRS</code> 中指定的目录复制到该目录中。您可以在 <code>settings.py</code> 文件中设置 <code>STATIC_ROOT</code> 目录的路径</p>
-</li>
-</ol>
-<h1 id="DTL-语法"><a href="#DTL-语法" class="headerlink" title="DTL 语法"></a>DTL 语法</h1><h2 id="load-static"><a href="#load-static" class="headerlink" title="load static"></a>load static</h2><p><a href="#%E5%9C%A8-HTML-%E6%96%87%E4%BB%B6%E4%B8%AD%E4%BD%BF%E7%94%A8%E9%9D%99%E6%80%81%E6%96%87%E4%BB%B6">参考说明</a></p>
-<h2 id="block-super"><a href="#block-super" class="headerlink" title="block.super"></a>block.super</h2><p>用来从父 block 中继承选项</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% load static %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% block extrahead %&#125;</span><br><span class="line">&#123;&#123; block.super &#125;&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/bootstrap.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">link</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% static &#x27;bootstrap/css/base.css&#x27; %&#125;&quot;</span> <span class="attr">rel</span>=<span class="string">&quot;stylesheet&quot;</span> /&gt;</span></span><br><span class="line">&#123;% endblock %&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="include"><a href="#include" class="headerlink" title="include"></a>include</h2><p>假设有两个 HTML 文件：<code>header.html</code> 和 <code>content.html</code>。<br><code>header.html</code> 包含页面的头部内容。</p>
-<figure class="highlight html"><figcaption><span>header.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- header.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">header</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h1</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">h1</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">nav</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 导航栏内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">nav</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">header</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p><code>content.html</code> 包含页面的主要内容。</p>
-<figure class="highlight html"><figcaption><span>content.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- content.html --&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">section</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">h2</span>&gt;</span>Welcome to our website!<span class="tag">&lt;/<span class="name">h2</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>This is the main content of the page.<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">section</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p>现在，可以在另一个 HTML 文件中使用 <code>&#123;% include %&#125;</code> 标签来包含这些内容。</p>
-<figure class="highlight html"><figcaption><span>main_template.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="comment">&lt;!-- main_template.html --&gt;</span></span><br><span class="line"><span class="meta">&lt;!DOCTYPE <span class="keyword">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">html</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">head</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">title</span>&gt;</span>My Website<span class="tag">&lt;/<span class="name">title</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">head</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">body</span>&gt;</span></span><br><span class="line">    &#123;% include &#x27;header.html&#x27; %&#125;</span><br><span class="line"></span><br><span class="line">    <span class="tag">&lt;<span class="name">div</span> <span class="attr">class</span>=<span class="string">&quot;content&quot;</span>&gt;</span></span><br><span class="line">        &#123;% include &#x27;content.html&#x27; %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br><span class="line">    </span><br><span class="line">    <span class="tag">&lt;<span class="name">footer</span>&gt;</span></span><br><span class="line">        <span class="comment">&lt;!-- 页脚内容 --&gt;</span></span><br><span class="line">    <span class="tag">&lt;/<span class="name">footer</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">body</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">html</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p>在这个示例中，<code>&#123;% include 'header.html' %&#125;</code> 和 <code>&#123;% include 'content.html' %&#125;</code> 标签会将相应的模板文件的内容包含在 <code>main_template.html</code> 中。这样，就可以在一个模板中包含另一个模板的内容了。</p>
-<h2 id="url-反向解析"><a href="#url-反向解析" class="headerlink" title="url 反向解析"></a>url 反向解析</h2><p>在模板中不推荐使用 url 硬编码，建议使用 url 反向解析功能，在 <code>urls.py</code> 中定义 url 时，给 url 命名，在模板中 可以使用反向解析使用 url，避免使用 url 硬编码。<strong>需要在 <code>urls.py</code> 中配置 <code>app_name = &#39;polls&#39;</code>，否则会因为 namespace 不清楚而报错：<code>&#39;polls&#39; is not a registered namespace</code></strong></p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="keyword">from</span> django.urls <span class="keyword">import</span> path</span><br><span class="line"><span class="keyword">from</span> . <span class="keyword">import</span> views</span><br><span class="line"></span><br><span class="line">app_name = <span class="string">&#x27;polls&#x27;</span></span><br><span class="line">urlpatterns = [</span><br><span class="line">    path(<span class="string">&#x27;&#x27;</span>, views.IndexView.as_view(), name=<span class="string">&#x27;index&#x27;</span>),</span><br><span class="line">]</span><br></pre></td></tr></table></figure>
-<p>以上事例中，<code>name=&#39;index&#39;</code> 为 url 命名，在模板中通过以下方式使用 url 名称 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[反向命名空间 URLs](https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls)">[1]</span></a></sup></p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;polls:index&#x27; %&#125;&quot;</span>&gt;</span>首页<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-<h2 id="for-循环"><a href="#for-循环" class="headerlink" title="for 循环"></a>for 循环</h2><h3 id="根据-model-中的值实现下拉选择菜单"><a href="#根据-model-中的值实现下拉选择菜单" class="headerlink" title="根据 model 中的值实现下拉选择菜单"></a>根据 model 中的值实现下拉选择菜单</h3><p>假如需要实现下拉表单中的可选值来自于某个 <code>model</code>，可以参考以下实现</p>
-<figure class="highlight shell"><figcaption><span>models.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.db import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your models here.</span></span><br><span class="line">class Account(models.Model):</span><br><span class="line">    name = models.CharField(max_length=16, unique=True)</span><br></pre></td></tr></table></figure>
-
-<p>视图函数代码如下：</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">from django.shortcuts import render</span><br><span class="line">from django.http import HttpResponse</span><br><span class="line">from django.contrib.auth.decorators import login_required</span><br><span class="line">from cloudclient import models</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">Create your views here.</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br></pre></td></tr></table></figure>
-<p>HTML 模板主要代码如下：</p>
-<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">    &#123;% csrf_token %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;category&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line">       &#123;% for account in accounts %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endfor %&#125;</span><br><span class="line">    <span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
-<p><strong>其中使用 <code>for</code> 循环将视图函数传过来的参数列表（<code>accounts</code>）中的对象添加到下拉菜单中作为下拉选项。</strong><br><img src="https://i.0920811.xyz/img_216.png"></p>
-<p>表单提交后，服务端口会收到 POST 的数据(<code>request.POST</code>)：<code>account=1</code>。参考以下代码处理接收到的表单数据</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def index(request):</span><br><span class="line">    if request.method == &#x27;GET&#x27;:</span><br><span class="line">        accounts = models.Account.objects.all()</span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts&#125;)</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        # data = request.body</span><br><span class="line">        account_id = request.POST.get(&#x27;account&#x27;)</span><br><span class="line">        logging.info(f&quot;POST DATA: &#123;&#125;&quot;)</span><br></pre></td></tr></table></figure>
-
-<p>如果想在 POST 处理后返回给客户端的 HTML 表单中的默认选中的值任然是客户端 POST 提交时选中的值，可以参考以下代码</p>
-<figure class="highlight shell"><figcaption><span>views.py</span></figcaption><table><tr><td class="code"><pre><span class="line">@login_required</span><br><span class="line">def cf_add_domains(request):</span><br><span class="line">    accounts = models.Account.objects.all()</span><br><span class="line">    if request.method == &#x27;POST&#x27;:</span><br><span class="line">        data = request.POST</span><br><span class="line">        account_id = data[&#x27;account&#x27;]</span><br><span class="line">        account = models.Account.objects.get(id=account_id)</span><br><span class="line"></span><br><span class="line">        return render(request, &#x27;index.html&#x27;, &#123;&#x27;accounts&#x27;: accounts, &#x27;selected_account_id&#x27;: account_id&#125;)</span><br></pre></td></tr></table></figure>
-
-<p>HTML 模板中使用 <code>option</code> 的 <code>selected</code> 标签选择指定的值。<em><strong>要注意其中的类型转换 <code>account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot;，将变量值转换一致，否则条件判断会失败</code></strong></em> </p>
-<figure class="highlight html"><figcaption><span>index.html</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">form</span> <span class="attr">method</span>=<span class="string">&quot;POST&quot;</span>&gt;</span></span><br><span class="line">&#123;% csrf_token %&#125;</span><br><span class="line"><span class="tag">&lt;<span class="name">label</span> <span class="attr">for</span>=<span class="string">&quot;account&quot;</span>&gt;</span>Select An Account: <span class="tag">&lt;/<span class="name">label</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">select</span> <span class="attr">name</span>=<span class="string">&quot;account&quot;</span> <span class="attr">id</span>=<span class="string">&quot;account&quot;</span>&gt;</span></span><br><span class="line"></span><br><span class="line">   &#123;% for account in accounts %&#125;</span><br><span class="line">       &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% else %&#125;</span><br><span class="line">           <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">       &#123;% endif %&#125;</span><br><span class="line">   &#123;% endfor %&#125;</span><br><span class="line"><span class="tag">&lt;/<span class="name">select</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;<span class="name">button</span> <span class="attr">type</span>=<span class="string">&quot;submit&quot;</span>&gt;</span>Submit<span class="tag">&lt;/<span class="name">button</span>&gt;</span></span><br><span class="line"><span class="tag">&lt;/<span class="name">form</span>&gt;</span></span><br></pre></td></tr></table></figure>
-
-<h2 id="if-条件判断"><a href="#if-条件判断" class="headerlink" title="if 条件判断"></a>if 条件判断</h2><p><code>if</code> 语法如下</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% if condition %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为真 --&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="comment">&lt;!-- 显示内容如果条件为假 --&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br><span class="line"></span><br><span class="line">&#123;% if user.is_authenticated %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>欢迎回来，&#123;&#123; user.username &#125;&#125;！<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;logout&#x27; %&#125;&quot;</span>&gt;</span>退出登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% else %&#125;</span><br><span class="line">    <span class="tag">&lt;<span class="name">p</span>&gt;</span>您还未登录。<span class="tag">&lt;/<span class="name">p</span>&gt;</span></span><br><span class="line">    <span class="tag">&lt;<span class="name">a</span> <span class="attr">href</span>=<span class="string">&quot;&#123;% url &#x27;login&#x27; %&#125;&quot;</span>&gt;</span>立即登录<span class="tag">&lt;/<span class="name">a</span>&gt;</span></span><br><span class="line">&#123;% endif %&#125;</span><br></pre></td></tr></table></figure>
-
-<h2 id="类型转换"><a href="#类型转换" class="headerlink" title="类型转换"></a>类型转换</h2><p>如果在模板中需要对变量类型进行转换，参考以下语法</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    &#123;% if account.id|stringformat:&quot;s&quot; == selected_account_id|stringformat:&quot;s&quot; %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> <span class="attr">selected</span>&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% else %&#125;</span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span>&gt;</span>&#123;&#123; account.name &#125;&#125;-&#123;&#123; account.id &#125;&#125;-&#123;&#123; selected_account_id &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">    &#123;% endif %&#125;</span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
-
-<p>更精简的写法</p>
-<figure class="highlight html"><table><tr><td class="code"><pre><span class="line">&#123;% for account in accounts %&#125;</span><br><span class="line">    </span><br><span class="line">        <span class="tag">&lt;<span class="name">option</span> <span class="attr">value</span>=<span class="string">&quot;&#123;&#123; account.id &#125;&#125;&quot;</span> &#123;% <span class="attr">if</span> <span class="attr">account.id</span>|<span class="attr">stringformat:</span>&quot;<span class="attr">s</span>&quot; == <span class="string">selected_account_id|stringformat:</span>&quot;<span class="attr">s</span>&quot; %&#125;<span class="attr">selected</span>&#123;% <span class="attr">endif</span> %&#125;&gt;</span>&#123;&#123; account.name &#125;&#125;<span class="tag">&lt;/<span class="name">option</span>&gt;</span></span><br><span class="line">&#123;% endfor %&#125;</span><br></pre></td></tr></table></figure>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.djangoproject.com/zh-hans/4.1/topics/http/urls/#reversing-namespaced-urls">反向命名空间 URLs</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Python</category>
-        <category>Django</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-        <tag>Django</tag>
       </tags>
   </entry>
   <entry>
@@ -41929,115 +42038,6 @@ width: 20%;
       </categories>
       <tags>
         <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>安装 Mysql</title>
-    <url>/202211021345/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 kernel 5.4</li>
-<li>Mysql Server 5.7</li>
-</ul>
-<h1 id="Mysql-Server-安装步骤"><a href="#Mysql-Server-安装步骤" class="headerlink" title="Mysql Server 安装步骤"></a>Mysql Server 安装步骤</h1><h2 id="yum-方式安装"><a href="#yum-方式安装" class="headerlink" title="yum 方式安装"></a>yum 方式安装</h2><h3 id="安装-MySQL-5-7-的-yum-源"><a href="#安装-MySQL-5-7-的-yum-源" class="headerlink" title="安装  MySQL 5.7 的 yum 源"></a>安装  MySQL 5.7 的 yum 源</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span><br></pre></td></tr></table></figure>
-
-<p>如果因为源冲突，类似如下错误</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">Processing Conflict: mysql80-community-release-el7-2.noarch conflicts mysql57-community-release</span><br></pre></td></tr></table></figure>
-
-<p>可以卸载旧的 <code>yum</code> 源安装包，重新安装</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">rpm -qa | grep mysql</span></span><br><span class="line">mysql80-community-release-el7-2.noarch</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum remove mysql80-community-release-el7-2</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum localinstall -y http://dev.mysql.com/get/mysql57-community-release-el7-8.noarch.rpm</span></span><br></pre></td></tr></table></figure>
-
-<p>检查 <code>yum</code> 源中的 <code>mysql-community-server</code> 信息</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">yum info mysql-community-server</span></span><br><span class="line">Loaded plugins: fastestmirror</span><br><span class="line">Loading mirror speeds from cached hostfile</span><br><span class="line"> * base: download.cf.centos.org</span><br><span class="line"> * elrepo: reflector.westga.edu</span><br><span class="line"> * epel: coresite.mm.fcix.net</span><br><span class="line"> * extras: download.cf.centos.org</span><br><span class="line"> * updates: download.cf.centos.org</span><br><span class="line">Available Packages</span><br><span class="line">Name        : mysql-community-server</span><br><span class="line">Arch        : x86_64</span><br><span class="line">Version     : 5.7.40</span><br><span class="line">Release     : 1.el7</span><br><span class="line">Size        : 178 M</span><br><span class="line">Repo        : mysql57-community/x86_64</span><br><span class="line">Summary     : A very fast and reliable SQL database server</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h3 id="安装-mysql-community-server"><a href="#安装-mysql-community-server" class="headerlink" title="安装 mysql-community-server"></a>安装 mysql-community-server</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mysql-community-server</span><br></pre></td></tr></table></figure>
-
-<h3 id="启动-mysql-server"><a href="#启动-mysql-server" class="headerlink" title="启动 mysql server"></a>启动 mysql server</h3><p>配置 mysql server 开机启动，同时启动服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable mysqld --now</span><br></pre></td></tr></table></figure>
-
-<p>MySQL5.7 会为 root 用户随机生成一个临时密码，密码记录在日志 <code>/var/log/mysqld.log</code> 中</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">grep &#x27;temporary password&#x27; /var/log/mysqld.log </span><br><span class="line">2022-11-02T06:09:54.520945Z 1 [Note] A temporary password is generated for root@localhost: ZQc6OCFidi:g</span><br></pre></td></tr></table></figure>
-
-<p>使用临时密码登陆，修改密码，临时密码登陆后不能做任何操作，必须先更改密码</p>
-<figure class="highlight shell"><figcaption><span>mysql</span></figcaption><table><tr><td class="code"><pre><span class="line">ALTER USER &#x27;root&#x27;@&#x27;localhost&#x27; IDENTIFIED BY &#x27;WadgyWwRdgDNEb+5Pw==&#x27;;</span><br></pre></td></tr></table></figure>
-
-<h1 id="Mariadb-安装"><a href="#Mariadb-安装" class="headerlink" title="Mariadb 安装"></a>Mariadb 安装</h1><h2 id="环境信息-1"><a href="#环境信息-1" class="headerlink" title="环境信息"></a>环境信息</h2><ul>
-<li>Mariadb 5.5</li>
-</ul>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">yum install -y mariadb-server</span><br></pre></td></tr></table></figure>
-
-<p>安装后启动，默认密码为空，登陆后使用以下命令修改密码</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">SET PASSWORD FOR &#x27;root&#x27;@&#x27;localhost&#x27; = PASSWORD(&#x27;your_password&#x27;);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Kubernetes 上部署 Nacos</title>
-    <url>/20260502033711/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="nacos-使用-NFS-持久化安装部署"><a href="#nacos-使用-NFS-持久化安装部署" class="headerlink" title="nacos 使用 NFS 持久化安装部署"></a>nacos 使用 NFS 持久化安装部署</h1><h2 id="部署-NFS"><a href="#部署-NFS" class="headerlink" title="部署 NFS"></a>部署 NFS</h2><p>在 NFS Server 上执行以下命令：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt update </span><br><span class="line">sudo apt install nfs-kernel-server -y</span><br></pre></td></tr></table></figure>
-
-<h3 id="创建用于存放-Nacos-数据的目录"><a href="#创建用于存放-Nacos-数据的目录" class="headerlink" title="创建用于存放 Nacos 数据的目录"></a>创建用于存放 Nacos 数据的目录</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo mkdir -p /data/nfs/nacos </span><br></pre></td></tr></table></figure>
-
-<p>调整权限，生产环境建议更精细的权限控制</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo chown nobody:nogroup /data/nfs/nacos </span><br><span class="line">sudo chmod 777 /data/nfs/nacos</span><br></pre></td></tr></table></figure>
-
-<h3 id="配置-NFS-服务"><a href="#配置-NFS-服务" class="headerlink" title="配置 NFS 服务"></a>配置 NFS 服务</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo nano /etc/exports</span><br><span class="line"></span><br><span class="line">/data/nfs/nacos  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)</span><br></pre></td></tr></table></figure>
-
-<p>启动服务：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo exportfs -a </span><br><span class="line">sudo systemctl restart nfs-kernel-server</span><br></pre></td></tr></table></figure>
-
-<h2 id="在-Kubernetes-中配置-NFS-客户端"><a href="#在-Kubernetes-中配置-NFS-客户端" class="headerlink" title="在 Kubernetes 中配置 NFS 客户端"></a>在 Kubernetes 中配置 NFS 客户端</h2><p>为了让 K8S 节点能挂载 NFS，所有 Worker 节点都必须安装客户端工具：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo apt install nfs-common -y</span><br></pre></td></tr></table></figure>
-
-<h3 id="部署-NFS-动态存储类-StorageClass"><a href="#部署-NFS-动态存储类-StorageClass" class="headerlink" title="部署 NFS 动态存储类 (StorageClass)"></a>部署 NFS 动态存储类 (StorageClass)</h3><p>手动创建 PV 非常麻烦，在 K8S 中我们通常使用 <code>nfs-subdir-external-provisioner</code> 来实现自动创建 PV。</p>
-<h4 id="使用-Helm-快速部署-推荐"><a href="#使用-Helm-快速部署-推荐" class="headerlink" title="使用 Helm 快速部署 (推荐)"></a>使用 Helm 快速部署 (推荐)</h4><p>这是目前最简单、最标准的方式，添加仓库</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/ </span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>安装 <code>nfs-provisioner</code> 作为 <strong>存储 Provisioner</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">helm install nfs-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner \</span><br><span class="line">     --set nfs.server=192.168.1.100 \</span><br><span class="line">     --set nfs.path=/data/nfs/nacos \</span><br><span class="line">     --set storageClass.name=nfs-storage \</span><br><span class="line">     --set storageClass.defaultClass=true</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><code>kubectl get sc</code> 验证 StorageClass</p>
-<h2 id="Nacos-关联-NFS-存储"><a href="#Nacos-关联-NFS-存储" class="headerlink" title="Nacos 关联 NFS 存储"></a>Nacos 关联 NFS 存储</h2><p>现在可以在 Nacos 的部署配置中使用这个 <code>nfs-storage</code> 的 StorageClass 了。参考以下资源清单部署单节点的 Nacos 完整服务，包括 Nginx Ingress 以及鉴权</p>
-<figure class="highlight yaml"><figcaption><span>nacos-single-node.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span>            </span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/whitelist-source-range:</span> <span class="string">&quot;54.251.236.229/24,206.119.115.76/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>部署完成后通过 <code>nacos.example.click</code> 登录后台，初始默认密码为 <code>nacos/nacos</code></p>
-<h1 id="nacos-使用-Mysql-持久化安装部署"><a href="#nacos-使用-Mysql-持久化安装部署" class="headerlink" title="nacos 使用 Mysql 持久化安装部署"></a>nacos 使用 Mysql 持久化安装部署</h1><p>要使用 Mysql 存储数据，只需修改资源清单为以下内容即可：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Namespace</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">PersistentVolumeClaim</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos-pvc</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">accessModes:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">ReadWriteMany</span>   <span class="comment"># ⚠️ NFS 必须用这个</span></span><br><span class="line">  <span class="attr">storageClassName:</span> <span class="string">nfs-storage</span></span><br><span class="line">  <span class="attr">resources:</span></span><br><span class="line">    <span class="attr">requests:</span></span><br><span class="line">      <span class="attr">storage:</span> <span class="string">5Gi</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">apps/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Deployment</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">replicas:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">matchLabels:</span></span><br><span class="line">      <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">template:</span></span><br><span class="line">    <span class="attr">metadata:</span></span><br><span class="line">      <span class="attr">labels:</span></span><br><span class="line">        <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">    <span class="attr">spec:</span></span><br><span class="line">      <span class="attr">containers:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">        <span class="attr">image:</span> <span class="string">nacos/nacos-server:v2.2.3</span></span><br><span class="line">        <span class="attr">ports:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">containerPort:</span> <span class="number">8848</span></span><br><span class="line">        <span class="attr">env:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MODE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;standalone&quot;</span>          </span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">SPRING_DATASOURCE_PLATFORM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;mysql&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_HOST</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_HOST&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PORT</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;3306&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_NAME</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_DB_NAME&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_USER</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_USER&gt;&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_PASSWORD</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;&lt;MYSQL_SERVICE_PASSWORD&gt;&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">MYSQL_SERVICE_DB_PARAM</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;characterEncoding=utf8&amp;connectTimeout=1000&amp;socketTimeout=3000&amp;autoReconnect=true&quot;</span></span><br><span class="line"></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_ENABLE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;true&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_TOKEN</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;XDoArVHBA1o8DDsyBchWLGXNfWYibjvEOa7qfroNmZ4=&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_KEY</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">NACOS_AUTH_IDENTITY_VALUE</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;admin&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMS</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">JVM_XMX</span></span><br><span class="line">          <span class="attr">value:</span> <span class="string">&quot;512m&quot;</span></span><br><span class="line">        </span><br><span class="line">        <span class="attr">volumeMounts:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/data</span></span><br><span class="line">        <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">          <span class="attr">mountPath:</span> <span class="string">/home/nacos/logs</span></span><br><span class="line">      <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">nacos-storage</span></span><br><span class="line">        <span class="attr">persistentVolumeClaim:</span></span><br><span class="line">          <span class="attr">claimName:</span> <span class="string">nacos-pvc</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Service</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">selector:</span></span><br><span class="line">    <span class="attr">app:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">ports:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">http</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">8848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">8848</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">rpc</span></span><br><span class="line">    <span class="attr">port:</span> <span class="number">9848</span></span><br><span class="line">    <span class="attr">targetPort:</span> <span class="number">9848</span>      </span><br><span class="line">  <span class="attr">type:</span> <span class="string">ClusterIP</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">nacos</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">nginx.ingress.kubernetes.io/rewrite-target:</span> <span class="string">/</span></span><br><span class="line">    <span class="comment"># nginx.ingress.kubernetes.io/whitelist-source-range: &quot;54.251.236.2/24,206.119.115.7/24&quot;</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">ingressClassName:</span> <span class="string">nginx</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">nacos.example.click</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/</span></span><br><span class="line">        <span class="attr">pathType:</span> <span class="string">Prefix</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">service:</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">nacos</span></span><br><span class="line">            <span class="attr">port:</span></span><br><span class="line">              <span class="attr">number:</span> <span class="number">8848</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>namesilo api 使用</title>
-    <url>/202303031036/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://www.namesilo.com/api-reference">Namesilo api 官方文档</a></p>
-<p>Python SDK 为 <a href="https://pypi.org/project/python-namesilo/">python-namesilo</a>，安装方法</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line">pip install python-namesilo</span><br></pre></td></tr></table></figure>
-
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Python 3.11.2</li>
-<li>python-namesilo&#x3D;&#x3D;1.1.3</li>
-</ul>
-<h1 id="python-namesilo-常见用法示例"><a href="#python-namesilo-常见用法示例" class="headerlink" title="python-namesilo 常见用法示例"></a>python-namesilo 常见用法示例</h1><h2 id="获取账号中的所有域名"><a href="#获取账号中的所有域名" class="headerlink" title="获取账号中的所有域名"></a>获取账号中的所有域名</h2><p>使用 SDK 之前需要先登陆账号创建 API Token，详细使用方法可以查看帮助信息，获取所有域名使用方法 <code>list_domains</code></p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="keyword">from</span> namesilo.core <span class="keyword">import</span> NameSilo</span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>key = <span class="string">&#x27;KKKKKKKKKKKKKKKKKK&#x27;</span></span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client = NameSilo(token=key, sandbox=<span class="literal">False</span>)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">help</span>(client)</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.list_domains()</span><br></pre></td></tr></table></figure>
-
-<h2 id="获取指定域名的详细信息"><a href="#获取指定域名的详细信息" class="headerlink" title="获取指定域名的详细信息"></a>获取指定域名的详细信息</h2><p>获取指定域名的详细信息使用 <code>get_domain_info</code> ，此方法返回一个 <code>DomainInfo</code> 对象，里面包括域名创建时间，过期时间，nameserver 等信息</p>
-<figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="meta">&gt;&gt;&gt; </span>client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>)</span><br><span class="line">&lt;namesilo.common.models.DomainInfo <span class="built_in">object</span> at <span class="number">0x7f71a0530a50</span>&gt;</span><br><span class="line"></span><br><span class="line"><span class="meta">&gt;&gt;&gt; </span><span class="built_in">dir</span>(client.get_domain_info(<span class="string">&#x27;test.app&#x27;</span>))</span><br><span class="line">[<span class="string">&#x27;auto_renew&#x27;</span>, <span class="string">&#x27;contacts&#x27;</span>, <span class="string">&#x27;created&#x27;</span>, <span class="string">&#x27;expires&#x27;</span>, <span class="string">&#x27;locked&#x27;</span>, <span class="string">&#x27;name_servers&#x27;</span>, <span class="string">&#x27;private&#x27;</span>, <span class="string">&#x27;status&#x27;</span>, <span class="string">&#x27;traffic_type&#x27;</span>]</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Namesilo</category>
-      </categories>
-      <tags>
-        <tag>Namesilo</tag>
       </tags>
   </entry>
 </search>
