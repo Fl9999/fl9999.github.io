@@ -29191,6 +29191,66 @@ width: 20%;
 ]]></content>
   </entry>
   <entry>
+    <title>Docker 部署 OpenVPN</title>
+    <url>/202302171657/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7 3.10.0-1160</li>
+<li>Docker 20.10.9</li>
+<li>iptables</li>
+</ul>
+<h1 id="前提条件"><a href="#前提条件" class="headerlink" title="前提条件"></a>前提条件</h1><p>宿主机操作系统内核配置允许数据转发，<a href="https://0920811.xyz/202302161539/#开启系统-IPv4-转发功能">开启系统 IPv4 转发功能</a></p>
+<h1 id="Docker-部署-OpenVPN-服务端步骤"><a href="#Docker-部署-OpenVPN-服务端步骤" class="headerlink" title="Docker 部署 OpenVPN 服务端步骤"></a>Docker 部署 OpenVPN 服务端步骤</h1><h2 id="创建本地配置目录"><a href="#创建本地配置目录" class="headerlink" title="创建本地配置目录"></a>创建本地配置目录</h2><p>用了在启动容器时挂载以持久化 OpenVPN 配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkdir /opt/openvpn1/</span><br></pre></td></tr></table></figure>
+
+<h2 id="初始化配置文件"><a href="#初始化配置文件" class="headerlink" title="初始化配置文件"></a>初始化配置文件</h2><p>执行以下命令初始化 OpenVPN 服务端配置</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_genconfig -u udp://$&#123;PUB_IP&#125;:1194</span><br></pre></td></tr></table></figure>
+
+<p>参数说明：</p>
+<ul>
+<li><code>udp://$&#123;PUB_IP&#125;:1194</code> - 指定 VPN 服务器配置，使用 <code>1194/udp</code> 端口。${PUB_IP} 为服务器公网 IP。</li>
+</ul>
+<h2 id="生成密钥-证书-文件"><a href="#生成密钥-证书-文件" class="headerlink" title="生成密钥(证书)文件"></a>生成密钥(证书)文件</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_initpki</span><br></pre></td></tr></table></figure>
+
+<p>根据提示，输入 CA 根证书密码及名称</p>
+<h2 id="创建带有密码的客户端证书"><a href="#创建带有密码的客户端证书" class="headerlink" title="创建带有密码的客户端证书"></a>创建带有密码的客户端证书</h2><p>执行以下命令，根据提示输入客户端证书密码及 CA 密码，生成客户端证书。如果客户端证书无需密码，最后加选项 <code>nopass</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 easyrsa build-client-full vpn1</span><br></pre></td></tr></table></figure>
+
+<h2 id="导出客户端证书"><a href="#导出客户端证书" class="headerlink" title="导出客户端证书"></a>导出客户端证书</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_getclient vpn1 &gt; /opt/openvpn/client/vpn1.ovpn</span><br></pre></td></tr></table></figure>
+
+<h2 id="启动-OpenVPN"><a href="#启动-OpenVPN" class="headerlink" title="启动 OpenVPN"></a>启动 OpenVPN</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -it --name OpenVPN1 \</span><br><span class="line">           -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">           -d -p 1194:1194/udp --cap-add=NET_ADMIN \</span><br><span class="line">           kylemanna/openvpn:2.4</span><br><span class="line">           </span><br></pre></td></tr></table></figure>
+
+<p>防火墙放通 <code>1194/udp</code> 端口</p>
+<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -p udp --dport 1194 -j ACCEPT -m comment --comment &quot;openvpn&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>OpenVPN 启动后，docker 会在宿主机操作系统的 iptables 中添加对应的 <code>MASQUERADE</code> 规则，负责转发和 NAT 数据，具体规则可通过以下方法查看</p>
+<p>查看 NAT 表添加的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers | more</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 127 packets, 9255 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       54  2490 DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 1 packets, 70 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       75  6875 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">2      610 36387 MASQUERADE  all  --  *      *       10.8.0.0/24          0.0.0.0/0           </span><br><span class="line">3        0     0 MASQUERADE  udp  --  *      *       172.17.0.2           172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        1    70 DNAT       udp  --  !docker0 *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 to:172.17.0.2:1194</span><br></pre></td></tr></table></figure>
+
+<p>查看 FILTER 表添加的规则</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-numbers | more</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      641 51489 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 /* openvpn */</span><br><span class="line">...</span><br><span class="line">13       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">14       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">15     230 14788 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3     8465 2439K ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        1    70 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5     8425 2421K ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7     4177 1774K ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">8      202 13030 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 343 packets, 61383 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        1    70 ACCEPT     udp  --  !docker0 docker0  0.0.0.0/0            172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     8425 2421K DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2     8425 2421K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
+
+<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>将 <a href="#%E5%AF%BC%E5%87%BA%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%AF%81%E4%B9%A6">导出客户端证书</a> 中生成的客户端证书发送到客户端，测试连接。</p>
+<p>客户端连接失败，可以检查以下内容：</p>
+<ul>
+<li><p>客户端日志及服务端日志，服务端日志可以通过以下方法查看</p>
+  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker logs -f OpenVPN</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>检查是否是因为 <a href="#%E5%90%AF%E5%8A%A8-OpenVPN">iptables 防火墙规则</a> 问题导致无法连接，如果防火墙相关规则丢失，可以通过重启 docker 和 OpenVPN 容器的方式恢复。</p>
+</li>
+<li><p>检查容器中启动的端口和 docker 映射的端口是否一致。</p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>Docker</tag>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>OpenVPN 安装及使用</title>
     <url>/202302161539/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -33347,66 +33407,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Docker 部署 OpenVPN</title>
-    <url>/202302171657/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7 3.10.0-1160</li>
-<li>Docker 20.10.9</li>
-<li>iptables</li>
-</ul>
-<h1 id="前提条件"><a href="#前提条件" class="headerlink" title="前提条件"></a>前提条件</h1><p>宿主机操作系统内核配置允许数据转发，<a href="https://0920811.xyz/202302161539/#开启系统-IPv4-转发功能">开启系统 IPv4 转发功能</a></p>
-<h1 id="Docker-部署-OpenVPN-服务端步骤"><a href="#Docker-部署-OpenVPN-服务端步骤" class="headerlink" title="Docker 部署 OpenVPN 服务端步骤"></a>Docker 部署 OpenVPN 服务端步骤</h1><h2 id="创建本地配置目录"><a href="#创建本地配置目录" class="headerlink" title="创建本地配置目录"></a>创建本地配置目录</h2><p>用了在启动容器时挂载以持久化 OpenVPN 配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">mkdir /opt/openvpn1/</span><br></pre></td></tr></table></figure>
-
-<h2 id="初始化配置文件"><a href="#初始化配置文件" class="headerlink" title="初始化配置文件"></a>初始化配置文件</h2><p>执行以下命令初始化 OpenVPN 服务端配置</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_genconfig -u udp://$&#123;PUB_IP&#125;:1194</span><br></pre></td></tr></table></figure>
-
-<p>参数说明：</p>
-<ul>
-<li><code>udp://$&#123;PUB_IP&#125;:1194</code> - 指定 VPN 服务器配置，使用 <code>1194/udp</code> 端口。${PUB_IP} 为服务器公网 IP。</li>
-</ul>
-<h2 id="生成密钥-证书-文件"><a href="#生成密钥-证书-文件" class="headerlink" title="生成密钥(证书)文件"></a>生成密钥(证书)文件</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_initpki</span><br></pre></td></tr></table></figure>
-
-<p>根据提示，输入 CA 根证书密码及名称</p>
-<h2 id="创建带有密码的客户端证书"><a href="#创建带有密码的客户端证书" class="headerlink" title="创建带有密码的客户端证书"></a>创建带有密码的客户端证书</h2><p>执行以下命令，根据提示输入客户端证书密码及 CA 密码，生成客户端证书。如果客户端证书无需密码，最后加选项 <code>nopass</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 easyrsa build-client-full vpn1</span><br></pre></td></tr></table></figure>
-
-<h2 id="导出客户端证书"><a href="#导出客户端证书" class="headerlink" title="导出客户端证书"></a>导出客户端证书</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run --rm -it \</span><br><span class="line">          -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">          kylemanna/openvpn:2.4 ovpn_getclient vpn1 &gt; /opt/openvpn/client/vpn1.ovpn</span><br></pre></td></tr></table></figure>
-
-<h2 id="启动-OpenVPN"><a href="#启动-OpenVPN" class="headerlink" title="启动 OpenVPN"></a>启动 OpenVPN</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker run -it --name OpenVPN1 \</span><br><span class="line">           -v /opt/openvpn1/:/etc/openvpn \</span><br><span class="line">           -d -p 1194:1194/udp --cap-add=NET_ADMIN \</span><br><span class="line">           kylemanna/openvpn:2.4</span><br><span class="line">           </span><br></pre></td></tr></table></figure>
-
-<p>防火墙放通 <code>1194/udp</code> 端口</p>
-<figure class="highlight shell"><figcaption><span>/etc/sysconfig/iptables</span></figcaption><table><tr><td class="code"><pre><span class="line">-A INPUT -p udp --dport 1194 -j ACCEPT -m comment --comment &quot;openvpn&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>OpenVPN 启动后，docker 会在宿主机操作系统的 iptables 中添加对应的 <code>MASQUERADE</code> 规则，负责转发和 NAT 数据，具体规则可通过以下方法查看</p>
-<p>查看 NAT 表添加的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -t nat -L -v -n --line-numbers | more</span></span><br><span class="line">Chain PREROUTING (policy ACCEPT 127 packets, 9255 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       54  2490 DOCKER     all  --  *      *       0.0.0.0/0            0.0.0.0/0            ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain INPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DOCKER     all  --  *      *       0.0.0.0/0           !127.0.0.0/8          ADDRTYPE match dst-type LOCAL</span><br><span class="line"></span><br><span class="line">Chain POSTROUTING (policy ACCEPT 1 packets, 70 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1       75  6875 MASQUERADE  all  --  *      !docker0  172.17.0.0/16        0.0.0.0/0           </span><br><span class="line">2      610 36387 MASQUERADE  all  --  *      *       10.8.0.0/24          0.0.0.0/0           </span><br><span class="line">3        0     0 MASQUERADE  udp  --  *      *       172.17.0.2           172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER (2 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 RETURN     all  --  docker0 *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2        1    70 DNAT       udp  --  !docker0 *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 to:172.17.0.2:1194</span><br></pre></td></tr></table></figure>
-
-<p>查看 FILTER 表添加的规则</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">iptables -L -v -n --line-numbers | more</span></span><br><span class="line">Chain INPUT (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1      641 51489 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">2        0     0 ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3        0     0 ACCEPT     udp  --  *      *       0.0.0.0/0            0.0.0.0/0            udp dpt:1194 /* openvpn */</span><br><span class="line">...</span><br><span class="line">13       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 8</span><br><span class="line">14       0     0 ACCEPT     icmp --  *      *       0.0.0.0/0            0.0.0.0/0            icmptype 0</span><br><span class="line">15     230 14788 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain FORWARD (policy DROP 0 packets, 0 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K DOCKER-USER  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K DOCKER-ISOLATION-STAGE-1  all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">3     8465 2439K ACCEPT     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0            ctstate RELATED,ESTABLISHED</span><br><span class="line">4        1    70 DOCKER     all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">5     8425 2421K ACCEPT     all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">6        0     0 ACCEPT     all  --  docker0 docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">7     4177 1774K ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED</span><br><span class="line">8      202 13030 REJECT     all  --  *      *       0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited</span><br><span class="line"></span><br><span class="line">Chain OUTPUT (policy ACCEPT 343 packets, 61383 bytes)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line"></span><br><span class="line">Chain DOCKER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        1    70 ACCEPT     udp  --  !docker0 docker0  0.0.0.0/0            172.17.0.2           udp dpt:1194</span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-1 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1     8425 2421K DOCKER-ISOLATION-STAGE-2  all  --  docker0 !docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-ISOLATION-STAGE-2 (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1        0     0 DROP       all  --  *      docker0  0.0.0.0/0            0.0.0.0/0           </span><br><span class="line">2     8425 2421K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0           </span><br><span class="line"></span><br><span class="line">Chain DOCKER-USER (1 references)</span><br><span class="line">num   pkts bytes target     prot opt in     out     source               destination         </span><br><span class="line">1    16891 4860K RETURN     all  --  *      *       0.0.0.0/0            0.0.0.0/0</span><br></pre></td></tr></table></figure>
-
-<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>将 <a href="#%E5%AF%BC%E5%87%BA%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%AF%81%E4%B9%A6">导出客户端证书</a> 中生成的客户端证书发送到客户端，测试连接。</p>
-<p>客户端连接失败，可以检查以下内容：</p>
-<ul>
-<li><p>客户端日志及服务端日志，服务端日志可以通过以下方法查看</p>
-  <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">docker logs -f OpenVPN</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>检查是否是因为 <a href="#%E5%90%AF%E5%8A%A8-OpenVPN">iptables 防火墙规则</a> 问题导致无法连接，如果防火墙相关规则丢失，可以通过重启 docker 和 OpenVPN 容器的方式恢复。</p>
-</li>
-<li><p>检查容器中启动的端口和 docker 映射的端口是否一致。</p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>Docker</tag>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>sftp 服务常用配置说明</title>
     <url>/202207301332/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>sftp 是 Secure File Transfer Protocol 的缩写，安全文件传送协议。可以为传输文件提供一种安全的加密方法。SFTP 为 SSH 的一部分，由于这种传输方式使用了加密&#x2F;解密技术，所以传输效率比普通的 FTP 要低得多，如果您对网络安全性要求更高时，可以使用 SFTP 代替 FTP。默认 ssh 启用了 sftp，只要可登陆系统的用户（&#x2F;bin&#x2F;bash）就可登陆,登陆后目录无限制，可任意切换其他目录。为了安全起见，可以配置 sshd 以限制 sftp 登录用户的权限。最好将登陆后用户限制在指定目录，无法切换到外部目录  </p>
@@ -35668,6 +35668,49 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>YAML 语法格式</title>
+    <url>/202405171109/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>YAML（YAML Ain’t Markup Language）是一种专门用于数据序列化的格式，常用于配置文件、数据交换等场景。它以其可读性和简洁性而受到开发者的青睐。YAML 设计的目标是易于人类阅读和编写，并且易于与其他编程语言进行交互。下面是 YAML 语法的详细介绍</p>
+<h1 id="基本结构"><a href="#基本结构" class="headerlink" title="基本结构"></a>基本结构</h1><ul>
+<li><p><strong>数据类型</strong> ：YAML 支持标量（如字符串、整数、浮点数）、序列（列表）和映射（字典）三种基本数据类型。</p>
+</li>
+<li><p><strong>缩进</strong> ：YAML 使用缩进表示结构层级关系，通常每个层级缩进两个或四个空格（ <em><strong>禁止使用制表符</strong></em> ）。</p>
+</li>
+</ul>
+<h2 id="标量数据类型"><a href="#标量数据类型" class="headerlink" title="标量数据类型"></a>标量数据类型</h2><p><strong>标量（Scalars）</strong> 是单个的、不可分割的值。可以是字符串、整数或浮点数。标量可以是单行的值，也可以是多行的值</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 单行字符串</span></span><br><span class="line"><span class="attr">name:</span> <span class="string">John</span> <span class="string">Doe</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 整数</span></span><br><span class="line"><span class="attr">age:</span> <span class="number">35</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 浮点数</span></span><br><span class="line"><span class="attr">height:</span> <span class="number">5.9</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 布尔值</span></span><br><span class="line"><span class="attr">is_student:</span> <span class="literal">false</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>多行字符串可以使用字面量样式（ <code>|</code> ）或折叠样式（ <code>&gt;</code> ）：</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 字面量样式保留换行符</span></span><br><span class="line"><span class="attr">address:</span> <span class="string">|</span></span><br><span class="line"><span class="string">  123 Main St</span></span><br><span class="line"><span class="string">  Anytown, WW 12345</span></span><br><span class="line"><span class="string"></span></span><br><span class="line"><span class="comment"># 折叠样式将连续的行合并为一行</span></span><br><span class="line"><span class="attr">description:</span> <span class="string">&gt;</span></span><br><span class="line"><span class="string">  This is a very long sentence</span></span><br><span class="line"><span class="string">  that spans several lines in the YAML</span></span><br><span class="line"><span class="string">  but will be rendered as a single</span></span><br><span class="line"><span class="string">  line in the output.</span></span><br><span class="line"><span class="string"></span></span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>可以显式指定数据类型，例如字符串可以用单引号或双引号包围</strong></li>
+<li><strong>字符串通常不需要引号，但如果含有特殊字符，则需要使用单引号或双引号。</strong></li>
+<li><strong><code>true</code> , <code>false</code> , <code>null</code> 等特定词汇表示布尔值和 <code>Null</code> 。</strong></li>
+<li><strong>时间和日期需要遵循 ISO 格式。</strong></li>
+</ul>
+<h2 id="列表（Sequences）"><a href="#列表（Sequences）" class="headerlink" title="列表（Sequences）"></a>列表（Sequences）</h2><p><strong>列表（Sequences）</strong> 是一组按顺序排列的值（类似于数组或列表），用破折号加空格表示新的元素，每个列表项占一行，也需要正确缩进。</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 列表</span></span><br><span class="line"><span class="attr">hobbies:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">Reading</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">Fishing</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">Dancing</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="字典（Mappings）"><a href="#字典（Mappings）" class="headerlink" title="字典（Mappings）"></a>字典（Mappings）</h2><p><strong>映射&#x2F;字典（Mappings）</strong> 是键值对的集合（类似于字典或哈希表），用冒号加空格表示键值对，键值对需要正确缩进</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 字典</span></span><br><span class="line"><span class="attr">person:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">John</span> <span class="string">Doe</span></span><br><span class="line">  <span class="attr">age:</span> <span class="number">35</span></span><br><span class="line">  <span class="attr">city:</span> <span class="string">New</span> <span class="string">York</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="嵌套结构"><a href="#嵌套结构" class="headerlink" title="嵌套结构"></a>嵌套结构</h2><p>列表和字典可以嵌套使用，形成复杂的结构</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 嵌套的列表和字典</span></span><br><span class="line"><span class="attr">employees:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">John</span> <span class="string">Doe</span></span><br><span class="line">    <span class="attr">job:</span> <span class="string">Developer</span></span><br><span class="line">    <span class="attr">skills:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">Python</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">SQL</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">Jane</span> <span class="string">Smith</span></span><br><span class="line">    <span class="attr">job:</span> <span class="string">Designer</span></span><br><span class="line">    <span class="attr">skills:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">Photoshop</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">Illustrator</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="锚点和别名"><a href="#锚点和别名" class="headerlink" title="锚点和别名"></a>锚点和别名</h2><p>YAML 支持定义锚点（ <code>&amp;</code> ）和别名（ <code>*</code> ）来重用（引用）文档中的某部分，使用 <code>&amp;</code> 创建一个锚点（alias），之后可以用 <code>*</code> 引用这个锚点。</p>
+<p>使用 <code>&lt;&lt;</code> 和 <code>*</code> 来合并已有（引用）的映射。</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 使用锚点和别名</span></span><br><span class="line"><span class="attr">defaults:</span> <span class="meta">&amp;defaults</span></span><br><span class="line">  <span class="attr">adapter:</span> <span class="string">postgres</span></span><br><span class="line">  <span class="attr">host:</span> <span class="string">localhost</span></span><br><span class="line"></span><br><span class="line"><span class="attr">development:</span></span><br><span class="line">  <span class="string">&lt;&lt;:</span> <span class="meta">*defaults</span></span><br><span class="line">  <span class="attr">database:</span> <span class="string">dev_db</span></span><br><span class="line"></span><br><span class="line"><span class="attr">test:</span></span><br><span class="line">  <span class="string">&lt;&lt;:</span> <span class="meta">*defaults</span></span><br><span class="line">  <span class="attr">database:</span> <span class="string">test_db</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 字符串锚点和引用</span></span><br><span class="line"><span class="attr">name:</span> <span class="string">&amp;name_anchor</span> <span class="string">&quot;John Doe&quot;</span></span><br><span class="line"><span class="attr">contact:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="meta">*name_anchor</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h2 id="注释"><a href="#注释" class="headerlink" title="注释"></a>注释</h2><p>使用井号 <code>#</code> 开始一个注释，井号后面的内容将被视为注释，注释内容直到行尾。</p>
+<h2 id="多文档支持"><a href="#多文档支持" class="headerlink" title="多文档支持"></a>多文档支持</h2><p><strong>一个 YAML 文件可以包含多个文档，每个文档用三个短横线 <code>---</code> 分隔。</strong></p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">document1:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">item1</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">document2:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">item2</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
     <title>天干知识汇总</title>
     <url>/20251124150300/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>十天干（甲、乙、丙、丁、戊、己、庚、辛、壬、癸）是中国古代用来纪年、纪月、纪日、纪时的符号。它们最初的含义并非现代的木火土金水五行属性，而是源于古代对植物生命周期和万物生长变化的观察和描述。</p>
@@ -35756,49 +35799,6 @@ width: 20%;
 ]]></content>
       <categories>
         <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>YAML 语法格式</title>
-    <url>/202405171109/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>YAML（YAML Ain’t Markup Language）是一种专门用于数据序列化的格式，常用于配置文件、数据交换等场景。它以其可读性和简洁性而受到开发者的青睐。YAML 设计的目标是易于人类阅读和编写，并且易于与其他编程语言进行交互。下面是 YAML 语法的详细介绍</p>
-<h1 id="基本结构"><a href="#基本结构" class="headerlink" title="基本结构"></a>基本结构</h1><ul>
-<li><p><strong>数据类型</strong> ：YAML 支持标量（如字符串、整数、浮点数）、序列（列表）和映射（字典）三种基本数据类型。</p>
-</li>
-<li><p><strong>缩进</strong> ：YAML 使用缩进表示结构层级关系，通常每个层级缩进两个或四个空格（ <em><strong>禁止使用制表符</strong></em> ）。</p>
-</li>
-</ul>
-<h2 id="标量数据类型"><a href="#标量数据类型" class="headerlink" title="标量数据类型"></a>标量数据类型</h2><p><strong>标量（Scalars）</strong> 是单个的、不可分割的值。可以是字符串、整数或浮点数。标量可以是单行的值，也可以是多行的值</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 单行字符串</span></span><br><span class="line"><span class="attr">name:</span> <span class="string">John</span> <span class="string">Doe</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 整数</span></span><br><span class="line"><span class="attr">age:</span> <span class="number">35</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 浮点数</span></span><br><span class="line"><span class="attr">height:</span> <span class="number">5.9</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 布尔值</span></span><br><span class="line"><span class="attr">is_student:</span> <span class="literal">false</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>多行字符串可以使用字面量样式（ <code>|</code> ）或折叠样式（ <code>&gt;</code> ）：</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 字面量样式保留换行符</span></span><br><span class="line"><span class="attr">address:</span> <span class="string">|</span></span><br><span class="line"><span class="string">  123 Main St</span></span><br><span class="line"><span class="string">  Anytown, WW 12345</span></span><br><span class="line"><span class="string"></span></span><br><span class="line"><span class="comment"># 折叠样式将连续的行合并为一行</span></span><br><span class="line"><span class="attr">description:</span> <span class="string">&gt;</span></span><br><span class="line"><span class="string">  This is a very long sentence</span></span><br><span class="line"><span class="string">  that spans several lines in the YAML</span></span><br><span class="line"><span class="string">  but will be rendered as a single</span></span><br><span class="line"><span class="string">  line in the output.</span></span><br><span class="line"><span class="string"></span></span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>可以显式指定数据类型，例如字符串可以用单引号或双引号包围</strong></li>
-<li><strong>字符串通常不需要引号，但如果含有特殊字符，则需要使用单引号或双引号。</strong></li>
-<li><strong><code>true</code> , <code>false</code> , <code>null</code> 等特定词汇表示布尔值和 <code>Null</code> 。</strong></li>
-<li><strong>时间和日期需要遵循 ISO 格式。</strong></li>
-</ul>
-<h2 id="列表（Sequences）"><a href="#列表（Sequences）" class="headerlink" title="列表（Sequences）"></a>列表（Sequences）</h2><p><strong>列表（Sequences）</strong> 是一组按顺序排列的值（类似于数组或列表），用破折号加空格表示新的元素，每个列表项占一行，也需要正确缩进。</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 列表</span></span><br><span class="line"><span class="attr">hobbies:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">Reading</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">Fishing</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">Dancing</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="字典（Mappings）"><a href="#字典（Mappings）" class="headerlink" title="字典（Mappings）"></a>字典（Mappings）</h2><p><strong>映射&#x2F;字典（Mappings）</strong> 是键值对的集合（类似于字典或哈希表），用冒号加空格表示键值对，键值对需要正确缩进</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 字典</span></span><br><span class="line"><span class="attr">person:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">John</span> <span class="string">Doe</span></span><br><span class="line">  <span class="attr">age:</span> <span class="number">35</span></span><br><span class="line">  <span class="attr">city:</span> <span class="string">New</span> <span class="string">York</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="嵌套结构"><a href="#嵌套结构" class="headerlink" title="嵌套结构"></a>嵌套结构</h2><p>列表和字典可以嵌套使用，形成复杂的结构</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 嵌套的列表和字典</span></span><br><span class="line"><span class="attr">employees:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">John</span> <span class="string">Doe</span></span><br><span class="line">    <span class="attr">job:</span> <span class="string">Developer</span></span><br><span class="line">    <span class="attr">skills:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">Python</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">SQL</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">name:</span> <span class="string">Jane</span> <span class="string">Smith</span></span><br><span class="line">    <span class="attr">job:</span> <span class="string">Designer</span></span><br><span class="line">    <span class="attr">skills:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">Photoshop</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">Illustrator</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="锚点和别名"><a href="#锚点和别名" class="headerlink" title="锚点和别名"></a>锚点和别名</h2><p>YAML 支持定义锚点（ <code>&amp;</code> ）和别名（ <code>*</code> ）来重用（引用）文档中的某部分，使用 <code>&amp;</code> 创建一个锚点（alias），之后可以用 <code>*</code> 引用这个锚点。</p>
-<p>使用 <code>&lt;&lt;</code> 和 <code>*</code> 来合并已有（引用）的映射。</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="comment"># 使用锚点和别名</span></span><br><span class="line"><span class="attr">defaults:</span> <span class="meta">&amp;defaults</span></span><br><span class="line">  <span class="attr">adapter:</span> <span class="string">postgres</span></span><br><span class="line">  <span class="attr">host:</span> <span class="string">localhost</span></span><br><span class="line"></span><br><span class="line"><span class="attr">development:</span></span><br><span class="line">  <span class="string">&lt;&lt;:</span> <span class="meta">*defaults</span></span><br><span class="line">  <span class="attr">database:</span> <span class="string">dev_db</span></span><br><span class="line"></span><br><span class="line"><span class="attr">test:</span></span><br><span class="line">  <span class="string">&lt;&lt;:</span> <span class="meta">*defaults</span></span><br><span class="line">  <span class="attr">database:</span> <span class="string">test_db</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># 字符串锚点和引用</span></span><br><span class="line"><span class="attr">name:</span> <span class="string">&amp;name_anchor</span> <span class="string">&quot;John Doe&quot;</span></span><br><span class="line"><span class="attr">contact:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="meta">*name_anchor</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h2 id="注释"><a href="#注释" class="headerlink" title="注释"></a>注释</h2><p>使用井号 <code>#</code> 开始一个注释，井号后面的内容将被视为注释，注释内容直到行尾。</p>
-<h2 id="多文档支持"><a href="#多文档支持" class="headerlink" title="多文档支持"></a>多文档支持</h2><p><strong>一个 YAML 文件可以包含多个文档，每个文档用三个短横线 <code>---</code> 分隔。</strong></p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">document1:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">item1</span></span><br><span class="line"><span class="meta">---</span></span><br><span class="line"><span class="attr">document2:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">item2</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
       </categories>
   </entry>
   <entry>
