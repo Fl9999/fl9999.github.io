@@ -6619,91 +6619,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>AWS Security Group(安全组)</title>
-    <url>/20260210152620/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>AWS 里 <strong>安全组（Security Group, SG）不是 “防火墙规则表”，而是一套 关系型访问控制架构</strong></p>
-<p>安全组是在 <strong>网络接口 (ENI)</strong> 级别运行的，而不是在子网级别。这意味着即使两个实例在同一个子网内，如果它们的安全组规则不允许通信，它们也无法互相访问。</p>
-<p>AWS 安全组（Security Group, SG）有以下关键特性</p>
-<table>
-<thead>
-<tr>
-<th>关键特性</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>有状态 (Stateful)</strong></td>
-<td>如果你允许入站请求，响应流量会自动允许流出，不受出站规则限制。</td>
-</tr>
-<tr>
-<td><strong>白名单机制</strong></td>
-<td>默认拒绝所有流量。你只能添加 “允许” 规则，不能设置 “拒绝” 规则。</td>
-</tr>
-<tr>
-<td><strong>即时生效</strong></td>
-<td>修改规则后，变更会立即应用到所有关联的资源上。</td>
-</tr>
-<tr>
-<td><strong>拓扑关系</strong></td>
-<td>安全组之间可以 互相引用，形成拓扑关系。也可以包含 <strong>自引用规则（self-referencing SG rule），在规则中引用自身安全组</strong></td>
-</tr>
-</tbody></table>
-<p>安全组可以绑定到：</p>
-<ul>
-<li><p><strong>EC2 实例</strong></p>
-</li>
-<li><p><strong>ENI（弹性网卡）</strong></p>
-</li>
-<li><p><strong>ALB &#x2F; NLB</strong></p>
-</li>
-<li><p><strong>RDS</strong></p>
-</li>
-<li><p><strong>EKS Pod（通过 ENI &#x2F; SG for Pod）</strong></p>
-</li>
-<li><p><strong>📌 一个资源可以绑多个 SG，多个 SG 规则没有顺序概念</strong></p>
-</li>
-<li><p><strong>📌 一个 SG 也可以被多个资源复用</strong></p>
-</li>
-</ul>
-<p><strong>引用安全组作为源（Security Group Referencing）</strong></p>
-<p>这是 AWS 架构设计中最优雅的功能之一。在设置规则时，源（Source）不仅可以是 IP 地址（如 10.0.0.5&#x2F;32），还可以是 <strong>另一个安全组 ID</strong> 。典型场景如下：</p>
-<ul>
-<li><p><strong>场景</strong> ：Web 层服务器需要访问数据库层。为 Web 层服务器创建一个安全组，如 <code>sg-web-servers</code></p>
-</li>
-<li><p><strong>做法</strong> ：在数据库安全组中添加规则：允许来自安全组 <code>sg-web-servers</code> 的 3306 端口访问。</p>
-</li>
-<li><p><strong>好处</strong> ：当 Web 层实例由于自动缩容（Auto Scaling）增加或减少时，你不需要手动更新 IP 地址列表，权限会自动随安全组标签流转。不关心 IP 变化，不关心实例扩缩容，只关心 <strong>角色之间的通信关系</strong></p>
-</li>
-</ul>
-<span id="more"></span>
-
-<h1 id="AWS-EKS-Security-Group"><a href="#AWS-EKS-Security-Group" class="headerlink" title="AWS EKS Security Group"></a>AWS EKS Security Group</h1><p>AWS EKS 默认的 Security Group 如下图所示：<br><img src="https://i.0920811.xyz/img_408.png"></p>
-<p>其中只包含了一条规则，即允许所有来源于 <strong>安全组自己</strong> 的流量， <strong>任何挂了这个安全组的 ENI，可以无条件互相通信</strong> ，这是一条 <strong>自引用规则（self-referencing SG rule）</strong> 。</p>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">Inbound:</span><br><span class="line">  Source: sg-058bd1ef730091911 (自己)</span><br><span class="line">  Protocol: ALL</span><br><span class="line">  Port: ALL</span><br></pre></td></tr></table></figure>
-
-<p>在安全组规则中，将 <strong>Source（源） 设置为自身的 Security Group ID</strong> ，其本质含义是：</p>
-<blockquote>
-<p><em><strong>凡是关联了这个安全组的资源，彼此之间可以无障碍通信</strong></em></p>
-</blockquote>
-<p>这正是 AWS 实现集群内部成员相互信任的核心手段。</p>
-<p>在 EKS 的上下文中，这主要解决了以下通信需求：</p>
-<ul>
-<li><strong>控制平面与工作节点通信</strong> ：EKS 的控制平面（Master Nodes）和工作节点（Worker Nodes）都需要关联这个安全组。</li>
-<li><strong>Pod 间通信</strong> ：某些核心组件（如 kubelet 与 API Server 的交互）需要跨节点通信。</li>
-<li><strong>EFA (Elastic Fabric Adapter) 支持</strong> ：正如你截图中右侧 Description 提到的 “Allows EFA traffic…”，EFA 高性能网络通常要求节点间拥有全开放的内网访问权限，以便进行极低延迟的数据交换。</li>
-</ul>
-<p>这种配置比写死 IP 地址要高级得多，因为无论你的 EKS 集群如何扩容（增加 Node），新节点只要关联了这个 SG ID，就自动获得了进入 “信任圈” 的通行证。</p>
-<p>EKS API Server Endpoint （ <code>https://3F54290E45FB092995.sk1.ap-east-1.eks.amazonaws.com</code> ）实际上是 AWS 在你的 VPC 内部创建的 条件网络接口 (Cross-account ENI)。</p>
-]]></content>
-      <categories>
-        <category>云平台</category>
-        <category>Aws</category>
-      </categories>
-      <tags>
-        <tag>Aws</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>aws 云平台常见操作</title>
     <url>/202302230924/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="S3"><a href="#S3" class="headerlink" title="S3"></a>S3</h1><h2 id="s3-配置跨域"><a href="#s3-配置跨域" class="headerlink" title="s3 配置跨域"></a>s3 配置跨域</h2><p>当使用 aws 的 cloudfront 或其他第三方 cdn （如 cdn77）为域名加速，资源是回源到 aws s3 的情况下，一般都需要配置 <strong>允许跨域</strong> ，此种情况需要在 aws s3 存储桶中配置允许跨域 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[CORS 配置](https://docs.aws.amazon.com/zh_cn/AmazonS3/latest/userguide/ManageCorsUsing.html#cors-example-1)">[1]</span></a></sup></p>
@@ -7017,6 +6932,91 @@ width: 20%;
       </categories>
       <tags>
         <tag>AWS</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>AWS Security Group(安全组)</title>
+    <url>/20260210152620/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>AWS 里 <strong>安全组（Security Group, SG）不是 “防火墙规则表”，而是一套 关系型访问控制架构</strong></p>
+<p>安全组是在 <strong>网络接口 (ENI)</strong> 级别运行的，而不是在子网级别。这意味着即使两个实例在同一个子网内，如果它们的安全组规则不允许通信，它们也无法互相访问。</p>
+<p>AWS 安全组（Security Group, SG）有以下关键特性</p>
+<table>
+<thead>
+<tr>
+<th>关键特性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>有状态 (Stateful)</strong></td>
+<td>如果你允许入站请求，响应流量会自动允许流出，不受出站规则限制。</td>
+</tr>
+<tr>
+<td><strong>白名单机制</strong></td>
+<td>默认拒绝所有流量。你只能添加 “允许” 规则，不能设置 “拒绝” 规则。</td>
+</tr>
+<tr>
+<td><strong>即时生效</strong></td>
+<td>修改规则后，变更会立即应用到所有关联的资源上。</td>
+</tr>
+<tr>
+<td><strong>拓扑关系</strong></td>
+<td>安全组之间可以 互相引用，形成拓扑关系。也可以包含 <strong>自引用规则（self-referencing SG rule），在规则中引用自身安全组</strong></td>
+</tr>
+</tbody></table>
+<p>安全组可以绑定到：</p>
+<ul>
+<li><p><strong>EC2 实例</strong></p>
+</li>
+<li><p><strong>ENI（弹性网卡）</strong></p>
+</li>
+<li><p><strong>ALB &#x2F; NLB</strong></p>
+</li>
+<li><p><strong>RDS</strong></p>
+</li>
+<li><p><strong>EKS Pod（通过 ENI &#x2F; SG for Pod）</strong></p>
+</li>
+<li><p><strong>📌 一个资源可以绑多个 SG，多个 SG 规则没有顺序概念</strong></p>
+</li>
+<li><p><strong>📌 一个 SG 也可以被多个资源复用</strong></p>
+</li>
+</ul>
+<p><strong>引用安全组作为源（Security Group Referencing）</strong></p>
+<p>这是 AWS 架构设计中最优雅的功能之一。在设置规则时，源（Source）不仅可以是 IP 地址（如 10.0.0.5&#x2F;32），还可以是 <strong>另一个安全组 ID</strong> 。典型场景如下：</p>
+<ul>
+<li><p><strong>场景</strong> ：Web 层服务器需要访问数据库层。为 Web 层服务器创建一个安全组，如 <code>sg-web-servers</code></p>
+</li>
+<li><p><strong>做法</strong> ：在数据库安全组中添加规则：允许来自安全组 <code>sg-web-servers</code> 的 3306 端口访问。</p>
+</li>
+<li><p><strong>好处</strong> ：当 Web 层实例由于自动缩容（Auto Scaling）增加或减少时，你不需要手动更新 IP 地址列表，权限会自动随安全组标签流转。不关心 IP 变化，不关心实例扩缩容，只关心 <strong>角色之间的通信关系</strong></p>
+</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="AWS-EKS-Security-Group"><a href="#AWS-EKS-Security-Group" class="headerlink" title="AWS EKS Security Group"></a>AWS EKS Security Group</h1><p>AWS EKS 默认的 Security Group 如下图所示：<br><img src="https://i.0920811.xyz/img_408.png"></p>
+<p>其中只包含了一条规则，即允许所有来源于 <strong>安全组自己</strong> 的流量， <strong>任何挂了这个安全组的 ENI，可以无条件互相通信</strong> ，这是一条 <strong>自引用规则（self-referencing SG rule）</strong> 。</p>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">Inbound:</span><br><span class="line">  Source: sg-058bd1ef730091911 (自己)</span><br><span class="line">  Protocol: ALL</span><br><span class="line">  Port: ALL</span><br></pre></td></tr></table></figure>
+
+<p>在安全组规则中，将 <strong>Source（源） 设置为自身的 Security Group ID</strong> ，其本质含义是：</p>
+<blockquote>
+<p><em><strong>凡是关联了这个安全组的资源，彼此之间可以无障碍通信</strong></em></p>
+</blockquote>
+<p>这正是 AWS 实现集群内部成员相互信任的核心手段。</p>
+<p>在 EKS 的上下文中，这主要解决了以下通信需求：</p>
+<ul>
+<li><strong>控制平面与工作节点通信</strong> ：EKS 的控制平面（Master Nodes）和工作节点（Worker Nodes）都需要关联这个安全组。</li>
+<li><strong>Pod 间通信</strong> ：某些核心组件（如 kubelet 与 API Server 的交互）需要跨节点通信。</li>
+<li><strong>EFA (Elastic Fabric Adapter) 支持</strong> ：正如你截图中右侧 Description 提到的 “Allows EFA traffic…”，EFA 高性能网络通常要求节点间拥有全开放的内网访问权限，以便进行极低延迟的数据交换。</li>
+</ul>
+<p>这种配置比写死 IP 地址要高级得多，因为无论你的 EKS 集群如何扩容（增加 Node），新节点只要关联了这个 SG ID，就自动获得了进入 “信任圈” 的通行证。</p>
+<p>EKS API Server Endpoint （ <code>https://3F54290E45FB092995.sk1.ap-east-1.eks.amazonaws.com</code> ）实际上是 AWS 在你的 VPC 内部创建的 条件网络接口 (Cross-account ENI)。</p>
+]]></content>
+      <categories>
+        <category>云平台</category>
+        <category>Aws</category>
+      </categories>
+      <tags>
+        <tag>Aws</tag>
       </tags>
   </entry>
   <entry>
@@ -9260,33 +9260,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Ceph 介绍</title>
-    <url>/202306191333/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Ceph 可以提供（实现）的存储方式包括：</p>
-<ul>
-<li><strong>块存储</strong> - 提供类似普通硬盘的存储，为客户端提供硬盘</li>
-<li><strong>文件系统存储</strong> - 分布式的共享文件系统</li>
-<li><strong>对象存储</strong> - 提供大小无限制的云存储空间</li>
-</ul>
-<p>Ceph 是一个分布式的存储系统，非常灵活，若需要扩容，只需要向集群增加节点（服务器）即可，其存储的数据采用多副本的方式进行存储，生产环境中，至少需要存 3 份副本。</p>
-<h1 id="Ceph-构成组件"><a href="#Ceph-构成组件" class="headerlink" title="Ceph 构成组件"></a>Ceph 构成组件</h1><ul>
-<li><strong>Monitor Daemon</strong> - Ceph Mon 维护 Ceph 存储集群映射的主副本和 Ceph 存储群集的当前状态。监控器需要高度一致性，确保对 Ceph 存储集群状态达成一致。维护着展示集群状态的各种图表，包括监视器图、 OSD 图、归置组（ PG ）图、和 CRUSH 图。默认需要 5 个 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[INTRO TO CEPH](https://docs.ceph.com/en/quincy/start/intro/#intro-to-ceph)
-">[1]</span></a></sup></li>
-<li><strong>Mgr</strong> - 集群管理组件。默认需要 2 个。主要负责跟踪集群的运行指标及当前状态，包括存储使用率、性能指标及系统负载等。它也负责暴露基于 python 的 Ceph Web Dashboard 和 REST API。</li>
-<li><strong>OSD Daemon</strong> - OSD 用于存储数据。 此外，Ceph OSD 利用 Ceph 节点的 CPU、内存和网络来执行数据复制、纠删代码、重新平衡、恢复、监控和报告功能。存储节点有几块硬盘用于存储，该节点就会有几个 osd 进程。</li>
-<li><strong>MDSs</strong> - Metadata Server，为 Ceph 文件系统存储元数据</li>
-<li><strong>RGW</strong> - 对象存储网关。主要为访问 ceph 的软件提供 API 接口。</li>
-</ul>
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ceph.com/en/quincy/start/intro/#intro-to-ceph">INTRO TO CEPH</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>存储</category>
-        <category>Ceph</category>
-      </categories>
-      <tags>
-        <tag>Ceph</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>SSL 证书格式说明</title>
     <url>/202210211124/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>常见的 SSL 证书格式主要有：</p>
@@ -9395,6 +9368,33 @@ width: 20%;
       <tags>
         <tag>SSL</tag>
         <tag>openssl</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Ceph 介绍</title>
+    <url>/202306191333/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Ceph 可以提供（实现）的存储方式包括：</p>
+<ul>
+<li><strong>块存储</strong> - 提供类似普通硬盘的存储，为客户端提供硬盘</li>
+<li><strong>文件系统存储</strong> - 分布式的共享文件系统</li>
+<li><strong>对象存储</strong> - 提供大小无限制的云存储空间</li>
+</ul>
+<p>Ceph 是一个分布式的存储系统，非常灵活，若需要扩容，只需要向集群增加节点（服务器）即可，其存储的数据采用多副本的方式进行存储，生产环境中，至少需要存 3 份副本。</p>
+<h1 id="Ceph-构成组件"><a href="#Ceph-构成组件" class="headerlink" title="Ceph 构成组件"></a>Ceph 构成组件</h1><ul>
+<li><strong>Monitor Daemon</strong> - Ceph Mon 维护 Ceph 存储集群映射的主副本和 Ceph 存储群集的当前状态。监控器需要高度一致性，确保对 Ceph 存储集群状态达成一致。维护着展示集群状态的各种图表，包括监视器图、 OSD 图、归置组（ PG ）图、和 CRUSH 图。默认需要 5 个 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[INTRO TO CEPH](https://docs.ceph.com/en/quincy/start/intro/#intro-to-ceph)
+">[1]</span></a></sup></li>
+<li><strong>Mgr</strong> - 集群管理组件。默认需要 2 个。主要负责跟踪集群的运行指标及当前状态，包括存储使用率、性能指标及系统负载等。它也负责暴露基于 python 的 Ceph Web Dashboard 和 REST API。</li>
+<li><strong>OSD Daemon</strong> - OSD 用于存储数据。 此外，Ceph OSD 利用 Ceph 节点的 CPU、内存和网络来执行数据复制、纠删代码、重新平衡、恢复、监控和报告功能。存储节点有几块硬盘用于存储，该节点就会有几个 osd 进程。</li>
+<li><strong>MDSs</strong> - Metadata Server，为 Ceph 文件系统存储元数据</li>
+<li><strong>RGW</strong> - 对象存储网关。主要为访问 ceph 的软件提供 API 接口。</li>
+</ul>
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://docs.ceph.com/en/quincy/start/intro/#intro-to-ceph">INTRO TO CEPH</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>存储</category>
+        <category>Ceph</category>
+      </categories>
+      <tags>
+        <tag>Ceph</tag>
       </tags>
   </entry>
   <entry>
@@ -38250,134 +38250,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之雷风恒</title>
-    <url>/20251121122040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="雷风恒"><a href="#雷风恒" class="headerlink" title="雷风恒"></a>雷风恒</h1><p><img src="https://i.0920811.xyz/img_377.png"></p>
-<p>雷风恒，下（内）巽（风、入）上（外）震（雷、动），恒者，久也，表示永恒、长久。咸卦是男女夫妻感应交流，恒卦是夫妻感情永固、长长久久。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">恒，亨，无咎，利贞，利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：恒，久也。刚上而柔下。雷风相与，巽而动，刚柔皆应，恒。恒亨，无咎，利贞，久于其道也。天地之道，恒久而不已也。利有攸往，终则有始也。日月得天而能久照，四时变化而能久成，圣人久于其道而天下化成。观其所恒，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：雷风恒，君子以立不易方。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>刚上而柔下。雷风相与，巽而动，刚柔皆应</strong> ： 雷风恒卦由地天泰卦的六四和初九交换位置而来，泰卦初九上到九四、六四下到初六，是为刚上而柔下。上震为雷为动、下巽为风为入，是为雷风相与（和雷风相簿同意，风助雷势、雷助风威），巽而动。雷风恒卦各爻皆有正应，是为刚柔皆应。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">浚恒，贞凶，无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：浚恒之凶，始求深也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>浚(jùn)恒之凶，始求深也</strong> ： 浚，疏浚、深挖、深掘。初六爻代表事物或状态的初创阶段，根基未固，柔爻居于刚位（阳位），其性柔弱却急于求成，上应九四，志望过高，故有 “始求深” 之失</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>浚，求深也。初六以柔乘刚，力不能恒，而乃求深，是以凶也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>初六以浅近之资，不可以深固之恒。强以求之，是自招其凶。</code></p>
-</li>
-<li><p><code>恒者，宜常久。初位最浅，不可求深。始而求深，必致凶害。</code></p>
-</li>
-</ul>
-<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">悔亡</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：九二悔亡，能久中也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>悔亡</strong> ： 象征着能够坚守中道，以中正之道求恒久。九二是阳爻居于阴位（不正），本来会有一些小小的悔恨或疑虑（“悔” 指小疵、小过），但它居于下卦的中位（得中），“中” 象征着适中、恰到好处、不偏不倚的原则。九二与上卦的六五（君位）是正应（刚柔相应）。六五是柔中之主，九二是刚中之臣，刚柔相济。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>二得中正，居恒之宜，故悔亡也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九二以刚居中，得恒之正。能守之，则无悔也。</code></p>
-</li>
-<li><p><code>刚中得正，能长久之道，故悔亡。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不恒其德，或承之羞，贞吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不恒其德，无所容也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不恒其德，或承之羞</strong> ： 九三是阳居阳位，处下卦之终，刚而过中。虽然有恒久之心，但其刚猛之性，使其德行容易变动不定，不能长期保持中正。九三与上卦的上六（阴爻）是正应，但上六处于卦之极位，本身也不是稳定之象。固执于这种不稳定的德行（“贞吝”），则会陷入困境和麻烦</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处动之极，而不中正，故不恒其德也。失其恒，则或承羞辱。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>德不恒，则为人所弃。贞而吝者，守其失也。</code></p>
-</li>
-<li><p><code>三以刚处动，志变易，不能恒守其德。人所共恶，无所容处。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">田无禽。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：久非其位，安得禽也</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>田无禽</strong> ： 田，同畋，田猎、打猎、狩猎。《周易》中没有 “畋”，田和禽在一起，通常指田猎、打猎，象征付出努力、经营、有所求。无禽，指飞禽走兽，象征成果、收获、猎物。田无禽象征出外打猎却抓不到任何猎物、付出没有收获。</li>
-</ul>
-<p>九四是阳爻居于阴位，位置不当（非其位）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>四以刚居柔，不当其位，动则无功，故田无禽。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>以刚处柔，不得恒也。妄动无功，故曰田无禽。</code></p>
-</li>
-<li><p><code>久非其位，不能恒守，故虽田亦无禽也。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">恒其德，贞。妇人吉，夫子凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：妇人贞吉，从一而终也。夫子制义，从妇凶也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>恒其德，贞。妇人吉，夫子凶</strong> ： 坚守恒道。各安其位，才是恒。对妇人来说，柔顺和专一不变，从一而终为恒道。对夫子（或领导者）应该制订法则、以义理行事，需要刚健有为，裁决事物，需因时因地制宜，若亦固守不变、随妇柔顺，则失其刚断，故凶。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>以阴居尊，不可以制义，柔宜从一。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>阴柔居尊，以柔守正为宜。若以其柔从事制义，则反凶。</code></p>
-</li>
-<li><p><code>妇人之道，以贞顺为吉；夫子以制义为正，若效妇人之贞顺，则失其位，故凶。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">振恒。凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：振恒在上，大无功也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>振恒在上，大无功也</strong> ： 振，震动、摇摆。上六居恒之终，阴柔处最高位，本当静以守成；然以阴居动极（震体之上），愈动愈躁，不但凶，而且毫无功劳。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>处恒之终，而不能安静，动以失度，故凶。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>动之终也，失恒之道，故大无功。</code></p>
-</li>
-<li><p><code>恒当久，不当动。六处恒之上而振动，故凶也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之雷天大壮</title>
     <url>/20251124093910/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="雷天大壮"><a href="#雷天大壮" class="headerlink" title="雷天大壮"></a>雷天大壮</h1><p><img src="https://i.0920811.xyz/img_379.png"></p>
@@ -38628,6 +38500,134 @@ width: 20%;
 <p>  <code>以文明之师，正邦国之乱。折其首恶之人，所获皆非本邦之善民也，故无咎。</code></p>
 </li>
 <li><p><code>王者用其明德出而征讨，能诛其首恶，又不伤其同类之善人，故曰有嘉而无咎。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之雷风恒</title>
+    <url>/20251121122040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="雷风恒"><a href="#雷风恒" class="headerlink" title="雷风恒"></a>雷风恒</h1><p><img src="https://i.0920811.xyz/img_377.png"></p>
+<p>雷风恒，下（内）巽（风、入）上（外）震（雷、动），恒者，久也，表示永恒、长久。咸卦是男女夫妻感应交流，恒卦是夫妻感情永固、长长久久。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">恒，亨，无咎，利贞，利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：恒，久也。刚上而柔下。雷风相与，巽而动，刚柔皆应，恒。恒亨，无咎，利贞，久于其道也。天地之道，恒久而不已也。利有攸往，终则有始也。日月得天而能久照，四时变化而能久成，圣人久于其道而天下化成。观其所恒，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：雷风恒，君子以立不易方。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>刚上而柔下。雷风相与，巽而动，刚柔皆应</strong> ： 雷风恒卦由地天泰卦的六四和初九交换位置而来，泰卦初九上到九四、六四下到初六，是为刚上而柔下。上震为雷为动、下巽为风为入，是为雷风相与（和雷风相簿同意，风助雷势、雷助风威），巽而动。雷风恒卦各爻皆有正应，是为刚柔皆应。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">浚恒，贞凶，无攸利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：浚恒之凶，始求深也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>浚(jùn)恒之凶，始求深也</strong> ： 浚，疏浚、深挖、深掘。初六爻代表事物或状态的初创阶段，根基未固，柔爻居于刚位（阳位），其性柔弱却急于求成，上应九四，志望过高，故有 “始求深” 之失</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>浚，求深也。初六以柔乘刚，力不能恒，而乃求深，是以凶也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>初六以浅近之资，不可以深固之恒。强以求之，是自招其凶。</code></p>
+</li>
+<li><p><code>恒者，宜常久。初位最浅，不可求深。始而求深，必致凶害。</code></p>
+</li>
+</ul>
+<h2 id="九二"><a href="#九二" class="headerlink" title="九二"></a>九二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">悔亡</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：九二悔亡，能久中也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>悔亡</strong> ： 象征着能够坚守中道，以中正之道求恒久。九二是阳爻居于阴位（不正），本来会有一些小小的悔恨或疑虑（“悔” 指小疵、小过），但它居于下卦的中位（得中），“中” 象征着适中、恰到好处、不偏不倚的原则。九二与上卦的六五（君位）是正应（刚柔相应）。六五是柔中之主，九二是刚中之臣，刚柔相济。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>二得中正，居恒之宜，故悔亡也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九二以刚居中，得恒之正。能守之，则无悔也。</code></p>
+</li>
+<li><p><code>刚中得正，能长久之道，故悔亡。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不恒其德，或承之羞，贞吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：不恒其德，无所容也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不恒其德，或承之羞</strong> ： 九三是阳居阳位，处下卦之终，刚而过中。虽然有恒久之心，但其刚猛之性，使其德行容易变动不定，不能长期保持中正。九三与上卦的上六（阴爻）是正应，但上六处于卦之极位，本身也不是稳定之象。固执于这种不稳定的德行（“贞吝”），则会陷入困境和麻烦</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处动之极，而不中正，故不恒其德也。失其恒，则或承羞辱。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>德不恒，则为人所弃。贞而吝者，守其失也。</code></p>
+</li>
+<li><p><code>三以刚处动，志变易，不能恒守其德。人所共恶，无所容处。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">田无禽。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：久非其位，安得禽也</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>田无禽</strong> ： 田，同畋，田猎、打猎、狩猎。《周易》中没有 “畋”，田和禽在一起，通常指田猎、打猎，象征付出努力、经营、有所求。无禽，指飞禽走兽，象征成果、收获、猎物。田无禽象征出外打猎却抓不到任何猎物、付出没有收获。</li>
+</ul>
+<p>九四是阳爻居于阴位，位置不当（非其位）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>四以刚居柔，不当其位，动则无功，故田无禽。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>以刚处柔，不得恒也。妄动无功，故曰田无禽。</code></p>
+</li>
+<li><p><code>久非其位，不能恒守，故虽田亦无禽也。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">恒其德，贞。妇人吉，夫子凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：妇人贞吉，从一而终也。夫子制义，从妇凶也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>恒其德，贞。妇人吉，夫子凶</strong> ： 坚守恒道。各安其位，才是恒。对妇人来说，柔顺和专一不变，从一而终为恒道。对夫子（或领导者）应该制订法则、以义理行事，需要刚健有为，裁决事物，需因时因地制宜，若亦固守不变、随妇柔顺，则失其刚断，故凶。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>以阴居尊，不可以制义，柔宜从一。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>阴柔居尊，以柔守正为宜。若以其柔从事制义，则反凶。</code></p>
+</li>
+<li><p><code>妇人之道，以贞顺为吉；夫子以制义为正，若效妇人之贞顺，则失其位，故凶。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">振恒。凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：振恒在上，大无功也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>振恒在上，大无功也</strong> ： 振，震动、摇摆。上六居恒之终，阴柔处最高位，本当静以守成；然以阴居动极（震体之上），愈动愈躁，不但凶，而且毫无功劳。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>处恒之终，而不能安静，动以失度，故凶。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>动之终也，失恒之道，故大无功。</code></p>
+</li>
+<li><p><code>恒当久，不当动。六处恒之上而振动，故凶也。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -39488,151 +39488,6 @@ width: 20%;
 
 <ul>
 <li><strong>何天之衢，道大行也</strong> ： 何，荷，负荷、担负、背负。衢，十字路口、交通要道。 “其德刚上而尚贤”，上九为贤，尚贤则可推行其道，能大行于天下，能实现自己的理想和抱负之象。</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之水地比</title>
-    <url>/20250915163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水地比"><a href="#水地比" class="headerlink" title="水地比"></a>水地比</h1><p><img src="https://i.0920811.xyz/img_347.png"></p>
-<p>比，上坎下坤，内顺外险，比卦卦象为水在地上，表示万物聚集，互帮互助。强调 团结、辅助和顺从的重要性。九五尊位刚中得正，为全挂主爻。比卦和师卦互为覆卦。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比，吉。原筮，元永贞，无咎。不宁方来，后夫凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：比，吉也；比，辅也，下顺从也。原筮，元永贞，无咎，以刚中也。不宁方来，上下应也。后夫凶，其道穷也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地上有水，比;先王以建万国，亲诸侯。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>比</strong> ： 亲比、亲近、团结、辅佐。卦象是水在地上，表示万物聚集，群体互助。</li>
-<li><strong>筮</strong> ： 代表蓍草占法，本义是用 <strong>蓍草（一种草本植物，学名石蒜科蓍草）占问</strong> 。与 <strong>卜（龟甲占问）</strong> 相对。</li>
-<li><strong>原筮，元永贞</strong> ： 原，初始、根本。元，初始、开始、创始、根本。永，长久坚持、长期、持续。 <strong>元永贞 是 比 的核心准则</strong> ： 元（初始纯正，动机向善）、永（长久坚持，不朝三暮四）、贞（坚守正道，不违道义）。全卦九二唯一阳爻、主爻，其他阴爻都会归附亲比九五，吉无咎。</li>
-<li><strong>不宁方来</strong> ： 宁，安定、安宁。 方，刚刚、刚才。 <strong>不宁方来</strong> 指刚刚从不安、动荡中来。指从 <a href="https://0920811.xyz/20250908163229/">师卦</a> 而来，师卦为用师、不安宁时期，到了比卦才安定、安宁下来。</li>
-<li><strong>后夫凶</strong> ： <strong>后夫</strong> ，指迟迟不愿归附、错失比辅时机，或坚持背离正道、妄图独自硬撑的人（或势力）。说明团结的时机稍纵即逝，先机最为关键。指上六爻。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚比之，无咎。有孚盈缶，终来有它吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之初六，有它吉也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>有孚比之，无咎</strong> ： 有孚，有诚信、诚心、信任、笃实。以真诚、诚信和信任为基础进行团结合作时，就不会有灾祸。</li>
-<li><strong>有孚盈缶（fǒu），终来有它吉</strong> ： 缶，古代民间盛放酒水的朴素器皿、粗陶的瓦器，非贵重华丽礼器，可象征 质朴、本真，不刻意修饰。 <em>有孚盈缶</em> 象征内心充满诚信。 <em>有它吉</em> 意为另外的吉祥，初六距离九五最远，从绝远的地方来归顺亲比天子（九五），和邻近的小国来亲比归附，有更大的意义，更加的吉祥。</li>
-<li><strong>比之初六，有它吉也</strong> ： 九五离初六最远，初六都能亲比归附，格外吉祥。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>孚盈缶者，实也。信满而实，则虽贱而可用。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>诚信之比，虽卑微而感通，终得他助，故吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>缶，瓦器，贱而实。言信实充满，不在乎华丽。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之自内，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之自内，不自失也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>比之自内，不自失也。</strong> ： 内在本心（内心）诚心诚正，而非外部压力（如被迫依附）或功利诱惑（如为谋私利结党），就不会迷失本性。</li>
-</ul>
-<p>六二阴爻居阴位，居中得正，正应九五。比合发于内心，而非外饰附会。下卦坤，也可代表众，要以真诚真心团结众人，先从内部开始团结。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>比之要在内，不在外。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>比必自内，内诚而正，则吉。六二处中得正，不失其位，能以诚相比。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>二以阴居中，得正。“比自内”即发自中正之德，不假外饰。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之匪人。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之匪人，不亦伤乎!</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>匪人</strong> ： 非其人，不正当之人、歹人。</li>
-</ul>
-<p>六三阴爻居阳位，处于下卦之上，阴爻不中不正，上比六四之阴爻，而不比九五之刚中，所结交者非正道之人。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>比之贵在正应。六三不中不正，不应九五之君，而比六四之阴，是失正也。故曰“匪人”。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六三不中不正，所相比者不当。若亲比非正之人，则终致祸害。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>三以阴居阳，不中不正。上承六四之阴，不应九五之阳，所比非其正人。故曰“比之匪人”。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">外比之，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：外比于贤，以从上也。</span><br></pre></td></tr></table></figure>
-
-<p>六四阴爻居阴位得正， <strong>下为内，上为外</strong> ，位置 <strong>外</strong> 。 <strong>外比</strong> 是指比附于贤（九五）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六四在外卦，能比于九五贤君，所以吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六四舍弃下卦之匪人（六三），而上比九五贤，守正则吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六四以阴居柔，得正，又在外卦，亲比九五，故“贞吉”。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">显比，王用三驱，失前禽。邑人不诫，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：显比之吉，位正中也。舍逆取顺，失前禽也。邑人不诫，上使中也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>显比</strong> ： 显，光明、公开、正大光明、堂堂正正。 君王以光明正大的态度推行亲比之道，其联结他人的动机与行为皆坦荡磊落。</li>
-<li><strong>王用三驱，失前禽</strong> ： 三驱，是古代君王田猎的礼仪， 田猎时不设四面围网，仅从左、右、后三方驱赶禽兽，前方留白（象征 网开一面）。 <strong>失前禽</strong> 指前方的禽兽因无围堵而逃走，君王不刻意追捕。</li>
-<li><strong>邑人不诫</strong> ： 邑，城、城都、城邑。邑人指城都得人、即百姓。诫，戒备、惶恐、怀疑、不信任。因君王的亲比之道光明无私（中正），百姓感受到其仁德与公正，无需因 <strong>被联结</strong> 而心生戒备，整个社会呈现和谐信任的氛围</li>
-</ul>
-<p>九五阳爻居阳位，刚健处尊位而居中得正。</p>
-<p><strong>王用三驱，失前禽</strong> 象征 君王在 <strong>亲比（团结） 中秉持 舍逆取顺 的原则</strong> ，对主动归顺、顺应道义者（如后方、左右被驱赶来的禽兽）接纳团结；对不愿归附、背离道义者（如前方逃走的禽兽）不强行逼迫，体现 <strong>不强求、不压制、不绝对控制、给与一定自由和空间</strong> 的包容态度，即 以德服人。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>显比者，比而不隐。九五居尊中，明德之比也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五中正之君，明德昭显，以仁义相比。“三驱”示其不逼，舍逆取顺。比人以道，百姓安之，不生猜忌，所以吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五刚中居尊，显然中正，故曰“显比”</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之无首，凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之无首，无所终也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>比之无首</strong> ： 上六爻位于比卦的最上方，象征着团结合作的最后阶段。这里的 <strong>无首</strong> 指的是没有首领、没有领导核心，或者没有明确的方向和目标。</li>
-<li><strong>无所终也</strong> ： <strong>无所终</strong> 是对 <strong>无首</strong> 后果的精准概括，亲比若 无首（无起始原则、无核心统领），本质是 无始，而 无始 必然导致 无终（没有结果）</li>
-</ul>
-<p>上六处卦之极，阴爻居柔，既不居中，又不应九五，与贤者失联。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>比贵有首。上六处比之极，无正应，失所依。故曰“比之无首，凶”。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>比必有主。上六处比之终，却无所应，失其正比。无所依归，终则败坏，所以凶。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>上六阴柔不中正，又远离九五，不得正应。故其比“无首”。“无所终也”，比而无所归附，自然不能有善终。</code></p>
-</li>
 </ul>
 ]]></content>
       <categories>
@@ -42095,5 +41950,150 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之水地比</title>
+    <url>/20250915163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水地比"><a href="#水地比" class="headerlink" title="水地比"></a>水地比</h1><p><img src="https://i.0920811.xyz/img_347.png"></p>
+<p>比，上坎下坤，内顺外险，比卦卦象为水在地上，表示万物聚集，互帮互助。强调 团结、辅助和顺从的重要性。九五尊位刚中得正，为全挂主爻。比卦和师卦互为覆卦。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比，吉。原筮，元永贞，无咎。不宁方来，后夫凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：比，吉也；比，辅也，下顺从也。原筮，元永贞，无咎，以刚中也。不宁方来，上下应也。后夫凶，其道穷也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地上有水，比;先王以建万国，亲诸侯。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>比</strong> ： 亲比、亲近、团结、辅佐。卦象是水在地上，表示万物聚集，群体互助。</li>
+<li><strong>筮</strong> ： 代表蓍草占法，本义是用 <strong>蓍草（一种草本植物，学名石蒜科蓍草）占问</strong> 。与 <strong>卜（龟甲占问）</strong> 相对。</li>
+<li><strong>原筮，元永贞</strong> ： 原，初始、根本。元，初始、开始、创始、根本。永，长久坚持、长期、持续。 <strong>元永贞 是 比 的核心准则</strong> ： 元（初始纯正，动机向善）、永（长久坚持，不朝三暮四）、贞（坚守正道，不违道义）。全卦九二唯一阳爻、主爻，其他阴爻都会归附亲比九五，吉无咎。</li>
+<li><strong>不宁方来</strong> ： 宁，安定、安宁。 方，刚刚、刚才。 <strong>不宁方来</strong> 指刚刚从不安、动荡中来。指从 <a href="https://0920811.xyz/20250908163229/">师卦</a> 而来，师卦为用师、不安宁时期，到了比卦才安定、安宁下来。</li>
+<li><strong>后夫凶</strong> ： <strong>后夫</strong> ，指迟迟不愿归附、错失比辅时机，或坚持背离正道、妄图独自硬撑的人（或势力）。说明团结的时机稍纵即逝，先机最为关键。指上六爻。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚比之，无咎。有孚盈缶，终来有它吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之初六，有它吉也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>有孚比之，无咎</strong> ： 有孚，有诚信、诚心、信任、笃实。以真诚、诚信和信任为基础进行团结合作时，就不会有灾祸。</li>
+<li><strong>有孚盈缶（fǒu），终来有它吉</strong> ： 缶，古代民间盛放酒水的朴素器皿、粗陶的瓦器，非贵重华丽礼器，可象征 质朴、本真，不刻意修饰。 <em>有孚盈缶</em> 象征内心充满诚信。 <em>有它吉</em> 意为另外的吉祥，初六距离九五最远，从绝远的地方来归顺亲比天子（九五），和邻近的小国来亲比归附，有更大的意义，更加的吉祥。</li>
+<li><strong>比之初六，有它吉也</strong> ： 九五离初六最远，初六都能亲比归附，格外吉祥。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>孚盈缶者，实也。信满而实，则虽贱而可用。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>诚信之比，虽卑微而感通，终得他助，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>缶，瓦器，贱而实。言信实充满，不在乎华丽。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之自内，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之自内，不自失也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>比之自内，不自失也。</strong> ： 内在本心（内心）诚心诚正，而非外部压力（如被迫依附）或功利诱惑（如为谋私利结党），就不会迷失本性。</li>
+</ul>
+<p>六二阴爻居阴位，居中得正，正应九五。比合发于内心，而非外饰附会。下卦坤，也可代表众，要以真诚真心团结众人，先从内部开始团结。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>比之要在内，不在外。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>比必自内，内诚而正，则吉。六二处中得正，不失其位，能以诚相比。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>二以阴居中，得正。“比自内”即发自中正之德，不假外饰。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之匪人。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之匪人，不亦伤乎!</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>匪人</strong> ： 非其人，不正当之人、歹人。</li>
+</ul>
+<p>六三阴爻居阳位，处于下卦之上，阴爻不中不正，上比六四之阴爻，而不比九五之刚中，所结交者非正道之人。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>比之贵在正应。六三不中不正，不应九五之君，而比六四之阴，是失正也。故曰“匪人”。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六三不中不正，所相比者不当。若亲比非正之人，则终致祸害。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>三以阴居阳，不中不正。上承六四之阴，不应九五之阳，所比非其正人。故曰“比之匪人”。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">外比之，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：外比于贤，以从上也。</span><br></pre></td></tr></table></figure>
+
+<p>六四阴爻居阴位得正， <strong>下为内，上为外</strong> ，位置 <strong>外</strong> 。 <strong>外比</strong> 是指比附于贤（九五）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六四在外卦，能比于九五贤君，所以吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六四舍弃下卦之匪人（六三），而上比九五贤，守正则吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六四以阴居柔，得正，又在外卦，亲比九五，故“贞吉”。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">显比，王用三驱，失前禽。邑人不诫，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：显比之吉，位正中也。舍逆取顺，失前禽也。邑人不诫，上使中也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>显比</strong> ： 显，光明、公开、正大光明、堂堂正正。 君王以光明正大的态度推行亲比之道，其联结他人的动机与行为皆坦荡磊落。</li>
+<li><strong>王用三驱，失前禽</strong> ： 三驱，是古代君王田猎的礼仪， 田猎时不设四面围网，仅从左、右、后三方驱赶禽兽，前方留白（象征 网开一面）。 <strong>失前禽</strong> 指前方的禽兽因无围堵而逃走，君王不刻意追捕。</li>
+<li><strong>邑人不诫</strong> ： 邑，城、城都、城邑。邑人指城都得人、即百姓。诫，戒备、惶恐、怀疑、不信任。因君王的亲比之道光明无私（中正），百姓感受到其仁德与公正，无需因 <strong>被联结</strong> 而心生戒备，整个社会呈现和谐信任的氛围</li>
+</ul>
+<p>九五阳爻居阳位，刚健处尊位而居中得正。</p>
+<p><strong>王用三驱，失前禽</strong> 象征 君王在 <strong>亲比（团结） 中秉持 舍逆取顺 的原则</strong> ，对主动归顺、顺应道义者（如后方、左右被驱赶来的禽兽）接纳团结；对不愿归附、背离道义者（如前方逃走的禽兽）不强行逼迫，体现 <strong>不强求、不压制、不绝对控制、给与一定自由和空间</strong> 的包容态度，即 以德服人。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>显比者，比而不隐。九五居尊中，明德之比也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五中正之君，明德昭显，以仁义相比。“三驱”示其不逼，舍逆取顺。比人以道，百姓安之，不生猜忌，所以吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五刚中居尊，显然中正，故曰“显比”</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之无首，凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之无首，无所终也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>比之无首</strong> ： 上六爻位于比卦的最上方，象征着团结合作的最后阶段。这里的 <strong>无首</strong> 指的是没有首领、没有领导核心，或者没有明确的方向和目标。</li>
+<li><strong>无所终也</strong> ： <strong>无所终</strong> 是对 <strong>无首</strong> 后果的精准概括，亲比若 无首（无起始原则、无核心统领），本质是 无始，而 无始 必然导致 无终（没有结果）</li>
+</ul>
+<p>上六处卦之极，阴爻居柔，既不居中，又不应九五，与贤者失联。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>比贵有首。上六处比之极，无正应，失所依。故曰“比之无首，凶”。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>比必有主。上六处比之终，却无所应，失其正比。无所依归，终则败坏，所以凶。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>上六阴柔不中正，又远离九五，不得正应。故其比“无首”。“无所终也”，比而无所归附，自然不能有善终。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
   </entry>
 </search>
