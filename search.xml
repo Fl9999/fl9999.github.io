@@ -26845,6 +26845,105 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Loki 部署使用</title>
+    <url>/20260416162300/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Loki 是 Grafana 体系里的日志聚合系统，设计思路和 Prometheus 很像，但处理对象是日志。它和传统全文检索型日志系统的最大区别是： <strong>默认只索引标签（labels），不索引整条日志正文</strong> ，所以存储成本通常更低，扩展性也更好，特别适合 Kubernetes、Docker、主机系统日志、应用日志统一汇聚场景。</p>
+<p>截至 2026-04-16，Promtail 已经 EOL，新的采集端优先建议使用 <strong>Grafana Alloy</strong> ；另外，Loki 本身不内置认证层，生产环境应放在 Nginx 等反向代理或网关之后。</p>
+<p>它的典型链路是：</p>
+<p><strong>日志源 → 采集器（Alloy） → Loki → Grafana 查询与展示</strong></p>
+<p>其中：</p>
+<ul>
+<li><strong>Loki</strong> 负责接收、压缩、存储、查询日志。</li>
+<li><strong>Alloy</strong> 负责在主机或 K8s 节点上收集日志、打标签、做预处理，再推送到 Loki。</li>
+<li><strong>Grafana</strong> 负责可视化、检索、告警。</li>
+</ul>
+<p>Loki 核心架构逻辑上常见有这些组件：</p>
+<ul>
+<li><strong>Distributor</strong> ：接收写入请求</li>
+<li><strong>Ingester</strong> ：缓存并写入日志块</li>
+<li><strong>Querier</strong> ：执行查询</li>
+<li><strong>Query Frontend</strong> ：查询拆分与缓存</li>
+<li><strong>Compactor</strong> ：压缩、整理、保留策略</li>
+<li><strong>Index &#x2F; Storage</strong> ：索引和日志对象存储</li>
+</ul>
+<p><strong>标签设计建议</strong></p>
+<p>Loki 的性能很大程度取决于标签设计，因此标签设计非常关键。</p>
+<p><strong>建议保留低基数标签</strong> ：</p>
+<ul>
+<li><strong>job</strong></li>
+<li><strong>host</strong></li>
+<li><strong>env</strong></li>
+<li><strong>app</strong></li>
+<li><strong>namespace</strong></li>
+<li><strong>pod</strong></li>
+<li><strong>container</strong></li>
+</ul>
+<p><strong>不要把高基数内容做成标签</strong> ：</p>
+<ul>
+<li><strong>user_id</strong></li>
+<li><strong>request_id</strong></li>
+<li><strong>trace_id</strong></li>
+<li><strong>URL 全路径</strong></li>
+<li><strong>错误详情</strong></li>
+<li><strong>SQL 文本</strong></li>
+</ul>
+<p>官方文档强调 labels 是 Loki 的核心组织方式，但标签过多、基数过高会带来性能和成本问题。</p>
+<h1 id="Docker-Compose-部署示例"><a href="#Docker-Compose-部署示例" class="headerlink" title="Docker Compose 部署示例"></a>Docker Compose 部署示例</h1><ul>
+<li>Loki version 3.7.1</li>
+<li>alloy, version v1.15.1</li>
+</ul>
+<figure class="highlight yaml"><figcaption><span>docker-compose.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">loki:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/loki:latest</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&#x27;-config.file=/etc/loki/config.yaml&#x27;</span>    </span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3100:3100&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/loki/:/etc/loki/:ro&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/loki/:/data/loki&quot;</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">grafana:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/grafana</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3000:3000&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/grafana/:/etc/grafana/&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/grafana/:/var/lib/grafana/&quot;</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">  <span class="attr">alloy:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/alloy</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">alloy</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;12345:12345&quot;</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">run</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--server.http.listen-addr=0.0.0.0:12345</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--storage.path=/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/alloy/config.alloy</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/alloy/:/etc/alloy/:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./data/alloy/:/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/var/run/docker.sock:/var/run/docker.sock</span></span><br></pre></td></tr></table></figure>
+
+<p>主配置文件 <code>/etc/loki/config.yaml</code> 内容参考：</p>
+<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">ring:</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span></span><br><span class="line">  <span class="attr">filesystem:</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span></span><br></pre></td></tr></table></figure>
+
+<p>Alloy 配置文件参考：</p>
+<figure class="highlight yaml"><figcaption><span>config/alloy/config.alloy</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="string">logging</span> &#123;</span><br><span class="line">  <span class="string">level</span>  <span class="string">=</span> <span class="string">&quot;info&quot;</span></span><br><span class="line">  <span class="string">format</span> <span class="string">=</span> <span class="string">&quot;logfmt&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.relabel</span> <span class="string">&quot;docker_logs&quot;</span> &#123;</span><br><span class="line">  <span class="string">targets</span> <span class="string">=</span> <span class="string">discovery.docker.containers.targets</span></span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_name&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;container&quot;</span></span><br><span class="line">    <span class="string">regex</span>         <span class="string">=</span> <span class="string">&quot;/(.*)&quot;</span></span><br><span class="line">    <span class="string">replacement</span>   <span class="string">=</span> <span class="string">&quot;$1&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_log_stream&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;stream&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_label_com_docker_compose_service&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;service&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.source.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span>       <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">  <span class="string">targets</span>    <span class="string">=</span> <span class="string">discovery.relabel.docker_logs.output</span></span><br><span class="line">  <span class="string">forward_to</span> <span class="string">=</span> [<span class="string">loki.write.local.receiver</span>]</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.write</span> <span class="string">&quot;local&quot;</span> &#123;</span><br><span class="line">  <span class="string">endpoint</span> &#123;</span><br><span class="line">    <span class="string">url</span> <span class="string">=</span> <span class="string">&quot;http://loki:3100/loki/api/v1/push&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">external_labels</span> <span class="string">=</span> &#123;</span><br><span class="line">    <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;prometheus-jumpserver&quot;</span>,</span><br><span class="line">    <span class="string">env</span>  <span class="string">=</span> <span class="string">&quot;prod&quot;</span>,</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启动成功后，在 Grafana 中添加新的 Data Source。即可在 Grafana 中查看到日志。</p>
+<h1 id="配置文件详解"><a href="#配置文件详解" class="headerlink" title="配置文件详解"></a>配置文件详解</h1><h2 id="Loki-配置文件"><a href="#Loki-配置文件" class="headerlink" title="Loki 配置文件"></a>Loki 配置文件</h2><ul>
+<li>Loki version 3.7.1</li>
+</ul>
+<p>以下配置适用于单机、单副本、本地文件系统、保留 7 天数据的 Liki</p>
+<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span>      <span class="comment"># Loki 的 HTTP 服务监听端口。Grafana、Alloy 或自己用 curl 查询 Loki API 时，默认都会连这个端口。官方配置文档把 server 作为 Loki 进程网络与服务行为的基础配置入口。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span>                      <span class="comment"># Loki 多组件共用的基础参数（通用运行参数）。</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span>         <span class="comment"># Loki 的本地工作目录前缀。很多组件的临时文件、索引缓存、压缩过程中的文件、规则文件等，都可能基于这个路径展开。官方示例中常见把它设成 /loki。在 Docker 部署中需要持久化</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span>      <span class="comment"># 只保留 1 份副本。这适合单机或非高可用测试环境。官方示例中单机 / 简化部署也常用 1。想要高可用，通常需要 &gt;1，并配套 ring/多节点/对象存储</span></span><br><span class="line">  <span class="attr">ring:</span>                      <span class="comment"># ring 是分布式 Loki 用来协调实例状态、分片、接收写入等的关键机制。</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span>        <span class="comment"># 表示 Loki 的 ring 元数据存储在内存里。好处是简单，坏处是进程重启后状态不持久，也不适合多实例生产。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span>               <span class="comment"># 存储 schema 定义。这部分是 Loki 最关键的配置之一。schema 是按时间段生效的，Loki 会根据日志时间决定使用哪套 schema 来存储和查询数据。</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span>     <span class="comment"># 表示从 2024-01-01 开始写入的数据，使用下面这一整套 schema。from 是时间分界点；如果后面再新增一条新 schema，比如 from: &quot;2026-05-01&quot;，那么之后的数据就会按新 schema 存。</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span>            <span class="comment"># 使用 TSDB 索引。从 Loki 2.8 起，TSDB 是推荐的索引方式，更高效、更快、可扩展性更好。</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span>     <span class="comment"># 日志块和相关对象数据存到本地文件系统，而不是 S3、GCS、Azure Blob 之类的对象存储。正式环境应该优先使用 S3 / MinIO / GCS 等对象存储</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span>                  <span class="comment"># 这是 schema 版本。官方升级文档明确说，Structured Metadata 要求 active schema 同时使用 tsdb 和 v13；迁移文档也把 v13 作为推荐版本。</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span>             <span class="comment"># 索引前缀名。 Loki 会按自己的规则生成索引对象名或目录名，这个前缀就是命名的开头。</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span>                <span class="comment"># 这是非常关键的参数，表示索引按 24 小时切分。官方 retention 文档明确说明，retention 仅支持 24h index period。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span>                    <span class="comment"># 底层存储配置</span></span><br><span class="line">  <span class="attr">filesystem:</span>                      <span class="comment"># schema 配置了 object_store: filesystem，就需要给 filesystem 指定目录。</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span>        <span class="comment"># 这个目录用于保存 Loki 的日志块数据。简单说，日志正文压缩后的 chunk 文件会在这里。你容器删除或这个目录丢失，就会失去本地日志数据。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span>                     <span class="comment"># 限制与功能开关。控制 Loki 的一些行为限制和特性。官方升级文档、structured metadata 文档以及 retention 相关文档都涉及这里的配置项。</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span>  <span class="comment"># 允许 Loki 使用 Structured Metadata（某些字段可以作为结构化元数据随日志返回）。官方说明，Structured Metadata 在 Loki 3.0 默认已启用，但前提是你的 active schema 必须是 TSDB + v13；如果不是，就需要关闭或迁移。</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span>           <span class="comment"># 全局日志保留 168 小时，也就是 7 天。这个只是“希望保留多久”，真正执行删除还依赖 compactor 配置正确，并且索引周期满足要求</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span>                                 <span class="comment"># 压缩与保留删除执行者，Compactor 不只是做压缩，也负责 retention 相关处理。</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span>       <span class="comment"># compactor 的工作目录，用来存放压缩、保留、删除流程中的临时文件或处理中间状态。</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span>                  <span class="comment"># 表示打开 retention 机制。没有这个，即使你写了 retention_period，compactor 也只会做压缩，不会执行基于保留期的删除。</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span>         <span class="comment"># 若启用 retention，必须配置 delete_request_store；它决定删除请求存在哪种后端里。</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="Alloy-配置文件详解"><a href="#Alloy-配置文件详解" class="headerlink" title="Alloy 配置文件详解"></a>Alloy 配置文件详解</h2><ul>
+<li>alloy, version v1.15.1</li>
+</ul>
+<p>Alloy 配置文件本质上是在描述一条 <strong>数据流水线</strong></p>
+<ul>
+<li><strong>发现目标 → 读取数据 → 处理&#x2F;加标签 → 写到 Loki &#x2F; Prometheus &#x2F; OTLP 等后端</strong></li>
+</ul>
+<p>Alloy 的配置语法由两类基础元素组成： <strong>attributes（属性） 和 blocks（块）</strong> 。属性用 <code>key = value</code> 赋值，块用来定义组件实例和嵌套配置。</p>
+<p>Alloy 官方把一些顶层块称为 <strong>configuration blocks</strong> ，它们用于配置 Alloy 进程本身，不是在采集业务日志或者输出日志。比如：</p>
+<ul>
+<li><code>logging</code></li>
+<li><code>tracing</code></li>
+<li><code>http</code></li>
+<li><code>livedebugging</code></li>
+<li><code>import.*</code></li>
+</ul>
+<p>Linux 下 Alloy 默认配置文件路径是 <code>/etc/alloy/config.alloy</code></p>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">logging &#123;                      # 配置 Alloy 自己的日志</span><br><span class="line">  level  = &quot;info&quot;              # Alloy 自己输出 info 级别日志</span><br><span class="line">  format = &quot;logfmt&quot;            # 输出为 logfmt 格式</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.docker &quot;containers&quot; &#123;             # 发现 Docker 容器，discovery.docker 会把每个容器映射成 target。</span><br><span class="line">  host = &quot;unix:///var/run/docker.sock&quot;      # 连接 Docker daemon、从 Docker 中发现容器目标、暴露出一组可供下游使用的 targets。要生效，你的容器通常要挂载 /var/run/docker.sock</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.relabel &quot;docker_logs&quot; &#123;                   # 重写或补充标签。把 Docker 自动发现到的元标签，转成在 Loki/Grafana 里更好用的业务标签。labels 是 Loki 的核心组织方式，必须谨慎设计，避免高基数标签。</span><br><span class="line">  targets = discovery.docker.containers.targets     # </span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_name&quot;]</span><br><span class="line">    target_label  = &quot;container&quot;</span><br><span class="line">    regex         = &quot;/(.*)&quot;</span><br><span class="line">    replacement   = &quot;$1&quot;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_label_com_docker_compose_service&quot;]</span><br><span class="line">    target_label  = &quot;service&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.source.docker &quot;containers&quot; &#123;                      # 读取 Docker 日志，这是日志采集核心。</span><br><span class="line">  host       = &quot;unix:///var/run/docker.sock&quot;           # 连接哪个 Docker daemon</span><br><span class="line">  targets    = discovery.docker.containers.targets     # 从哪里拿目标列表，从 discovery.docker &quot;containers&quot; 获取目标容器列表</span><br><span class="line">  forward_to = [loki.write.local.receiver]             # 日志下一步发给谁。把当前读到的日志，发给 loki.write &quot;local&quot; 这个组件的 receiver。</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.write &quot;local&quot; &#123;                                   # 接收来自其他 Loki 组件的日志，把日志发到 Loki，这是输出端。</span><br><span class="line">  endpoint &#123;                                           # 定义目标 Loki 地址</span><br><span class="line">    url = &quot;http://loki:3100/loki/api/v1/push&quot;</span><br><span class="line">  &#125;</span><br><span class="line">  external_labels = &#123;                                  # 给所有发出去的日志统一追加静态标签。</span><br><span class="line">    host = &quot;prometheus-jumpserver&quot;,                    # 所有日志自动打上 host=prometheus-jumpserver，env=prod 标签</span><br><span class="line">    env  = &quot;prod&quot;,</span><br><span class="line">  &#125;  </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>可以把 Alloy 理解成 <strong>组件图</strong> 。比如上面的配置链路：</p>
+<ul>
+<li><code>discovery.docker</code> (用于 Docker 目标发现)去发现 Docker 容器</li>
+<li><code>loki.source.docker</code> 读取这些容器的日志，并转发给其他 <code>loki.*</code> 组件</li>
+<li><code>loki.write</code> 把日志发给 Loki，用于接收日志并通过 Loki logproto 发往远端 Loki</li>
+</ul>
+<p>如果不是采集 Docker，而是采集文件日志，这时通常会用：</p>
+<ul>
+<li><code>loki.source.file</code></li>
+<li><code>local.file_match</code></li>
+</ul>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">loki.source.file &quot;files&quot; &#123;</span><br><span class="line">  file_match &#123;</span><br><span class="line">    path_targets = [</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/*.log&quot;, &quot;job&quot; = &quot;system&quot;&#125;,</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/nginx/*.log&quot;, &quot;job&quot; = &quot;nginx&quot;&#125;,</span><br><span class="line">    ]</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  forward_to = [loki.write.local.receiver]</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+  </entry>
+  <entry>
     <title>LVM 逻辑卷管理</title>
     <url>/202208021256/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>LVM 是 Logical Volume Manager(逻辑卷管理)的简写,LVM 将一个或多个硬盘或分区在逻辑上集合，相当于一个大硬盘来使用，当硬盘的空间不够使用的时候，可以继续将其它的硬盘或分区加入其中，这样可以实现磁盘空间的动态管理，相对于普通的磁盘分区有很大的灵活性。与传统的磁盘与分区相比，LVM 为计算机提供了更高层次的磁盘存储。它使系统管理员可以更方便的为应用与用户分配存储空间。  </p>
@@ -26928,6 +27027,74 @@ width: 20%;
         <tag>Linux</tag>
         <tag>LVM</tag>
       </tags>
+  </entry>
+  <entry>
+    <title>孕妇妊娠油</title>
+    <url>/2026080713030/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>妊娠纹的形成与遗传、孕前体重、孕期体重增长速度、胎儿大小等因素关系很大。即使使用妊娠油，也不能保证完全不长妊娠纹。相比产品本身，更重要的是：</p>
+<ul>
+<li>保持体重按医生建议平稳增长；</li>
+<li>每天坚持保湿；</li>
+<li>保持充足饮水和均衡营养。</li>
+</ul>
+<p>这样更有利于维持皮肤状态，降低严重妊娠纹发生的风险。</p>
+<p><strong>妊娠油</strong> 建议优先考虑安全性、保湿能力和耐受性，而不是宣传的 “100%预防妊娠纹”，因为目前没有任何妊娠油或乳霜能够被高质量研究证实可以完全预防妊娠纹。它们的主要作用是保持皮肤滋润、缓解瘙痒、改善皮肤弹性。</p>
+<p>推荐等级</p>
+<h2 id="第一梯队（推荐）"><a href="#第一梯队（推荐）" class="headerlink" title="第一梯队（推荐）"></a>第一梯队（推荐）</h2><h3 id="Bio-Oil-Skincare-Oil（百洛护肤油）"><a href="#Bio-Oil-Skincare-Oil（百洛护肤油）" class="headerlink" title="Bio-Oil Skincare Oil（百洛护肤油）"></a>Bio-Oil Skincare Oil（百洛护肤油）</h3><p>推荐指数：★★★★★</p>
+<p>优点：</p>
+<ul>
+<li>全球使用广泛。</li>
+<li>质地较轻，容易吸收。</li>
+<li>对孕期皮肤干燥和瘙痒有帮助。</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>含有香精，如果你孕吐严重、对气味敏感，可能会觉得味道偏重。</li>
+</ul>
+<p>适合：</p>
+<ul>
+<li>大多数孕妇。</li>
+</ul>
+<h3 id="Mustela-Maternity-Stretch-Marks-Oil（妙思乐孕纹油）"><a href="#Mustela-Maternity-Stretch-Marks-Oil（妙思乐孕纹油）" class="headerlink" title="Mustela Maternity Stretch Marks Oil（妙思乐孕纹油）"></a>Mustela Maternity Stretch Marks Oil（妙思乐孕纹油）</h3><p>推荐指数：★★★★★</p>
+<p>优点：</p>
+<ul>
+<li>专门针对孕妇开发。</li>
+<li>99% 天然来源成分。</li>
+<li>不含矿物油、酒精、对羟基苯甲酸酯（Parabens）。</li>
+<li>气味通常较温和。</li>
+</ul>
+<p>适合：</p>
+<ul>
+<li>孕早期到产后持续使用。</li>
+</ul>
+<p>选择 105ml 无香版本</p>
+<h3 id="Weleda-Pregnancy-Body-Oil（维蕾德孕妇按摩油）"><a href="#Weleda-Pregnancy-Body-Oil（维蕾德孕妇按摩油）" class="headerlink" title="Weleda Pregnancy Body Oil（维蕾德孕妇按摩油）"></a>Weleda Pregnancy Body Oil（维蕾德孕妇按摩油）</h3><p>推荐指数：★★★★☆</p>
+<p>优点：</p>
+<ul>
+<li>天然植物油配方。</li>
+<li>保湿效果很好。</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>含植物精油，部分孕妇可能不喜欢气味。</li>
+</ul>
+<h2 id="第二梯队"><a href="#第二梯队" class="headerlink" title="第二梯队"></a>第二梯队</h2><h3 id="Palmer’s（帕玛氏）"><a href="#Palmer’s（帕玛氏）" class="headerlink" title="Palmer’s（帕玛氏）"></a>Palmer’s（帕玛氏）</h3><p>推荐指数：★★★★☆</p>
+<p>优点：</p>
+<ul>
+<li>性价比高。</li>
+<li>可可脂保湿能力不错。</li>
+<li>在菲律宾也比较容易买到。</li>
+</ul>
+<p>缺点：</p>
+<ul>
+<li>香味较明显。</li>
+</ul>
+<h2 id="需要避免的成分"><a href="#需要避免的成分" class="headerlink" title="需要避免的成分"></a>需要避免的成分</h2><p>孕期不建议选择含有以下成分的产品：</p>
+<p>❌ 维 A 酸（Retinoids &#x2F; Retinol）<br>❌ 高浓度水杨酸（Salicylic Acid）<br>❌ 来源不明的精油配方（尤其是未标明孕妇可用）</p>
+]]></content>
+      <categories>
+        <category>生活日常</category>
+      </categories>
   </entry>
   <entry>
     <title>mongodb 配置</title>
@@ -29814,74 +29981,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>孕妇妊娠油</title>
-    <url>/2026080713030/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>妊娠纹的形成与遗传、孕前体重、孕期体重增长速度、胎儿大小等因素关系很大。即使使用妊娠油，也不能保证完全不长妊娠纹。相比产品本身，更重要的是：</p>
-<ul>
-<li>保持体重按医生建议平稳增长；</li>
-<li>每天坚持保湿；</li>
-<li>保持充足饮水和均衡营养。</li>
-</ul>
-<p>这样更有利于维持皮肤状态，降低严重妊娠纹发生的风险。</p>
-<p><strong>妊娠油</strong> 建议优先考虑安全性、保湿能力和耐受性，而不是宣传的 “100%预防妊娠纹”，因为目前没有任何妊娠油或乳霜能够被高质量研究证实可以完全预防妊娠纹。它们的主要作用是保持皮肤滋润、缓解瘙痒、改善皮肤弹性。</p>
-<p>推荐等级</p>
-<h2 id="第一梯队（推荐）"><a href="#第一梯队（推荐）" class="headerlink" title="第一梯队（推荐）"></a>第一梯队（推荐）</h2><h3 id="Bio-Oil-Skincare-Oil（百洛护肤油）"><a href="#Bio-Oil-Skincare-Oil（百洛护肤油）" class="headerlink" title="Bio-Oil Skincare Oil（百洛护肤油）"></a>Bio-Oil Skincare Oil（百洛护肤油）</h3><p>推荐指数：★★★★★</p>
-<p>优点：</p>
-<ul>
-<li>全球使用广泛。</li>
-<li>质地较轻，容易吸收。</li>
-<li>对孕期皮肤干燥和瘙痒有帮助。</li>
-</ul>
-<p>缺点：</p>
-<ul>
-<li>含有香精，如果你孕吐严重、对气味敏感，可能会觉得味道偏重。</li>
-</ul>
-<p>适合：</p>
-<ul>
-<li>大多数孕妇。</li>
-</ul>
-<h3 id="Mustela-Maternity-Stretch-Marks-Oil（妙思乐孕纹油）"><a href="#Mustela-Maternity-Stretch-Marks-Oil（妙思乐孕纹油）" class="headerlink" title="Mustela Maternity Stretch Marks Oil（妙思乐孕纹油）"></a>Mustela Maternity Stretch Marks Oil（妙思乐孕纹油）</h3><p>推荐指数：★★★★★</p>
-<p>优点：</p>
-<ul>
-<li>专门针对孕妇开发。</li>
-<li>99% 天然来源成分。</li>
-<li>不含矿物油、酒精、对羟基苯甲酸酯（Parabens）。</li>
-<li>气味通常较温和。</li>
-</ul>
-<p>适合：</p>
-<ul>
-<li>孕早期到产后持续使用。</li>
-</ul>
-<p>选择 105ml 无香版本</p>
-<h3 id="Weleda-Pregnancy-Body-Oil（维蕾德孕妇按摩油）"><a href="#Weleda-Pregnancy-Body-Oil（维蕾德孕妇按摩油）" class="headerlink" title="Weleda Pregnancy Body Oil（维蕾德孕妇按摩油）"></a>Weleda Pregnancy Body Oil（维蕾德孕妇按摩油）</h3><p>推荐指数：★★★★☆</p>
-<p>优点：</p>
-<ul>
-<li>天然植物油配方。</li>
-<li>保湿效果很好。</li>
-</ul>
-<p>缺点：</p>
-<ul>
-<li>含植物精油，部分孕妇可能不喜欢气味。</li>
-</ul>
-<h2 id="第二梯队"><a href="#第二梯队" class="headerlink" title="第二梯队"></a>第二梯队</h2><h3 id="Palmer’s（帕玛氏）"><a href="#Palmer’s（帕玛氏）" class="headerlink" title="Palmer’s（帕玛氏）"></a>Palmer’s（帕玛氏）</h3><p>推荐指数：★★★★☆</p>
-<p>优点：</p>
-<ul>
-<li>性价比高。</li>
-<li>可可脂保湿能力不错。</li>
-<li>在菲律宾也比较容易买到。</li>
-</ul>
-<p>缺点：</p>
-<ul>
-<li>香味较明显。</li>
-</ul>
-<h2 id="需要避免的成分"><a href="#需要避免的成分" class="headerlink" title="需要避免的成分"></a>需要避免的成分</h2><p>孕期不建议选择含有以下成分的产品：</p>
-<p>❌ 维 A 酸（Retinoids &#x2F; Retinol）<br>❌ 高浓度水杨酸（Salicylic Acid）<br>❌ 来源不明的精油配方（尤其是未标明孕妇可用）</p>
-]]></content>
-      <categories>
-        <category>生活日常</category>
-      </categories>
-  </entry>
-  <entry>
     <title>Prometheus 安装配置</title>
     <url>/202211221610/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -30388,47 +30487,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Prometheus 抓取 Nginx 指标</title>
-    <url>/202306270947/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Prometheus 抓取 Nginx 运行时指标，主要有以下方法：</p>
-<ul>
-<li>Nginx 通过自己的 <code>stub_status</code> 页面 (需要 <code>with-http_stub_status_module</code> 模块支持) 暴露出了一些 Nginx 运行时的指标，较为简单，在 Prometheus 中对应的 Metrics 也少。 <code>nginx_exporter</code> 主要就是获取 <code>stub_status</code> 中内建的指标。</li>
-<li>可以通过 <code>nginx-vts-exporter</code> 监控 Nginx 更多的指标，但 <code>nginx-vts-exporter</code> 依赖于 Nginx 编译安装是添加的第三方模块 <code>nginx-module-vts</code> 来实现，指标更为丰富。建议使用此种监控方式。</li>
-</ul>
-<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Nginx stable 1.24.0</li>
-<li>nginx-vts-exporter v0.10.3</li>
-<li>nginx-module-vts v0.2.2</li>
-</ul>
-<h1 id="安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics"><a href="#安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics" class="headerlink" title="安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics"></a>安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics</h1><h2 id="Nginx-编译安装-nginx-module-vts-模块"><a href="#Nginx-编译安装-nginx-module-vts-模块" class="headerlink" title="Nginx 编译安装 nginx-module-vts 模块"></a>Nginx 编译安装 nginx-module-vts 模块</h2><a href="/202306270934/" title="Nginx 编译安装 nginx-module-vts 模块">Nginx 编译安装 nginx-module-vts 模块</a>
-
-<p>Nginx 安装了 <code>nginx-module-vts</code> 后，可以通过以下配置暴露运行时的指标</p>
-<figure class="highlight text"><figcaption><span>status.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vhost_traffic_status_zone;</span><br><span class="line">vhost_traffic_status_filter_by_host on;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">server&#123;</span><br><span class="line">    listen 8081;</span><br><span class="line">    server_name localhost;</span><br><span class="line">    location /status &#123;</span><br><span class="line">        vhost_traffic_status_display;</span><br><span class="line">        vhost_traffic_status_display_format html;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>重启 Nginx 后，访问 <code>http://localhost:8081/status</code> 即可查看到 Nginx 运行时的指标<br><img src="https://i.0920811.xyz/img_194.png"></p>
-<h2 id="安装-nginx-vts-exporter"><a href="#安装-nginx-vts-exporter" class="headerlink" title="安装 nginx-vts-exporter"></a>安装 nginx-vts-exporter</h2><p><a href="https://github.com/hnlq715/nginx-vts-exporter">nginx-vts-exporter github 官网</a></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/hnlq715/nginx-vts-exporter/releases/download/v0.10.3/nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">tar -xf nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">cp nginx-vts-exporter-0.10.3.linux-amd64/nginx-vts-exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>创建 <code>systemd</code> 管理配置文件 <code>/usr/lib/systemd/system/nginx-vts-exporter.service</code></p>
-<figure class="highlight ini"><figcaption><span>/usr/lib/systemd/system/nginx-vts-exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=nginx-vts-exporter</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">Type</span>=simple</span><br><span class="line"><span class="attr">User</span>=root</span><br><span class="line"><span class="attr">ExecStart</span>=/usr/bin/nginx-vts-exporter \</span><br><span class="line">  -nginx.scrape_timeout 10 \</span><br><span class="line">  -nginx.scrape_uri http://127.0.0.1:8081/status/format/json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启动服务，默认监听端口为 <code>9913</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable --now nginx-vts-exporter</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>浏览器访问 <code>localhost:9913/metrics</code> 即可看到 <code>nginx-vts-exporter</code> 暴露出来的 Metrics<br><img src="https://i.0920811.xyz/img_195.png"></p>
-<p>之后 Prometheus 可通过 <code>9913</code> 端口抓取监控数据。</p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Prometheus 指标汇总</title>
     <url>/202306061427/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -30660,6 +30718,47 @@ width: 20%;
         <category>Prometheus</category>
       </categories>
       <tags>
+        <tag>Prometheus</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Prometheus 抓取 Nginx 指标</title>
+    <url>/202306270947/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Prometheus 抓取 Nginx 运行时指标，主要有以下方法：</p>
+<ul>
+<li>Nginx 通过自己的 <code>stub_status</code> 页面 (需要 <code>with-http_stub_status_module</code> 模块支持) 暴露出了一些 Nginx 运行时的指标，较为简单，在 Prometheus 中对应的 Metrics 也少。 <code>nginx_exporter</code> 主要就是获取 <code>stub_status</code> 中内建的指标。</li>
+<li>可以通过 <code>nginx-vts-exporter</code> 监控 Nginx 更多的指标，但 <code>nginx-vts-exporter</code> 依赖于 Nginx 编译安装是添加的第三方模块 <code>nginx-module-vts</code> 来实现，指标更为丰富。建议使用此种监控方式。</li>
+</ul>
+<h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Nginx stable 1.24.0</li>
+<li>nginx-vts-exporter v0.10.3</li>
+<li>nginx-module-vts v0.2.2</li>
+</ul>
+<h1 id="安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics"><a href="#安装配置-nginx-vts-exporter-和-nginx-module-vts-来监控-Nginx-Metrics" class="headerlink" title="安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics"></a>安装配置 nginx-vts-exporter 和 nginx-module-vts 来监控 Nginx Metrics</h1><h2 id="Nginx-编译安装-nginx-module-vts-模块"><a href="#Nginx-编译安装-nginx-module-vts-模块" class="headerlink" title="Nginx 编译安装 nginx-module-vts 模块"></a>Nginx 编译安装 nginx-module-vts 模块</h2><a href="/202306270934/" title="Nginx 编译安装 nginx-module-vts 模块">Nginx 编译安装 nginx-module-vts 模块</a>
+
+<p>Nginx 安装了 <code>nginx-module-vts</code> 后，可以通过以下配置暴露运行时的指标</p>
+<figure class="highlight text"><figcaption><span>status.conf</span></figcaption><table><tr><td class="code"><pre><span class="line">vhost_traffic_status_zone;</span><br><span class="line">vhost_traffic_status_filter_by_host on;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">server&#123;</span><br><span class="line">    listen 8081;</span><br><span class="line">    server_name localhost;</span><br><span class="line">    location /status &#123;</span><br><span class="line">        vhost_traffic_status_display;</span><br><span class="line">        vhost_traffic_status_display_format html;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>重启 Nginx 后，访问 <code>http://localhost:8081/status</code> 即可查看到 Nginx 运行时的指标<br><img src="https://i.0920811.xyz/img_194.png"></p>
+<h2 id="安装-nginx-vts-exporter"><a href="#安装-nginx-vts-exporter" class="headerlink" title="安装 nginx-vts-exporter"></a>安装 nginx-vts-exporter</h2><p><a href="https://github.com/hnlq715/nginx-vts-exporter">nginx-vts-exporter github 官网</a></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">wget https://github.com/hnlq715/nginx-vts-exporter/releases/download/v0.10.3/nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">tar -xf nginx-vts-exporter-0.10.3.linux-amd64.tar.gz</span><br><span class="line">cp nginx-vts-exporter-0.10.3.linux-amd64/nginx-vts-exporter /usr/bin/</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>创建 <code>systemd</code> 管理配置文件 <code>/usr/lib/systemd/system/nginx-vts-exporter.service</code></p>
+<figure class="highlight ini"><figcaption><span>/usr/lib/systemd/system/nginx-vts-exporter.service</span></figcaption><table><tr><td class="code"><pre><span class="line"></span><br><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=nginx-vts-exporter</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">Type</span>=simple</span><br><span class="line"><span class="attr">User</span>=root</span><br><span class="line"><span class="attr">ExecStart</span>=/usr/bin/nginx-vts-exporter \</span><br><span class="line">  -nginx.scrape_timeout 10 \</span><br><span class="line">  -nginx.scrape_uri http://127.0.0.1:8081/status/format/json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启动服务，默认监听端口为 <code>9913</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">systemctl enable --now nginx-vts-exporter</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>浏览器访问 <code>localhost:9913/metrics</code> 即可看到 <code>nginx-vts-exporter</code> 暴露出来的 Metrics<br><img src="https://i.0920811.xyz/img_195.png"></p>
+<p>之后 Prometheus 可通过 <code>9913</code> 端口抓取监控数据。</p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
         <tag>Prometheus</tag>
       </tags>
   </entry>
@@ -33546,79 +33645,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>浏览器插件制作流程</title>
-    <url>/202510201739/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="目标与效果"><a href="#目标与效果" class="headerlink" title="目标与效果"></a>目标与效果</h1><ul>
-<li><p>打开浏览器扩展图标 → 弹出页 执行 <code>hello.py</code> → 在页面内看到输出</p>
-</li>
-<li><p>完全离线：不依赖 CDN；Pyodide 运行时随扩展打包</p>
-</li>
-<li><p>便于扩展：后续可把任何 Python 逻辑放进来</p>
-</li>
-<li><p>适用于以下浏览器</p>
-<ul>
-<li>Google Chrome 140</li>
-<li>Chromium Version 141</li>
-<li>Firefox</li>
-</ul>
-</li>
-</ul>
-<ol>
-<li><p><a href="https://github.com/pyodide/pyodide/releases">下载 Pyodide 离线包</a><br> <img src="https://i.0920811.xyz/img_366.png"></p>
-<ul>
-<li>用于浏览器扩展或本地部署（例如前端中直接运行 Python），通常选择 “full distribution” 版本，即包含所有 vendored 包（第三方库预打包）的大包。通常文件比较大（300 多 M）</li>
-<li>若你想减小体积，仅用基础功能，也可以选 “core” 版本（只含运行时和标准库）——然后手动引入其他包。</li>
-</ul>
-<p> 离线包解压后能看到 <code>pyodide.js / pyodide.wasm / python_stdlib.zip</code> （或 <code>pyodide_py.tar</code> 等）及若干 <code>.data/.json</code> 文件</p>
-</li>
-<li><p>创建项目目录结构。在任意空文件夹（例： <code>my-explorer-extension/</code> ）内创建如下结构：</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">my-explorer-extension/</span><br><span class="line">├─ manifest.json</span><br><span class="line">├─ popup.html</span><br><span class="line">├─ popup.js</span><br><span class="line">├─ py/</span><br><span class="line">│  └─ hello.py</span><br><span class="line">└─ pyodide/                 # ← 把 Pyodide 离线包整个丢进来</span><br><span class="line">   ├─ pyodide.js</span><br><span class="line">   ├─ pyodide.wasm</span><br><span class="line">   ├─ python_stdlib.zip</span><br><span class="line">   ├─ ...若干 .data/.json</span><br></pre></td></tr></table></figure>
-</li>
-<li><p>核心文件内容</p>
-<ol>
-<li><p><code>manifest.json</code> （Chromium MV3）</p>
- <figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;manifest_version&quot;</span><span class="punctuation">:</span> <span class="number">3</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;name&quot;</span><span class="punctuation">:</span> <span class="string">&quot;Python Hello (Pyodide)&quot;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;version&quot;</span><span class="punctuation">:</span> <span class="string">&quot;1.0.0&quot;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;action&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;default_title&quot;</span><span class="punctuation">:</span> <span class="string">&quot;Python Hello&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;default_popup&quot;</span><span class="punctuation">:</span> <span class="string">&quot;popup.html&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;icons&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span> <span class="attr">&quot;128&quot;</span><span class="punctuation">:</span> <span class="string">&quot;icon128.png&quot;</span> <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;web_accessible_resources&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">    <span class="punctuation">&#123;</span> <span class="attr">&quot;resources&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;pyodide/**&quot;</span><span class="punctuation">,</span> <span class="string">&quot;py/hello.py&quot;</span><span class="punctuation">]</span><span class="punctuation">,</span> <span class="attr">&quot;matches&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;&lt;all_urls&gt;&quot;</span><span class="punctuation">]</span> <span class="punctuation">&#125;</span></span><br><span class="line">  <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;content_security_policy&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;extension_pages&quot;</span><span class="punctuation">:</span> <span class="string">&quot;script-src &#x27;self&#x27; &#x27;wasm-unsafe-eval&#x27;; object-src &#x27;none&#x27;;&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br></pre></td></tr></table></figure></li>
-</ol>
-<ul>
-<li><p>不得加载远程脚本（CDN）。Pyodide 必须随扩展打包。</p>
-</li>
-<li><p>WASM 权限： <code>&#39;wasm-unsafe-eval&#39;</code> 让扩展页能加载 WebAssembly。</p>
-</li>
-<li><p><code>web_accessible_resources</code> 允许在扩展页面读取 <code>pyodide/**</code> 和 <code>py/hello.py</code> 。</p>
-</li>
-</ul>
-<ol start="2">
-<li><p><code>popup.html</code> 点击扩展后的弹出页面 HTML</p>
- <figure class="highlight text"><table><tr><td class="code"><pre><span class="line">&lt;!doctype html&gt;</span><br><span class="line">&lt;html&gt;</span><br><span class="line">  &lt;head&gt;</span><br><span class="line">    &lt;meta charset=&quot;utf-8&quot; /&gt;</span><br><span class="line">    &lt;title&gt;Python Hello&lt;/title&gt;</span><br><span class="line">    &lt;style&gt;</span><br><span class="line">      body &#123; font: 14px/1.4 system-ui, sans-serif; padding: 12px; width: 360px; &#125;</span><br><span class="line">      button &#123; padding: 8px 12px; border-radius: 8px; border: 1px solid #ddd; &#125;</span><br><span class="line">      #status &#123; margin: 8px 0; color: #666; &#125;</span><br><span class="line">      pre &#123; background: #f6f6f6; padding: 10px; border-radius: 8px; min-height: 80px; &#125;</span><br><span class="line">    &lt;/style&gt;</span><br><span class="line">  &lt;/head&gt;</span><br><span class="line">  &lt;body&gt;</span><br><span class="line">    &lt;h3&gt;Run Python in a Chrome Extension&lt;/h3&gt;</span><br><span class="line">    &lt;div id=&quot;status&quot;&gt;Loading Python runtime…&lt;/div&gt;</span><br><span class="line">    &lt;button id=&quot;run&quot; disabled&gt;Run hello.py&lt;/button&gt;</span><br><span class="line">    &lt;pre id=&quot;out&quot;&gt;[output will appear here]&lt;/pre&gt;</span><br><span class="line">    &lt;script src=&quot;popup.js&quot;&gt;&lt;/script&gt;</span><br><span class="line">  &lt;/body&gt;</span><br><span class="line">&lt;/html&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p><code>popup.js</code></p>
- <figure class="highlight javascript"><table><tr><td class="code"><pre><span class="line"><span class="keyword">let</span> pyodide;</span><br><span class="line"><span class="keyword">const</span> statusEl = <span class="variable language_">document</span>.<span class="title function_">getElementById</span>(<span class="string">&quot;status&quot;</span>);</span><br><span class="line"><span class="keyword">const</span> outEl = <span class="variable language_">document</span>.<span class="title function_">getElementById</span>(<span class="string">&quot;out&quot;</span>);</span><br><span class="line"><span class="keyword">const</span> runBtn = <span class="variable language_">document</span>.<span class="title function_">getElementById</span>(<span class="string">&quot;run&quot;</span>);</span><br><span class="line"></span><br><span class="line">(<span class="keyword">async</span> () =&gt; &#123;</span><br><span class="line">  <span class="keyword">try</span> &#123;</span><br><span class="line">    <span class="comment">// 1) 从扩展内部动态导入 pyodide.js</span></span><br><span class="line">    <span class="keyword">const</span> url = chrome.<span class="property">runtime</span>.<span class="title function_">getURL</span>(<span class="string">&quot;pyodide/pyodide.js&quot;</span>);</span><br><span class="line">    <span class="keyword">await</span> <span class="title function_">import</span>(url);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 2) 初始化 Pyodide；indexURL 指向扩展内的 pyodide 目录</span></span><br><span class="line">    pyodide = <span class="keyword">await</span> <span class="title function_">loadPyodide</span>(&#123;</span><br><span class="line">      <span class="attr">indexURL</span>: chrome.<span class="property">runtime</span>.<span class="title function_">getURL</span>(<span class="string">&quot;pyodide/&quot;</span>)</span><br><span class="line">    &#125;);</span><br><span class="line"></span><br><span class="line">    statusEl.<span class="property">textContent</span> = <span class="string">&quot;Python ready ✅&quot;</span>;</span><br><span class="line">    runBtn.<span class="property">disabled</span> = <span class="literal">false</span>;</span><br><span class="line">  &#125; <span class="keyword">catch</span> (e) &#123;</span><br><span class="line">    statusEl.<span class="property">textContent</span> = <span class="string">&quot;Failed to load Python runtime.&quot;</span>;</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">error</span>(e);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;)();</span><br><span class="line"></span><br><span class="line">runBtn.<span class="title function_">addEventListener</span>(<span class="string">&quot;click&quot;</span>, <span class="keyword">async</span> () =&gt; &#123;</span><br><span class="line">  runBtn.<span class="property">disabled</span> = <span class="literal">true</span>;</span><br><span class="line">  outEl.<span class="property">textContent</span> = <span class="string">&quot;Running hello.py…&quot;</span>;</span><br><span class="line">  <span class="keyword">try</span> &#123;</span><br><span class="line">    <span class="comment">// 3) 读取扩展内的 hello.py</span></span><br><span class="line">    <span class="keyword">const</span> helloUrl = chrome.<span class="property">runtime</span>.<span class="title function_">getURL</span>(<span class="string">&quot;py/hello.py&quot;</span>);</span><br><span class="line">    <span class="keyword">const</span> code = <span class="keyword">await</span> (<span class="keyword">await</span> <span class="title function_">fetch</span>(helloUrl)).<span class="title function_">text</span>();</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 4) 捕获 stdout</span></span><br><span class="line">    <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(<span class="string">`</span></span><br><span class="line"><span class="string">import sys</span></span><br><span class="line"><span class="string">class _Cap:</span></span><br><span class="line"><span class="string">    def __init__(self): self.buf=[]</span></span><br><span class="line"><span class="string">    def write(self, s): self.buf.append(s)</span></span><br><span class="line"><span class="string">    def flush(self): pass</span></span><br><span class="line"><span class="string">old_stdout = sys.stdout</span></span><br><span class="line"><span class="string">cap = _Cap()</span></span><br><span class="line"><span class="string">sys.stdout = cap</span></span><br><span class="line"><span class="string">`</span>);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 5) 执行 python 源码</span></span><br><span class="line">    <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(code);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 6) 取回缓冲</span></span><br><span class="line">    <span class="keyword">const</span> output = <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(<span class="string">&quot;&#x27;&#x27;.join(cap.buf)&quot;</span>);</span><br><span class="line">    outEl.<span class="property">textContent</span> = output;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 7) 复位 stdout（可选）</span></span><br><span class="line">    <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(<span class="string">&quot;sys.stdout = old_stdout&quot;</span>);</span><br><span class="line">  &#125; <span class="keyword">catch</span> (e) &#123;</span><br><span class="line">    outEl.<span class="property">textContent</span> = <span class="string">&quot;Error: &quot;</span> + e.<span class="property">message</span>;</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">error</span>(e);</span><br><span class="line">  &#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">    runBtn.<span class="property">disabled</span> = <span class="literal">false</span>;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p><code>py/hello.py</code>  Python 文件，本示例以输出内容为例</p>
- <figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="built_in">print</span>(<span class="string">&quot;hello world from Python inside a browser extension!&quot;</span>)</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
-</ol>
-</li>
-<li><p>在本地加载与试跑（Chromium）</p>
-<ol>
-<li>打开 <code>chrome://extensions</code></li>
-<li>右上角打开 <strong>开发者模式</strong></li>
-<li>选择 <strong>加载未打包的扩展程序</strong> ，在弹出窗口中选择示例程序目录，本示例为 <code>my-explorer-extension/</code></li>
-<li>正常加载扩展程序后，会在 <strong>我的扩展程序</strong> 中看到 <code>Python Hello (Pyodide) 1.0.0</code> ( <code>manifest.json</code> 文件中定义的扩展程序名称和版本)，点击浏览器的 <strong>扩展</strong> ，下拉列表中也会看到新加的扩展程序。<br> <img src="https://i.0920811.xyz/img_367.png"></li>
-<li>在扩展中选择 <code>Python Hello (Pyodide)</code> 执行，会弹出 <code>popup.html</code> 页面，并可以点击 <code>Run hello.py</code> 运行 Python 程序。<br> <img src="https://i.0920811.xyz/img_368.png"></li>
-</ol>
-</li>
-</ol>
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Manifest-is-not-valid-JSON-Can’t-read-file-Could-not-load-manifest"><a href="#Manifest-is-not-valid-JSON-Can’t-read-file-Could-not-load-manifest" class="headerlink" title="Manifest is not valid JSON. Can’t read file. Could not load manifest."></a>Manifest is not valid JSON. Can’t read file. Could not load manifest.</h2><p>在 Windows 系统上的 Chrome 中运行正常，Linux 中 Chromium Version 141.0.7390.54 (Official Build) snap (64-bit) 报错： <code>Error Manifest is not valid JSON. Can&#39;t read file. Could not load manifest.</code></p>
-<p><strong>原因</strong> ： 不是描述所说的 JSON 格式错误，而是因为 <strong>snap 沙箱读不到文件</strong> 。snap 版 Chromium 对文件访问有严格沙箱：默认只能读 <code>$HOME</code> 里的内容（比如 <code>~/Downloads</code> , <code>~/Documents</code> ）。如果扩展目录在 <strong>可移动磁盘 或 Windows 分区挂载（例如 <code>/media/xxx/…</code> 、 <code>/mnt/d/…</code> ）</strong> ，就会出现 <code>“Can’t read file”</code> 。 <strong>可以把扩展整个文件夹搬到家目录中尝试</strong></p>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Python</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>常用工具下载链接</title>
     <url>/202302041721/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="常用工具下载目录"><a href="#常用工具下载目录" class="headerlink" title="常用工具下载目录"></a>常用工具下载目录</h1><p><a href="https://s.0920811.xyz/file/">常用工具下载目录</a></p>
@@ -33712,6 +33738,79 @@ width: 20%;
       <categories>
         <category>Tools</category>
       </categories>
+  </entry>
+  <entry>
+    <title>浏览器插件制作流程</title>
+    <url>/202510201739/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="目标与效果"><a href="#目标与效果" class="headerlink" title="目标与效果"></a>目标与效果</h1><ul>
+<li><p>打开浏览器扩展图标 → 弹出页 执行 <code>hello.py</code> → 在页面内看到输出</p>
+</li>
+<li><p>完全离线：不依赖 CDN；Pyodide 运行时随扩展打包</p>
+</li>
+<li><p>便于扩展：后续可把任何 Python 逻辑放进来</p>
+</li>
+<li><p>适用于以下浏览器</p>
+<ul>
+<li>Google Chrome 140</li>
+<li>Chromium Version 141</li>
+<li>Firefox</li>
+</ul>
+</li>
+</ul>
+<ol>
+<li><p><a href="https://github.com/pyodide/pyodide/releases">下载 Pyodide 离线包</a><br> <img src="https://i.0920811.xyz/img_366.png"></p>
+<ul>
+<li>用于浏览器扩展或本地部署（例如前端中直接运行 Python），通常选择 “full distribution” 版本，即包含所有 vendored 包（第三方库预打包）的大包。通常文件比较大（300 多 M）</li>
+<li>若你想减小体积，仅用基础功能，也可以选 “core” 版本（只含运行时和标准库）——然后手动引入其他包。</li>
+</ul>
+<p> 离线包解压后能看到 <code>pyodide.js / pyodide.wasm / python_stdlib.zip</code> （或 <code>pyodide_py.tar</code> 等）及若干 <code>.data/.json</code> 文件</p>
+</li>
+<li><p>创建项目目录结构。在任意空文件夹（例： <code>my-explorer-extension/</code> ）内创建如下结构：</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">my-explorer-extension/</span><br><span class="line">├─ manifest.json</span><br><span class="line">├─ popup.html</span><br><span class="line">├─ popup.js</span><br><span class="line">├─ py/</span><br><span class="line">│  └─ hello.py</span><br><span class="line">└─ pyodide/                 # ← 把 Pyodide 离线包整个丢进来</span><br><span class="line">   ├─ pyodide.js</span><br><span class="line">   ├─ pyodide.wasm</span><br><span class="line">   ├─ python_stdlib.zip</span><br><span class="line">   ├─ ...若干 .data/.json</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>核心文件内容</p>
+<ol>
+<li><p><code>manifest.json</code> （Chromium MV3）</p>
+ <figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">  <span class="attr">&quot;manifest_version&quot;</span><span class="punctuation">:</span> <span class="number">3</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;name&quot;</span><span class="punctuation">:</span> <span class="string">&quot;Python Hello (Pyodide)&quot;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;version&quot;</span><span class="punctuation">:</span> <span class="string">&quot;1.0.0&quot;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;action&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;default_title&quot;</span><span class="punctuation">:</span> <span class="string">&quot;Python Hello&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;default_popup&quot;</span><span class="punctuation">:</span> <span class="string">&quot;popup.html&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;icons&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span> <span class="attr">&quot;128&quot;</span><span class="punctuation">:</span> <span class="string">&quot;icon128.png&quot;</span> <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;web_accessible_resources&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">    <span class="punctuation">&#123;</span> <span class="attr">&quot;resources&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;pyodide/**&quot;</span><span class="punctuation">,</span> <span class="string">&quot;py/hello.py&quot;</span><span class="punctuation">]</span><span class="punctuation">,</span> <span class="attr">&quot;matches&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span><span class="string">&quot;&lt;all_urls&gt;&quot;</span><span class="punctuation">]</span> <span class="punctuation">&#125;</span></span><br><span class="line">  <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">  <span class="attr">&quot;content_security_policy&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;extension_pages&quot;</span><span class="punctuation">:</span> <span class="string">&quot;script-src &#x27;self&#x27; &#x27;wasm-unsafe-eval&#x27;; object-src &#x27;none&#x27;;&quot;</span></span><br><span class="line">  <span class="punctuation">&#125;</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br></pre></td></tr></table></figure></li>
+</ol>
+<ul>
+<li><p>不得加载远程脚本（CDN）。Pyodide 必须随扩展打包。</p>
+</li>
+<li><p>WASM 权限： <code>&#39;wasm-unsafe-eval&#39;</code> 让扩展页能加载 WebAssembly。</p>
+</li>
+<li><p><code>web_accessible_resources</code> 允许在扩展页面读取 <code>pyodide/**</code> 和 <code>py/hello.py</code> 。</p>
+</li>
+</ul>
+<ol start="2">
+<li><p><code>popup.html</code> 点击扩展后的弹出页面 HTML</p>
+ <figure class="highlight text"><table><tr><td class="code"><pre><span class="line">&lt;!doctype html&gt;</span><br><span class="line">&lt;html&gt;</span><br><span class="line">  &lt;head&gt;</span><br><span class="line">    &lt;meta charset=&quot;utf-8&quot; /&gt;</span><br><span class="line">    &lt;title&gt;Python Hello&lt;/title&gt;</span><br><span class="line">    &lt;style&gt;</span><br><span class="line">      body &#123; font: 14px/1.4 system-ui, sans-serif; padding: 12px; width: 360px; &#125;</span><br><span class="line">      button &#123; padding: 8px 12px; border-radius: 8px; border: 1px solid #ddd; &#125;</span><br><span class="line">      #status &#123; margin: 8px 0; color: #666; &#125;</span><br><span class="line">      pre &#123; background: #f6f6f6; padding: 10px; border-radius: 8px; min-height: 80px; &#125;</span><br><span class="line">    &lt;/style&gt;</span><br><span class="line">  &lt;/head&gt;</span><br><span class="line">  &lt;body&gt;</span><br><span class="line">    &lt;h3&gt;Run Python in a Chrome Extension&lt;/h3&gt;</span><br><span class="line">    &lt;div id=&quot;status&quot;&gt;Loading Python runtime…&lt;/div&gt;</span><br><span class="line">    &lt;button id=&quot;run&quot; disabled&gt;Run hello.py&lt;/button&gt;</span><br><span class="line">    &lt;pre id=&quot;out&quot;&gt;[output will appear here]&lt;/pre&gt;</span><br><span class="line">    &lt;script src=&quot;popup.js&quot;&gt;&lt;/script&gt;</span><br><span class="line">  &lt;/body&gt;</span><br><span class="line">&lt;/html&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p><code>popup.js</code></p>
+ <figure class="highlight javascript"><table><tr><td class="code"><pre><span class="line"><span class="keyword">let</span> pyodide;</span><br><span class="line"><span class="keyword">const</span> statusEl = <span class="variable language_">document</span>.<span class="title function_">getElementById</span>(<span class="string">&quot;status&quot;</span>);</span><br><span class="line"><span class="keyword">const</span> outEl = <span class="variable language_">document</span>.<span class="title function_">getElementById</span>(<span class="string">&quot;out&quot;</span>);</span><br><span class="line"><span class="keyword">const</span> runBtn = <span class="variable language_">document</span>.<span class="title function_">getElementById</span>(<span class="string">&quot;run&quot;</span>);</span><br><span class="line"></span><br><span class="line">(<span class="keyword">async</span> () =&gt; &#123;</span><br><span class="line">  <span class="keyword">try</span> &#123;</span><br><span class="line">    <span class="comment">// 1) 从扩展内部动态导入 pyodide.js</span></span><br><span class="line">    <span class="keyword">const</span> url = chrome.<span class="property">runtime</span>.<span class="title function_">getURL</span>(<span class="string">&quot;pyodide/pyodide.js&quot;</span>);</span><br><span class="line">    <span class="keyword">await</span> <span class="title function_">import</span>(url);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 2) 初始化 Pyodide；indexURL 指向扩展内的 pyodide 目录</span></span><br><span class="line">    pyodide = <span class="keyword">await</span> <span class="title function_">loadPyodide</span>(&#123;</span><br><span class="line">      <span class="attr">indexURL</span>: chrome.<span class="property">runtime</span>.<span class="title function_">getURL</span>(<span class="string">&quot;pyodide/&quot;</span>)</span><br><span class="line">    &#125;);</span><br><span class="line"></span><br><span class="line">    statusEl.<span class="property">textContent</span> = <span class="string">&quot;Python ready ✅&quot;</span>;</span><br><span class="line">    runBtn.<span class="property">disabled</span> = <span class="literal">false</span>;</span><br><span class="line">  &#125; <span class="keyword">catch</span> (e) &#123;</span><br><span class="line">    statusEl.<span class="property">textContent</span> = <span class="string">&quot;Failed to load Python runtime.&quot;</span>;</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">error</span>(e);</span><br><span class="line">  &#125;</span><br><span class="line">&#125;)();</span><br><span class="line"></span><br><span class="line">runBtn.<span class="title function_">addEventListener</span>(<span class="string">&quot;click&quot;</span>, <span class="keyword">async</span> () =&gt; &#123;</span><br><span class="line">  runBtn.<span class="property">disabled</span> = <span class="literal">true</span>;</span><br><span class="line">  outEl.<span class="property">textContent</span> = <span class="string">&quot;Running hello.py…&quot;</span>;</span><br><span class="line">  <span class="keyword">try</span> &#123;</span><br><span class="line">    <span class="comment">// 3) 读取扩展内的 hello.py</span></span><br><span class="line">    <span class="keyword">const</span> helloUrl = chrome.<span class="property">runtime</span>.<span class="title function_">getURL</span>(<span class="string">&quot;py/hello.py&quot;</span>);</span><br><span class="line">    <span class="keyword">const</span> code = <span class="keyword">await</span> (<span class="keyword">await</span> <span class="title function_">fetch</span>(helloUrl)).<span class="title function_">text</span>();</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 4) 捕获 stdout</span></span><br><span class="line">    <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(<span class="string">`</span></span><br><span class="line"><span class="string">import sys</span></span><br><span class="line"><span class="string">class _Cap:</span></span><br><span class="line"><span class="string">    def __init__(self): self.buf=[]</span></span><br><span class="line"><span class="string">    def write(self, s): self.buf.append(s)</span></span><br><span class="line"><span class="string">    def flush(self): pass</span></span><br><span class="line"><span class="string">old_stdout = sys.stdout</span></span><br><span class="line"><span class="string">cap = _Cap()</span></span><br><span class="line"><span class="string">sys.stdout = cap</span></span><br><span class="line"><span class="string">`</span>);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 5) 执行 python 源码</span></span><br><span class="line">    <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(code);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 6) 取回缓冲</span></span><br><span class="line">    <span class="keyword">const</span> output = <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(<span class="string">&quot;&#x27;&#x27;.join(cap.buf)&quot;</span>);</span><br><span class="line">    outEl.<span class="property">textContent</span> = output;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// 7) 复位 stdout（可选）</span></span><br><span class="line">    <span class="keyword">await</span> pyodide.<span class="title function_">runPythonAsync</span>(<span class="string">&quot;sys.stdout = old_stdout&quot;</span>);</span><br><span class="line">  &#125; <span class="keyword">catch</span> (e) &#123;</span><br><span class="line">    outEl.<span class="property">textContent</span> = <span class="string">&quot;Error: &quot;</span> + e.<span class="property">message</span>;</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">error</span>(e);</span><br><span class="line">  &#125; <span class="keyword">finally</span> &#123;</span><br><span class="line">    runBtn.<span class="property">disabled</span> = <span class="literal">false</span>;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p><code>py/hello.py</code>  Python 文件，本示例以输出内容为例</p>
+ <figure class="highlight python"><table><tr><td class="code"><pre><span class="line"><span class="built_in">print</span>(<span class="string">&quot;hello world from Python inside a browser extension!&quot;</span>)</span><br><span class="line"></span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+</li>
+<li><p>在本地加载与试跑（Chromium）</p>
+<ol>
+<li>打开 <code>chrome://extensions</code></li>
+<li>右上角打开 <strong>开发者模式</strong></li>
+<li>选择 <strong>加载未打包的扩展程序</strong> ，在弹出窗口中选择示例程序目录，本示例为 <code>my-explorer-extension/</code></li>
+<li>正常加载扩展程序后，会在 <strong>我的扩展程序</strong> 中看到 <code>Python Hello (Pyodide) 1.0.0</code> ( <code>manifest.json</code> 文件中定义的扩展程序名称和版本)，点击浏览器的 <strong>扩展</strong> ，下拉列表中也会看到新加的扩展程序。<br> <img src="https://i.0920811.xyz/img_367.png"></li>
+<li>在扩展中选择 <code>Python Hello (Pyodide)</code> 执行，会弹出 <code>popup.html</code> 页面，并可以点击 <code>Run hello.py</code> 运行 Python 程序。<br> <img src="https://i.0920811.xyz/img_368.png"></li>
+</ol>
+</li>
+</ol>
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="Manifest-is-not-valid-JSON-Can’t-read-file-Could-not-load-manifest"><a href="#Manifest-is-not-valid-JSON-Can’t-read-file-Could-not-load-manifest" class="headerlink" title="Manifest is not valid JSON. Can’t read file. Could not load manifest."></a>Manifest is not valid JSON. Can’t read file. Could not load manifest.</h2><p>在 Windows 系统上的 Chrome 中运行正常，Linux 中 Chromium Version 141.0.7390.54 (Official Build) snap (64-bit) 报错： <code>Error Manifest is not valid JSON. Can&#39;t read file. Could not load manifest.</code></p>
+<p><strong>原因</strong> ： 不是描述所说的 JSON 格式错误，而是因为 <strong>snap 沙箱读不到文件</strong> 。snap 版 Chromium 对文件访问有严格沙箱：默认只能读 <code>$HOME</code> 里的内容（比如 <code>~/Downloads</code> , <code>~/Documents</code> ）。如果扩展目录在 <strong>可移动磁盘 或 Windows 分区挂载（例如 <code>/media/xxx/…</code> 、 <code>/mnt/d/…</code> ）</strong> ，就会出现 <code>“Can’t read file”</code> 。 <strong>可以把扩展整个文件夹搬到家目录中尝试</strong></p>
+]]></content>
+      <categories>
+        <category>Tools</category>
+      </categories>
+      <tags>
+        <tag>Python</tag>
+      </tags>
   </entry>
   <entry>
     <title>tcp/udp 端口连通性测试</title>
@@ -33952,79 +34051,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Vault Secrets Engine</title>
-    <url>/202307121444/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kubernetes 1.24</li>
-<li>Vault 1.14.0</li>
-</ul>
-<h1 id="kv"><a href="#kv" class="headerlink" title="kv"></a>kv</h1><p><code>Key/Value</code> 机密引擎是一个通用的键值存储，用于在 Vault 使用的物理存储中存储任意秘密。该后端可以以两种模式之一运行 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Key / Value](https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html)
-">[1]</span></a></sup></p>
-<ul>
-<li><code>kv v1</code> - 可以将其配置为存储密钥的单个值，只有最近写入的值会被保存下来</li>
-<li><code>kv v2</code> - 开启版本控制并存储每个键的一定数量版本的值。默认保留 10 个版本的值。</li>
-</ul>
-<h2 id="kv-Version-1"><a href="#kv-Version-1" class="headerlink" title="kv Version 1"></a>kv Version 1</h2><p>Version 1 的 KV Secret Engine 相比 v2 版本，有以下限制：</p>
-<ul>
-<li>不能使用 <code>vault kv</code> 的 <code>metadata</code> 、 <code>patch</code> 命令</li>
-<li>使用 <code>vault kv put</code> 写入的值会覆盖之前的内容，即只保存了最后一次写入的值。</li>
-</ul>
-<p>启用 version 1 的 kv 存储，没有 <code>-version</code> 选项时默认开启 version 1 版本的 kv：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets <span class="built_in">enable</span> -version=1 kv</span></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p><strong>与其他 Secret Engine 不同，kv 机密引擎不会强制执行 TTL 过期。即使设置了 <code>ttl</code> ，kv Secret Engine 也不会自行删除数据。</strong> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Key / Value](https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html)
-">[1]</span></a></sup></p>
-</blockquote>
-<h3 id="写入数据"><a href="#写入数据" class="headerlink" title="写入数据"></a>写入数据</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/mycorp/mydepartment/myproject/myapp/myapp-api/config db_type=mysql</span></span><br><span class="line">Success! Data written to: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/mycorp/mydepartment/myproject/myapp/myapp-api/config db_host=127.0.0.1</span></span><br><span class="line">Success! Data written to: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/mycorp/mydepartment/myproject/myapp/myapp-api/config db_port=3306</span></span><br><span class="line">Success! Data written to: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br></pre></td></tr></table></figure>
-
-<h3 id="列出键"><a href="#列出键" class="headerlink" title="列出键"></a>列出键</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets list</span></span><br><span class="line">Path          Type         Accessor              Description</span><br><span class="line">----          ----         --------              -----------</span><br><span class="line">cubbyhole/    cubbyhole    cubbyhole_e5c17df6    per-token private secret storage</span><br><span class="line">identity/     identity     identity_f0404cf8     identity store</span><br><span class="line">kv/           kv           kv_618be90b           n/a</span><br><span class="line">sys/          system       system_053aea79       system endpoints used for control, policy and debugging</span><br><span class="line">transit/      transit      transit_aaaaf63d      n/a</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">mycorp/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">mydepartment/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp/mydepartment</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">myproject/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp/mydepartment/myproject/myapp/myapp-api</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">No value found at kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="读取键值"><a href="#读取键值" class="headerlink" title="读取键值"></a>读取键值</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_port    3306</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>以上输出中，键 <code>kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</code> 的内容为 <code>db_port=3306</code> ，之前写入的其他数据被覆盖，只保留有最后一个写入</strong></p>
-<h3 id="删除键"><a href="#删除键" class="headerlink" title="删除键"></a>删除键</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv delete kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">Success! Data deleted (if it existed) at: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">No value found at kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<h2 id="kv-Version-2"><a href="#kv-Version-2" class="headerlink" title="kv Version 2"></a>kv Version 2</h2><p>kv Version 2 相比 Version 1，有以下改进</p>
-<ul>
-<li>version 2 支持多版本管理，默认保留 10 个版本</li>
-<li>version 2 支持 patch 操作，可以更新 key，而不是像 version 1 一样直接覆盖</li>
-<li>version 2 支持数据回滚操作</li>
-<li>version 2 保护了 <code>metadata</code> 元数据信息，里面可以看到多个版本的信息及其数据</li>
-</ul>
-<p>使用以下命令启用 version 2 版本的 kv，挂载路径为 <code>kv2</code></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets <span class="built_in">enable</span> -path=kv2 -version=2 kv</span></span><br><span class="line">Success! Enabled the kv secrets engine at: kv2/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets list</span></span><br><span class="line">Path          Type         Accessor              Description</span><br><span class="line">----          ----         --------              -----------</span><br><span class="line">cubbyhole/    cubbyhole    cubbyhole_e5c17df6    per-token private secret storage</span><br><span class="line">identity/     identity     identity_f0404cf8     identity store</span><br><span class="line">kv/           kv           kv_618be90b           n/a</span><br><span class="line">kv2/          kv           kv_2b51a6d6           n/a</span><br><span class="line">sys/          system       system_053aea79       system endpoints used for control, policy and debugging</span><br><span class="line">transit/      transit      transit_aaaaf63d      n/a</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="写入数据-1"><a href="#写入数据-1" class="headerlink" title="写入数据"></a>写入数据</h3><p>写入数据的语法和 version 1 相同</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv2/corp/department/project/app/api/config db_type=mysql</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>version 2 相比 version 1 重要的是多了 <strong>多版本管理</strong> 的功能，初次生成 key 并写入数据后，其 <code>version</code> 为 <code>1</code> 。</p>
-<h3 id="更新数据"><a href="#更新数据" class="headerlink" title="更新数据"></a>更新数据</h3><p>version 2 相比 version 1 的另一个重要功能是 <code>patch</code> 操作，可以更新原有的 <code>key</code> 内容，而不完全覆盖，这个功能是通过 <code>vault kv patch</code> 命令实现</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span> </span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv patch kv2/corp/department/project/app/api/config db_host=lcoalhost</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:15:18.525867051Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:15:18.525867051Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            2</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    lcoalhost</span><br><span class="line">db_type    mysql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><code>vault kv patch</code> 后，数据的 <code>version</code> 变为了 <code>2</code> ，因为 kv version 2 的多版本管理功能，旧的版本数据也被存储（默认保留 10 个版本），可以查看旧版本的数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get -version=1 kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="回滚操作"><a href="#回滚操作" class="headerlink" title="回滚操作"></a>回滚操作</h3><p>kv verions 2 因为有版本管理的功能，因此可以基于保存的多版本数据，进行数据版本回滚操作，此功能通过 <code>vault kv rollback</code> 命令实现</p>
-<p>以下命令演示了 <strong>数据的版本回滚操作</strong> ，可以实现基于以前的版本恢复数据。需要注意的是， <strong>执行 <code>rollback</code> 后的 <code>version</code> 值不是回滚的目标版本，而是一个新的版本，只是其数据内容和要回滚的目标版本的数据一致</strong> 。比如以下示例中，当前 <code>version</code> 为 <code>2</code> ，执行了 <code>vault kv rollback -version=1</code> 后，数据版本变成了 <code>version 3</code> ，而不是 <code>version 1</code> ，但是 <code>version 3</code> 和 <code>version 1</code> 的数据内容一模一样</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:15:18.525867051Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            2</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    lcoalhost</span><br><span class="line">db_type    mysql</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv rollback -version=1 kv2/corp/department/project/app/api/config</span></span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:18:34.86076686Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            3</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:18:34.86076686Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            3</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get -version=1 kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h3 id="查看-metadata"><a href="#查看-metadata" class="headerlink" title="查看 metadata"></a>查看 metadata</h3><p>查看 Key 的 <code>metadata</code> 数据，可以看到多个版本的数据</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv metadata get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================== Metadata Path ==================</span><br><span class="line">kv2/metadata/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">========== Metadata ==========</span><br><span class="line">Key                     Value</span><br><span class="line">---                     -----</span><br><span class="line">cas_required            false</span><br><span class="line">created_time            2023-07-14T02:13:57.086632928Z</span><br><span class="line">current_version         4</span><br><span class="line">custom_metadata         &lt;nil&gt;</span><br><span class="line">delete_version_after    0s</span><br><span class="line">max_versions            0</span><br><span class="line">oldest_version          0</span><br><span class="line">updated_time            2023-07-14T02:24:42.054033452Z</span><br><span class="line"></span><br><span class="line">====== Version 1 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:13:57.086632928Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br><span class="line">====== Version 2 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:15:18.525867051Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br><span class="line">====== Version 3 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:18:34.86076686Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br><span class="line">====== Version 4 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:24:42.054033452Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html">Key &#x2F; Value</a></p>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html">Key / Value</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Vault</category>
-      </categories>
-      <tags>
-        <tag>Vault</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Vault 介绍及安装配置</title>
     <url>/202307100928/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -34128,6 +34154,79 @@ width: 20%;
 <h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://thiscute.world/posts/experience-of-vault/#4-vault-agent-%E9%85%8D%E7%BD%AE">secrets 管理工具 Vault 的介绍、安装及使用</a></p>
 <p><a href="https://lonegunmanb.github.io/essential-vault/">Vault 中文手册</a></p>
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/internals/architecture">Vault High-Level Overview</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#install-vault">Installing Vault</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#dev-mode">Dev mode</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li><li id="fn:4"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">4.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#ha-mode">HA mode</a><a href="#fnref:4" rev="footnote"> ↩</a></span></li><li id="fn:5"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">5.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://developer.hashicorp.com/vault/docs/platform/k8s/helm/run#initialize-and-unseal-vault">Initialize and unseal Vault</a><a href="#fnref:5" rev="footnote"> ↩</a></span></li><li id="fn:6"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">6.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/5.%E5%90%AF%E5%8A%A8%E6%A0%87%E5%87%86%E7%9A%84Vault%E6%9C%8D%E5%8A%A1.html">Vault 中文手册</a><a href="#fnref:6" rev="footnote"> ↩</a></span></li><li id="fn:7"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">7.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/1.%E4%BB%80%E4%B9%88%E6%98%AFvault/6.Vault%E7%9A%84%E6%9E%B6%E6%9E%84.html">Vault的架构</a><a href="#fnref:7" rev="footnote"> ↩</a></span></li><li id="fn:8"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">8.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5.html">基本概念</a><a href="#fnref:8" rev="footnote"> ↩</a></span></li><li id="fn:9"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">9.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/2.%E5%9F%BA%E6%9C%AC%E6%A6%82%E5%BF%B5/2.%E5%B0%81%E5%8D%B0%E4%B8%8E%E8%A7%A3%E5%B0%81.html">封印与解封</a><a href="#fnref:9" rev="footnote"> ↩</a></span></li><li id="fn:10"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">10.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/4.%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6/overview.html">Vault 配置文件</a><a href="#fnref:10" rev="footnote"> ↩</a></span></li><li id="fn:11"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">11.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/9.%E5%AE%9E%E9%99%85%E6%A1%88%E4%BE%8B/1.%E5%8A%A0%E5%AF%86%E5%8D%B3%E6%9C%8D%E5%8A%A1.html">加密即服务</a><a href="#fnref:11" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Vault</category>
+      </categories>
+      <tags>
+        <tag>Vault</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Vault Secrets Engine</title>
+    <url>/202307121444/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.24</li>
+<li>Vault 1.14.0</li>
+</ul>
+<h1 id="kv"><a href="#kv" class="headerlink" title="kv"></a>kv</h1><p><code>Key/Value</code> 机密引擎是一个通用的键值存储，用于在 Vault 使用的物理存储中存储任意秘密。该后端可以以两种模式之一运行 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Key / Value](https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html)
+">[1]</span></a></sup></p>
+<ul>
+<li><code>kv v1</code> - 可以将其配置为存储密钥的单个值，只有最近写入的值会被保存下来</li>
+<li><code>kv v2</code> - 开启版本控制并存储每个键的一定数量版本的值。默认保留 10 个版本的值。</li>
+</ul>
+<h2 id="kv-Version-1"><a href="#kv-Version-1" class="headerlink" title="kv Version 1"></a>kv Version 1</h2><p>Version 1 的 KV Secret Engine 相比 v2 版本，有以下限制：</p>
+<ul>
+<li>不能使用 <code>vault kv</code> 的 <code>metadata</code> 、 <code>patch</code> 命令</li>
+<li>使用 <code>vault kv put</code> 写入的值会覆盖之前的内容，即只保存了最后一次写入的值。</li>
+</ul>
+<p>启用 version 1 的 kv 存储，没有 <code>-version</code> 选项时默认开启 version 1 版本的 kv：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets <span class="built_in">enable</span> -version=1 kv</span></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p><strong>与其他 Secret Engine 不同，kv 机密引擎不会强制执行 TTL 过期。即使设置了 <code>ttl</code> ，kv Secret Engine 也不会自行删除数据。</strong> <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[Key / Value](https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html)
+">[1]</span></a></sup></p>
+</blockquote>
+<h3 id="写入数据"><a href="#写入数据" class="headerlink" title="写入数据"></a>写入数据</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/mycorp/mydepartment/myproject/myapp/myapp-api/config db_type=mysql</span></span><br><span class="line">Success! Data written to: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/mycorp/mydepartment/myproject/myapp/myapp-api/config db_host=127.0.0.1</span></span><br><span class="line">Success! Data written to: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv/mycorp/mydepartment/myproject/myapp/myapp-api/config db_port=3306</span></span><br><span class="line">Success! Data written to: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br></pre></td></tr></table></figure>
+
+<h3 id="列出键"><a href="#列出键" class="headerlink" title="列出键"></a>列出键</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets list</span></span><br><span class="line">Path          Type         Accessor              Description</span><br><span class="line">----          ----         --------              -----------</span><br><span class="line">cubbyhole/    cubbyhole    cubbyhole_e5c17df6    per-token private secret storage</span><br><span class="line">identity/     identity     identity_f0404cf8     identity store</span><br><span class="line">kv/           kv           kv_618be90b           n/a</span><br><span class="line">sys/          system       system_053aea79       system endpoints used for control, policy and debugging</span><br><span class="line">transit/      transit      transit_aaaaf63d      n/a</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">mycorp/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">mydepartment/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp/mydepartment</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">myproject/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp/mydepartment/myproject/myapp/myapp-api</span></span><br><span class="line">Keys</span><br><span class="line">----</span><br><span class="line">config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv list kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">No value found at kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="读取键值"><a href="#读取键值" class="headerlink" title="读取键值"></a>读取键值</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_port    3306</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>以上输出中，键 <code>kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</code> 的内容为 <code>db_port=3306</code> ，之前写入的其他数据被覆盖，只保留有最后一个写入</strong></p>
+<h3 id="删除键"><a href="#删除键" class="headerlink" title="删除键"></a>删除键</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv delete kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">Success! Data deleted (if it existed) at: kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span></span><br><span class="line">No value found at kv/mycorp/mydepartment/myproject/myapp/myapp-api/config</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<h2 id="kv-Version-2"><a href="#kv-Version-2" class="headerlink" title="kv Version 2"></a>kv Version 2</h2><p>kv Version 2 相比 Version 1，有以下改进</p>
+<ul>
+<li>version 2 支持多版本管理，默认保留 10 个版本</li>
+<li>version 2 支持 patch 操作，可以更新 key，而不是像 version 1 一样直接覆盖</li>
+<li>version 2 支持数据回滚操作</li>
+<li>version 2 保护了 <code>metadata</code> 元数据信息，里面可以看到多个版本的信息及其数据</li>
+</ul>
+<p>使用以下命令启用 version 2 版本的 kv，挂载路径为 <code>kv2</code></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets <span class="built_in">enable</span> -path=kv2 -version=2 kv</span></span><br><span class="line">Success! Enabled the kv secrets engine at: kv2/</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault secrets list</span></span><br><span class="line">Path          Type         Accessor              Description</span><br><span class="line">----          ----         --------              -----------</span><br><span class="line">cubbyhole/    cubbyhole    cubbyhole_e5c17df6    per-token private secret storage</span><br><span class="line">identity/     identity     identity_f0404cf8     identity store</span><br><span class="line">kv/           kv           kv_618be90b           n/a</span><br><span class="line">kv2/          kv           kv_2b51a6d6           n/a</span><br><span class="line">sys/          system       system_053aea79       system endpoints used for control, policy and debugging</span><br><span class="line">transit/      transit      transit_aaaaf63d      n/a</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="写入数据-1"><a href="#写入数据-1" class="headerlink" title="写入数据"></a>写入数据</h3><p>写入数据的语法和 version 1 相同</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv put kv2/corp/department/project/app/api/config db_type=mysql</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>version 2 相比 version 1 重要的是多了 <strong>多版本管理</strong> 的功能，初次生成 key 并写入数据后，其 <code>version</code> 为 <code>1</code> 。</p>
+<h3 id="更新数据"><a href="#更新数据" class="headerlink" title="更新数据"></a>更新数据</h3><p>version 2 相比 version 1 的另一个重要功能是 <code>patch</code> 操作，可以更新原有的 <code>key</code> 内容，而不完全覆盖，这个功能是通过 <code>vault kv patch</code> 命令实现</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span> </span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv patch kv2/corp/department/project/app/api/config db_host=lcoalhost</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:15:18.525867051Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            2</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:15:18.525867051Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            2</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    lcoalhost</span><br><span class="line">db_type    mysql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><code>vault kv patch</code> 后，数据的 <code>version</code> 变为了 <code>2</code> ，因为 kv version 2 的多版本管理功能，旧的版本数据也被存储（默认保留 10 个版本），可以查看旧版本的数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get -version=1 kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="回滚操作"><a href="#回滚操作" class="headerlink" title="回滚操作"></a>回滚操作</h3><p>kv verions 2 因为有版本管理的功能，因此可以基于保存的多版本数据，进行数据版本回滚操作，此功能通过 <code>vault kv rollback</code> 命令实现</p>
+<p>以下命令演示了 <strong>数据的版本回滚操作</strong> ，可以实现基于以前的版本恢复数据。需要注意的是， <strong>执行 <code>rollback</code> 后的 <code>version</code> 值不是回滚的目标版本，而是一个新的版本，只是其数据内容和要回滚的目标版本的数据一致</strong> 。比如以下示例中，当前 <code>version</code> 为 <code>2</code> ，执行了 <code>vault kv rollback -version=1</code> 后，数据版本变成了 <code>version 3</code> ，而不是 <code>version 1</code> ，但是 <code>version 3</code> 和 <code>version 1</code> 的数据内容一模一样</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:15:18.525867051Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            2</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_host    lcoalhost</span><br><span class="line">db_type    mysql</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv rollback -version=1 kv2/corp/department/project/app/api/config</span></span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:18:34.86076686Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            3</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:18:34.86076686Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            3</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv get -version=1 kv2/corp/department/project/app/api/config</span></span><br><span class="line">================= Secret Path =================</span><br><span class="line">kv2/data/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">======= Metadata =======</span><br><span class="line">Key                Value</span><br><span class="line">---                -----</span><br><span class="line">created_time       2023-07-14T02:13:57.086632928Z</span><br><span class="line">custom_metadata    &lt;nil&gt;</span><br><span class="line">deletion_time      n/a</span><br><span class="line">destroyed          false</span><br><span class="line">version            1</span><br><span class="line"></span><br><span class="line">===== Data =====</span><br><span class="line">Key        Value</span><br><span class="line">---        -----</span><br><span class="line">db_type    mysql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h3 id="查看-metadata"><a href="#查看-metadata" class="headerlink" title="查看 metadata"></a>查看 metadata</h3><p>查看 Key 的 <code>metadata</code> 数据，可以看到多个版本的数据</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">vault kv metadata get kv2/corp/department/project/app/api/config</span></span><br><span class="line">================== Metadata Path ==================</span><br><span class="line">kv2/metadata/corp/department/project/app/api/config</span><br><span class="line"></span><br><span class="line">========== Metadata ==========</span><br><span class="line">Key                     Value</span><br><span class="line">---                     -----</span><br><span class="line">cas_required            false</span><br><span class="line">created_time            2023-07-14T02:13:57.086632928Z</span><br><span class="line">current_version         4</span><br><span class="line">custom_metadata         &lt;nil&gt;</span><br><span class="line">delete_version_after    0s</span><br><span class="line">max_versions            0</span><br><span class="line">oldest_version          0</span><br><span class="line">updated_time            2023-07-14T02:24:42.054033452Z</span><br><span class="line"></span><br><span class="line">====== Version 1 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:13:57.086632928Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br><span class="line">====== Version 2 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:15:18.525867051Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br><span class="line">====== Version 3 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:18:34.86076686Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br><span class="line">====== Version 4 ======</span><br><span class="line">Key              Value</span><br><span class="line">---              -----</span><br><span class="line">created_time     2023-07-14T02:24:42.054033452Z</span><br><span class="line">deletion_time    n/a</span><br><span class="line">destroyed        false</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h1><p><a href="https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html">Key &#x2F; Value</a></p>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://lonegunmanb.github.io/essential-vault/6.%E6%9C%BA%E5%AF%86%E5%BC%95%E6%93%8E/7.KV.html">Key / Value</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Tools</category>
         <category>Vault</category>
@@ -34272,148 +34371,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Shadowsocks VPN 使用</title>
-    <url>/20240924092814/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://shadowsocks.org/doc/what-is-shadowsocks.html">Shadowsocks 官网简介</a></p>
-<h1 id="基于-Python3-环境的-Shadowsocks-部署"><a href="#基于-Python3-环境的-Shadowsocks-部署" class="headerlink" title="基于 Python3 环境的 Shadowsocks 部署"></a>基于 Python3 环境的 Shadowsocks 部署</h1><p>执行以下命令之一安装 Shadowsocks (Python3 版本)</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip3 install git+https://github.com/shadowsocks/shadowsocks.git@master</span><br><span class="line"></span><br><span class="line">pip3 install shadowsocks</span><br></pre></td></tr></table></figure>
-
-<h1 id="配置-Shadowsocks"><a href="#配置-Shadowsocks" class="headerlink" title="配置 Shadowsocks"></a>配置 Shadowsocks</h1><p>创建一个配置文件，比如放在 <code>/etc/shadowsocks/config.json</code> 目录下。配置文件的内容如下：</p>
-<figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;server&quot;</span><span class="punctuation">:</span> <span class="string">&quot;0.0.0.0&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;server_port&quot;</span><span class="punctuation">:</span> <span class="number">8388</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_address&quot;</span><span class="punctuation">:</span> <span class="string">&quot;127.0.0.1&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_port&quot;</span><span class="punctuation">:</span> <span class="number">1080</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;password&quot;</span><span class="punctuation">:</span> <span class="string">&quot;your_password&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;timeout&quot;</span><span class="punctuation">:</span> <span class="number">300</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;method&quot;</span><span class="punctuation">:</span> <span class="string">&quot;aes-256-cfb&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;fast_open&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p><strong>配置选项说明</strong> ：</p>
-<ul>
-<li><code>server</code> ： 服务器监听的 IP 地址， <code>0.0.0.0</code> 表示监听所有接口。</li>
-<li><code>server_port</code> ： 服务器监听的端口，客户端连接到这个端口。</li>
-<li><code>password</code> ： 用于加密流量的密码，请设置一个强密码。</li>
-<li><code>method</code> ： 加密方法。<a href="https://shadowsocks.org/doc/configs.html">其他加密算法请参考官网</a></li>
-<li><code>timeout</code> ： 超时时间（秒）。</li>
-<li><code>fast_open</code> ： 如果启用 TCP Fast Open，请将其设置为 <code>true</code> ，但需要内核支持。</li>
-</ul>
-<h1 id="启动-Shadowsocks-服务"><a href="#启动-Shadowsocks-服务" class="headerlink" title="启动 Shadowsocks 服务"></a>启动 Shadowsocks 服务</h1><p>使用以下命令启动 Shadowsocks 服务，该命令会以后台进程的方式启动 Shadowsocks：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssserver -c /etc/shadowsocks/config.json -d start</span><br></pre></td></tr></table></figure>
-
-<p><strong>常用选项</strong> ：</p>
-<table>
-<thead>
-<tr>
-<th>选项</th>
-<th>说明</th>
-<th>示例</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>-h, --help</code></td>
-<td>打印帮助信息</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-d [start / stop / restart ]</code></td>
-<td>以 Daemon 方式（后台）运行</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--pid-file</code></td>
-<td>Daemon 模式启动时的 PID 文件路径</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--log-file</code></td>
-<td>Daemon 模式启动时日志文件路径</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--user</code></td>
-<td>运行服务的用户</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-v, -vv</code></td>
-<td><code>verbose</code> 模式</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-q, -qq</code></td>
-<td><code>quite</code> 模式</td>
-<td></td>
-</tr>
-<tr>
-<td><code>-c</code></td>
-<td>配置文件路径</td>
-<td><code>ssserver -c /etc/shadowsocks/config.json -d start</code></td>
-</tr>
-<tr>
-<td><code>-s</code></td>
-<td>指定服务端监听地址，默认为 <code>0.0.0.0</code> 。等同于配置文件中的 <code>server</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-p</code></td>
-<td>指定服务端监听端口，默认为 <code>8388</code> 。等同于配置文件中的 <code>server_port</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-k</code></td>
-<td>指定密码 。等同于配置文件中的 <code>password</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-m</code></td>
-<td>加密方法，默认为 <code>aes-256-cfb</code>   。 等同于配置文件中的 <code>method</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>-t</code></td>
-<td>超时时间（单位为 <code>秒</code> ），默认 300s 。 等同于配置文件中的 <code>timeout</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>--fast-open</code></td>
-<td>启用 <code>TCP_FASTOPEN</code> ，需要 <code>Linux 3.7+</code></td>
-<td></td>
-</tr>
-<tr>
-<td><code>--workers</code></td>
-<td><code>workers</code> 数量，Linux&#x2F;Unix 可用</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--forbidden-ip</code></td>
-<td><code>,</code> 分割的 IP 列表，在此列表中的 IP 禁止连接，即黑名单</td>
-<td></td>
-</tr>
-<tr>
-<td><code>--manager-address</code></td>
-<td>服务端 UDP 管理地址</td>
-<td></td>
-</tr>
-</tbody></table>
-<h2 id="为-Shadowsocks-配置-systemd-services-文件"><a href="#为-Shadowsocks-配置-systemd-services-文件" class="headerlink" title="为 Shadowsocks 配置 systemd services 文件"></a>为 Shadowsocks 配置 systemd services 文件</h2><p>参考以下内容，为 Shadowsocks 配置 systemd services 文件</p>
-<figure class="highlight ini"><figcaption><span>/etc/systemd/system/shadowsocks.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=Shadowsocks Proxy Server</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStart</span>=/usr/local/bin/ssserver -c /etc/shadowsocks/config.json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启用并启动 Shadowsocks 服务</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl enable shadowsocks</span><br><span class="line">sudo systemctl start shadowsocks</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>在客户端（如 Windows、macOS、iOS 或 Android）上，使用 Shadowsocks 客户端进行连接。</p>
-<p><strong>客户端配置</strong> ：</p>
-<ul>
-<li><code>服务器地址</code> ： 填写你服务器的公网 IP。</li>
-<li><code>服务器端口</code> ：填写 <code>config.json</code> 中的 <code>server_port</code> ，如 <code>8388</code> 。</li>
-<li><code>密码</code> ： 填写配置文件中的 <code>password</code> 。</li>
-<li><code>加密方法</code> ： 选择 <code>method</code> 中配置的加密方法，如 <code>aes-256-cfb</code> 。</li>
-</ul>
-<p>如果需要调试或查看运行日志，可以通过以下命令查看 Shadowsocks 的日志：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -u shadowsocks</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>VPN</category>
-      </categories>
-      <tags>
-        <tag>VPN</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Outline VPN 使用</title>
     <url>/20240926135814/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://getoutline.org/">Outline 官网</a></p>
@@ -34550,6 +34507,148 @@ width: 20%;
 <li><p>检查防火墙规则，确保能从外网访问 Server。输出相关信息。部署完成。</p>
 </li>
 </ol>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>VPN</category>
+      </categories>
+      <tags>
+        <tag>VPN</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Shadowsocks VPN 使用</title>
+    <url>/20240924092814/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><a href="https://shadowsocks.org/doc/what-is-shadowsocks.html">Shadowsocks 官网简介</a></p>
+<h1 id="基于-Python3-环境的-Shadowsocks-部署"><a href="#基于-Python3-环境的-Shadowsocks-部署" class="headerlink" title="基于 Python3 环境的 Shadowsocks 部署"></a>基于 Python3 环境的 Shadowsocks 部署</h1><p>执行以下命令之一安装 Shadowsocks (Python3 版本)</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">pip3 install git+https://github.com/shadowsocks/shadowsocks.git@master</span><br><span class="line"></span><br><span class="line">pip3 install shadowsocks</span><br></pre></td></tr></table></figure>
+
+<h1 id="配置-Shadowsocks"><a href="#配置-Shadowsocks" class="headerlink" title="配置 Shadowsocks"></a>配置 Shadowsocks</h1><p>创建一个配置文件，比如放在 <code>/etc/shadowsocks/config.json</code> 目录下。配置文件的内容如下：</p>
+<figure class="highlight json"><table><tr><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;server&quot;</span><span class="punctuation">:</span> <span class="string">&quot;0.0.0.0&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;server_port&quot;</span><span class="punctuation">:</span> <span class="number">8388</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_address&quot;</span><span class="punctuation">:</span> <span class="string">&quot;127.0.0.1&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;local_port&quot;</span><span class="punctuation">:</span> <span class="number">1080</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;password&quot;</span><span class="punctuation">:</span> <span class="string">&quot;your_password&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;timeout&quot;</span><span class="punctuation">:</span> <span class="number">300</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;method&quot;</span><span class="punctuation">:</span> <span class="string">&quot;aes-256-cfb&quot;</span><span class="punctuation">,</span> </span><br><span class="line">    <span class="attr">&quot;fast_open&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p><strong>配置选项说明</strong> ：</p>
+<ul>
+<li><code>server</code> ： 服务器监听的 IP 地址， <code>0.0.0.0</code> 表示监听所有接口。</li>
+<li><code>server_port</code> ： 服务器监听的端口，客户端连接到这个端口。</li>
+<li><code>password</code> ： 用于加密流量的密码，请设置一个强密码。</li>
+<li><code>method</code> ： 加密方法。<a href="https://shadowsocks.org/doc/configs.html">其他加密算法请参考官网</a></li>
+<li><code>timeout</code> ： 超时时间（秒）。</li>
+<li><code>fast_open</code> ： 如果启用 TCP Fast Open，请将其设置为 <code>true</code> ，但需要内核支持。</li>
+</ul>
+<h1 id="启动-Shadowsocks-服务"><a href="#启动-Shadowsocks-服务" class="headerlink" title="启动 Shadowsocks 服务"></a>启动 Shadowsocks 服务</h1><p>使用以下命令启动 Shadowsocks 服务，该命令会以后台进程的方式启动 Shadowsocks：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">ssserver -c /etc/shadowsocks/config.json -d start</span><br></pre></td></tr></table></figure>
+
+<p><strong>常用选项</strong> ：</p>
+<table>
+<thead>
+<tr>
+<th>选项</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-h, --help</code></td>
+<td>打印帮助信息</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-d [start / stop / restart ]</code></td>
+<td>以 Daemon 方式（后台）运行</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--pid-file</code></td>
+<td>Daemon 模式启动时的 PID 文件路径</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--log-file</code></td>
+<td>Daemon 模式启动时日志文件路径</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--user</code></td>
+<td>运行服务的用户</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-v, -vv</code></td>
+<td><code>verbose</code> 模式</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-q, -qq</code></td>
+<td><code>quite</code> 模式</td>
+<td></td>
+</tr>
+<tr>
+<td><code>-c</code></td>
+<td>配置文件路径</td>
+<td><code>ssserver -c /etc/shadowsocks/config.json -d start</code></td>
+</tr>
+<tr>
+<td><code>-s</code></td>
+<td>指定服务端监听地址，默认为 <code>0.0.0.0</code> 。等同于配置文件中的 <code>server</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-p</code></td>
+<td>指定服务端监听端口，默认为 <code>8388</code> 。等同于配置文件中的 <code>server_port</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-k</code></td>
+<td>指定密码 。等同于配置文件中的 <code>password</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-m</code></td>
+<td>加密方法，默认为 <code>aes-256-cfb</code>   。 等同于配置文件中的 <code>method</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>-t</code></td>
+<td>超时时间（单位为 <code>秒</code> ），默认 300s 。 等同于配置文件中的 <code>timeout</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>--fast-open</code></td>
+<td>启用 <code>TCP_FASTOPEN</code> ，需要 <code>Linux 3.7+</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>--workers</code></td>
+<td><code>workers</code> 数量，Linux&#x2F;Unix 可用</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--forbidden-ip</code></td>
+<td><code>,</code> 分割的 IP 列表，在此列表中的 IP 禁止连接，即黑名单</td>
+<td></td>
+</tr>
+<tr>
+<td><code>--manager-address</code></td>
+<td>服务端 UDP 管理地址</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="为-Shadowsocks-配置-systemd-services-文件"><a href="#为-Shadowsocks-配置-systemd-services-文件" class="headerlink" title="为 Shadowsocks 配置 systemd services 文件"></a>为 Shadowsocks 配置 systemd services 文件</h2><p>参考以下内容，为 Shadowsocks 配置 systemd services 文件</p>
+<figure class="highlight ini"><figcaption><span>/etc/systemd/system/shadowsocks.service</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="section">[Unit]</span></span><br><span class="line"><span class="attr">Description</span>=Shadowsocks Proxy Server</span><br><span class="line"><span class="attr">After</span>=network.target</span><br><span class="line"></span><br><span class="line"><span class="section">[Service]</span></span><br><span class="line"><span class="attr">ExecStart</span>=/usr/local/bin/ssserver -c /etc/shadowsocks/config.json</span><br><span class="line"><span class="attr">Restart</span>=<span class="literal">on</span>-failure</span><br><span class="line"></span><br><span class="line"><span class="section">[Install]</span></span><br><span class="line"><span class="attr">WantedBy</span>=multi-user.target</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>启用并启动 Shadowsocks 服务</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">sudo systemctl enable shadowsocks</span><br><span class="line">sudo systemctl start shadowsocks</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<h1 id="客户端连接"><a href="#客户端连接" class="headerlink" title="客户端连接"></a>客户端连接</h1><p>在客户端（如 Windows、macOS、iOS 或 Android）上，使用 Shadowsocks 客户端进行连接。</p>
+<p><strong>客户端配置</strong> ：</p>
+<ul>
+<li><code>服务器地址</code> ： 填写你服务器的公网 IP。</li>
+<li><code>服务器端口</code> ：填写 <code>config.json</code> 中的 <code>server_port</code> ，如 <code>8388</code> 。</li>
+<li><code>密码</code> ： 填写配置文件中的 <code>password</code> 。</li>
+<li><code>加密方法</code> ： 选择 <code>method</code> 中配置的加密方法，如 <code>aes-256-cfb</code> 。</li>
+</ul>
+<p>如果需要调试或查看运行日志，可以通过以下命令查看 Shadowsocks 的日志：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">journalctl -u shadowsocks</span><br></pre></td></tr></table></figure>
 ]]></content>
       <categories>
         <category>Tools</category>
@@ -34910,6 +35009,71 @@ width: 20%;
       <tags>
         <tag>云平台</tag>
         <tag>网宿</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>婚礼用品</title>
+    <url>/202403051140/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="伴手礼选择"><a href="#伴手礼选择" class="headerlink" title="伴手礼选择"></a>伴手礼选择</h1><h2 id="伴娘伴手礼"><a href="#伴娘伴手礼" class="headerlink" title="伴娘伴手礼"></a>伴娘伴手礼</h2><table>
+<thead>
+<tr>
+<th>类别</th>
+<th>产品类别推荐</th>
+<th>详情参考</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>香薰、香水</td>
+<td>香薰礼盒</td>
+<td></td>
+</tr>
+<tr>
+<td>化妆品</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>花果茶</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>喜糖礼盒</td>
+<td>佳偶良缘 喜糖礼盒</td>
+<td></td>
+</tr>
+</tbody></table>
+<p>参考链接：<br><a href="https://www.zhihu.com/question/516873685">20款百元左右的高级感伴手礼</a></p>
+<h2 id="伴郎伴手礼"><a href="#伴郎伴手礼" class="headerlink" title="伴郎伴手礼"></a>伴郎伴手礼</h2><table>
+<thead>
+<tr>
+<th>类别</th>
+<th>产品类别推荐</th>
+<th>详情参考</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>茶</td>
+<td>过宋小湯四季养生礼盒<br/>UMTEA 关心茶礼盒</td>
+<td></td>
+</tr>
+<tr>
+<td>葡萄酒</td>
+<td>名庄 95 分 蓝风铃甜白葡萄酒</td>
+<td></td>
+</tr>
+<tr>
+<td>点心</td>
+<td>马卡龙甜点糕点铁盒</td>
+<td></td>
+</tr>
+</tbody></table>
+]]></content>
+      <categories>
+        <category>生活日常</category>
+      </categories>
+      <tags>
+        <tag>生活日常</tag>
       </tags>
   </entry>
   <entry>
@@ -38314,71 +38478,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>婚礼用品</title>
-    <url>/202403051140/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="伴手礼选择"><a href="#伴手礼选择" class="headerlink" title="伴手礼选择"></a>伴手礼选择</h1><h2 id="伴娘伴手礼"><a href="#伴娘伴手礼" class="headerlink" title="伴娘伴手礼"></a>伴娘伴手礼</h2><table>
-<thead>
-<tr>
-<th>类别</th>
-<th>产品类别推荐</th>
-<th>详情参考</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>香薰、香水</td>
-<td>香薰礼盒</td>
-<td></td>
-</tr>
-<tr>
-<td>化妆品</td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td>花果茶</td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td>喜糖礼盒</td>
-<td>佳偶良缘 喜糖礼盒</td>
-<td></td>
-</tr>
-</tbody></table>
-<p>参考链接：<br><a href="https://www.zhihu.com/question/516873685">20款百元左右的高级感伴手礼</a></p>
-<h2 id="伴郎伴手礼"><a href="#伴郎伴手礼" class="headerlink" title="伴郎伴手礼"></a>伴郎伴手礼</h2><table>
-<thead>
-<tr>
-<th>类别</th>
-<th>产品类别推荐</th>
-<th>详情参考</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>茶</td>
-<td>过宋小湯四季养生礼盒<br/>UMTEA 关心茶礼盒</td>
-<td></td>
-</tr>
-<tr>
-<td>葡萄酒</td>
-<td>名庄 95 分 蓝风铃甜白葡萄酒</td>
-<td></td>
-</tr>
-<tr>
-<td>点心</td>
-<td>马卡龙甜点糕点铁盒</td>
-<td></td>
-</tr>
-</tbody></table>
-]]></content>
-      <categories>
-        <category>生活日常</category>
-      </categories>
-      <tags>
-        <tag>生活日常</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>六十四卦之山地剥</title>
     <url>/20251009153340/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山地剥"><a href="#山地剥" class="headerlink" title="山地剥"></a>山地剥</h1><p><img src="https://i.0920811.xyz/img_363.png"></p>
@@ -39031,151 +39130,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之水地比</title>
-    <url>/20250915163229/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水地比"><a href="#水地比" class="headerlink" title="水地比"></a>水地比</h1><p><img src="https://i.0920811.xyz/img_347.png"></p>
-<p>比，上坎下坤，内顺外险，比卦卦象为水在地上，表示万物聚集，互帮互助。强调 团结、辅助和顺从的重要性。九五尊位刚中得正，为全挂主爻。比卦和师卦互为覆卦。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比，吉。原筮，元永贞，无咎。不宁方来，后夫凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：比，吉也；比，辅也，下顺从也。原筮，元永贞，无咎，以刚中也。不宁方来，上下应也。后夫凶，其道穷也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地上有水，比;先王以建万国，亲诸侯。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>比</strong> ： 亲比、亲近、团结、辅佐。卦象是水在地上，表示万物聚集，群体互助。</li>
-<li><strong>筮</strong> ： 代表蓍草占法，本义是用 <strong>蓍草（一种草本植物，学名石蒜科蓍草）占问</strong> 。与 <strong>卜（龟甲占问）</strong> 相对。</li>
-<li><strong>原筮，元永贞</strong> ： 原，初始、根本。元，初始、开始、创始、根本。永，长久坚持、长期、持续。 <strong>元永贞 是 比 的核心准则</strong> ： 元（初始纯正，动机向善）、永（长久坚持，不朝三暮四）、贞（坚守正道，不违道义）。全卦九二唯一阳爻、主爻，其他阴爻都会归附亲比九五，吉无咎。</li>
-<li><strong>不宁方来</strong> ： 宁，安定、安宁。 方，刚刚、刚才。 <strong>不宁方来</strong> 指刚刚从不安、动荡中来。指从 <a href="https://0920811.xyz/20250908163229/">师卦</a> 而来，师卦为用师、不安宁时期，到了比卦才安定、安宁下来。</li>
-<li><strong>后夫凶</strong> ： <strong>后夫</strong> ，指迟迟不愿归附、错失比辅时机，或坚持背离正道、妄图独自硬撑的人（或势力）。说明团结的时机稍纵即逝，先机最为关键。指上六爻。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚比之，无咎。有孚盈缶，终来有它吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之初六，有它吉也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>有孚比之，无咎</strong> ： 有孚，有诚信、诚心、信任、笃实。以真诚、诚信和信任为基础进行团结合作时，就不会有灾祸。</li>
-<li><strong>有孚盈缶（fǒu），终来有它吉</strong> ： 缶，古代民间盛放酒水的朴素器皿、粗陶的瓦器，非贵重华丽礼器，可象征 质朴、本真，不刻意修饰。 <em>有孚盈缶</em> 象征内心充满诚信。 <em>有它吉</em> 意为另外的吉祥，初六距离九五最远，从绝远的地方来归顺亲比天子（九五），和邻近的小国来亲比归附，有更大的意义，更加的吉祥。</li>
-<li><strong>比之初六，有它吉也</strong> ： 九五离初六最远，初六都能亲比归附，格外吉祥。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>孚盈缶者，实也。信满而实，则虽贱而可用。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>诚信之比，虽卑微而感通，终得他助，故吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>缶，瓦器，贱而实。言信实充满，不在乎华丽。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之自内，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之自内，不自失也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>比之自内，不自失也。</strong> ： 内在本心（内心）诚心诚正，而非外部压力（如被迫依附）或功利诱惑（如为谋私利结党），就不会迷失本性。</li>
-</ul>
-<p>六二阴爻居阴位，居中得正，正应九五。比合发于内心，而非外饰附会。下卦坤，也可代表众，要以真诚真心团结众人，先从内部开始团结。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>比之要在内，不在外。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>比必自内，内诚而正，则吉。六二处中得正，不失其位，能以诚相比。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>二以阴居中，得正。“比自内”即发自中正之德，不假外饰。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之匪人。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之匪人，不亦伤乎!</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>匪人</strong> ： 非其人，不正当之人、歹人。</li>
-</ul>
-<p>六三阴爻居阳位，处于下卦之上，阴爻不中不正，上比六四之阴爻，而不比九五之刚中，所结交者非正道之人。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>比之贵在正应。六三不中不正，不应九五之君，而比六四之阴，是失正也。故曰“匪人”。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六三不中不正，所相比者不当。若亲比非正之人，则终致祸害。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>三以阴居阳，不中不正。上承六四之阴，不应九五之阳，所比非其正人。故曰“比之匪人”。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">外比之，贞吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：外比于贤，以从上也。</span><br></pre></td></tr></table></figure>
-
-<p>六四阴爻居阴位得正， <strong>下为内，上为外</strong> ，位置 <strong>外</strong> 。 <strong>外比</strong> 是指比附于贤（九五）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六四在外卦，能比于九五贤君，所以吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六四舍弃下卦之匪人（六三），而上比九五贤，守正则吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>六四以阴居柔，得正，又在外卦，亲比九五，故“贞吉”。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">显比，王用三驱，失前禽。邑人不诫，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：显比之吉，位正中也。舍逆取顺，失前禽也。邑人不诫，上使中也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>显比</strong> ： 显，光明、公开、正大光明、堂堂正正。 君王以光明正大的态度推行亲比之道，其联结他人的动机与行为皆坦荡磊落。</li>
-<li><strong>王用三驱，失前禽</strong> ： 三驱，是古代君王田猎的礼仪， 田猎时不设四面围网，仅从左、右、后三方驱赶禽兽，前方留白（象征 网开一面）。 <strong>失前禽</strong> 指前方的禽兽因无围堵而逃走，君王不刻意追捕。</li>
-<li><strong>邑人不诫</strong> ： 邑，城、城都、城邑。邑人指城都得人、即百姓。诫，戒备、惶恐、怀疑、不信任。因君王的亲比之道光明无私（中正），百姓感受到其仁德与公正，无需因 <strong>被联结</strong> 而心生戒备，整个社会呈现和谐信任的氛围</li>
-</ul>
-<p>九五阳爻居阳位，刚健处尊位而居中得正。</p>
-<p><strong>王用三驱，失前禽</strong> 象征 君王在 <strong>亲比（团结） 中秉持 舍逆取顺 的原则</strong> ，对主动归顺、顺应道义者（如后方、左右被驱赶来的禽兽）接纳团结；对不愿归附、背离道义者（如前方逃走的禽兽）不强行逼迫，体现 <strong>不强求、不压制、不绝对控制、给与一定自由和空间</strong> 的包容态度，即 以德服人。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>显比者，比而不隐。九五居尊中，明德之比也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>九五中正之君，明德昭显，以仁义相比。“三驱”示其不逼，舍逆取顺。比人以道，百姓安之，不生猜忌，所以吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>九五刚中居尊，显然中正，故曰“显比”</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之无首，凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之无首，无所终也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>比之无首</strong> ： 上六爻位于比卦的最上方，象征着团结合作的最后阶段。这里的 <strong>无首</strong> 指的是没有首领、没有领导核心，或者没有明确的方向和目标。</li>
-<li><strong>无所终也</strong> ： <strong>无所终</strong> 是对 <strong>无首</strong> 后果的精准概括，亲比若 无首（无起始原则、无核心统领），本质是 无始，而 无始 必然导致 无终（没有结果）</li>
-</ul>
-<p>上六处卦之极，阴爻居柔，既不居中，又不应九五，与贤者失联。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>比贵有首。上六处比之极，无正应，失所依。故曰“比之无首，凶”。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>比必有主。上六处比之终，却无所应，失其正比。无所依归，终则败坏，所以凶。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>上六阴柔不中正，又远离九五，不得正应。故其比“无首”。“无所终也”，比而无所归附，自然不能有善终。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之天水讼</title>
     <url>/20250904163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="天水讼"><a href="#天水讼" class="headerlink" title="天水讼"></a>天水讼</h1><p><img src="https://i.0920811.xyz/img_345.png"></p>
@@ -39338,6 +39292,151 @@ width: 20%;
 </li>
 <li><p>朱熹</p>
 <p>  <code>上九讼之极也。或因讼得胜，锡以鞶带之宠；然讼不可久，非德而有，必速失之，故曰“终朝三褫之”。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之水地比</title>
+    <url>/20250915163229/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="水地比"><a href="#水地比" class="headerlink" title="水地比"></a>水地比</h1><p><img src="https://i.0920811.xyz/img_347.png"></p>
+<p>比，上坎下坤，内顺外险，比卦卦象为水在地上，表示万物聚集，互帮互助。强调 团结、辅助和顺从的重要性。九五尊位刚中得正，为全挂主爻。比卦和师卦互为覆卦。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比，吉。原筮，元永贞，无咎。不宁方来，后夫凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：比，吉也；比，辅也，下顺从也。原筮，元永贞，无咎，以刚中也。不宁方来，上下应也。后夫凶，其道穷也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地上有水，比;先王以建万国，亲诸侯。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>比</strong> ： 亲比、亲近、团结、辅佐。卦象是水在地上，表示万物聚集，群体互助。</li>
+<li><strong>筮</strong> ： 代表蓍草占法，本义是用 <strong>蓍草（一种草本植物，学名石蒜科蓍草）占问</strong> 。与 <strong>卜（龟甲占问）</strong> 相对。</li>
+<li><strong>原筮，元永贞</strong> ： 原，初始、根本。元，初始、开始、创始、根本。永，长久坚持、长期、持续。 <strong>元永贞 是 比 的核心准则</strong> ： 元（初始纯正，动机向善）、永（长久坚持，不朝三暮四）、贞（坚守正道，不违道义）。全卦九二唯一阳爻、主爻，其他阴爻都会归附亲比九五，吉无咎。</li>
+<li><strong>不宁方来</strong> ： 宁，安定、安宁。 方，刚刚、刚才。 <strong>不宁方来</strong> 指刚刚从不安、动荡中来。指从 <a href="https://0920811.xyz/20250908163229/">师卦</a> 而来，师卦为用师、不安宁时期，到了比卦才安定、安宁下来。</li>
+<li><strong>后夫凶</strong> ： <strong>后夫</strong> ，指迟迟不愿归附、错失比辅时机，或坚持背离正道、妄图独自硬撑的人（或势力）。说明团结的时机稍纵即逝，先机最为关键。指上六爻。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">有孚比之，无咎。有孚盈缶，终来有它吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之初六，有它吉也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>有孚比之，无咎</strong> ： 有孚，有诚信、诚心、信任、笃实。以真诚、诚信和信任为基础进行团结合作时，就不会有灾祸。</li>
+<li><strong>有孚盈缶（fǒu），终来有它吉</strong> ： 缶，古代民间盛放酒水的朴素器皿、粗陶的瓦器，非贵重华丽礼器，可象征 质朴、本真，不刻意修饰。 <em>有孚盈缶</em> 象征内心充满诚信。 <em>有它吉</em> 意为另外的吉祥，初六距离九五最远，从绝远的地方来归顺亲比天子（九五），和邻近的小国来亲比归附，有更大的意义，更加的吉祥。</li>
+<li><strong>比之初六，有它吉也</strong> ： 九五离初六最远，初六都能亲比归附，格外吉祥。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>孚盈缶者，实也。信满而实，则虽贱而可用。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>诚信之比，虽卑微而感通，终得他助，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>缶，瓦器，贱而实。言信实充满，不在乎华丽。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之自内，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之自内，不自失也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>比之自内，不自失也。</strong> ： 内在本心（内心）诚心诚正，而非外部压力（如被迫依附）或功利诱惑（如为谋私利结党），就不会迷失本性。</li>
+</ul>
+<p>六二阴爻居阴位，居中得正，正应九五。比合发于内心，而非外饰附会。下卦坤，也可代表众，要以真诚真心团结众人，先从内部开始团结。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>比之要在内，不在外。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>比必自内，内诚而正，则吉。六二处中得正，不失其位，能以诚相比。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>二以阴居中，得正。“比自内”即发自中正之德，不假外饰。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之匪人。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之匪人，不亦伤乎!</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>匪人</strong> ： 非其人，不正当之人、歹人。</li>
+</ul>
+<p>六三阴爻居阳位，处于下卦之上，阴爻不中不正，上比六四之阴爻，而不比九五之刚中，所结交者非正道之人。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>比之贵在正应。六三不中不正，不应九五之君，而比六四之阴，是失正也。故曰“匪人”。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六三不中不正，所相比者不当。若亲比非正之人，则终致祸害。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>三以阴居阳，不中不正。上承六四之阴，不应九五之阳，所比非其正人。故曰“比之匪人”。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">外比之，贞吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：外比于贤，以从上也。</span><br></pre></td></tr></table></figure>
+
+<p>六四阴爻居阴位得正， <strong>下为内，上为外</strong> ，位置 <strong>外</strong> 。 <strong>外比</strong> 是指比附于贤（九五）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六四在外卦，能比于九五贤君，所以吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六四舍弃下卦之匪人（六三），而上比九五贤，守正则吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>六四以阴居柔，得正，又在外卦，亲比九五，故“贞吉”。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">显比，王用三驱，失前禽。邑人不诫，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：显比之吉，位正中也。舍逆取顺，失前禽也。邑人不诫，上使中也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>显比</strong> ： 显，光明、公开、正大光明、堂堂正正。 君王以光明正大的态度推行亲比之道，其联结他人的动机与行为皆坦荡磊落。</li>
+<li><strong>王用三驱，失前禽</strong> ： 三驱，是古代君王田猎的礼仪， 田猎时不设四面围网，仅从左、右、后三方驱赶禽兽，前方留白（象征 网开一面）。 <strong>失前禽</strong> 指前方的禽兽因无围堵而逃走，君王不刻意追捕。</li>
+<li><strong>邑人不诫</strong> ： 邑，城、城都、城邑。邑人指城都得人、即百姓。诫，戒备、惶恐、怀疑、不信任。因君王的亲比之道光明无私（中正），百姓感受到其仁德与公正，无需因 <strong>被联结</strong> 而心生戒备，整个社会呈现和谐信任的氛围</li>
+</ul>
+<p>九五阳爻居阳位，刚健处尊位而居中得正。</p>
+<p><strong>王用三驱，失前禽</strong> 象征 君王在 <strong>亲比（团结） 中秉持 舍逆取顺 的原则</strong> ，对主动归顺、顺应道义者（如后方、左右被驱赶来的禽兽）接纳团结；对不愿归附、背离道义者（如前方逃走的禽兽）不强行逼迫，体现 <strong>不强求、不压制、不绝对控制、给与一定自由和空间</strong> 的包容态度，即 以德服人。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>显比者，比而不隐。九五居尊中，明德之比也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>九五中正之君，明德昭显，以仁义相比。“三驱”示其不逼，舍逆取顺。比人以道，百姓安之，不生猜忌，所以吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>九五刚中居尊，显然中正，故曰“显比”</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">比之无首，凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：比之无首，无所终也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>比之无首</strong> ： 上六爻位于比卦的最上方，象征着团结合作的最后阶段。这里的 <strong>无首</strong> 指的是没有首领、没有领导核心，或者没有明确的方向和目标。</li>
+<li><strong>无所终也</strong> ： <strong>无所终</strong> 是对 <strong>无首</strong> 后果的精准概括，亲比若 无首（无起始原则、无核心统领），本质是 无始，而 无始 必然导致 无终（没有结果）</li>
+</ul>
+<p>上六处卦之极，阴爻居柔，既不居中，又不应九五，与贤者失联。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>比贵有首。上六处比之极，无正应，失所依。故曰“比之无首，凶”。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>比必有主。上六处比之终，却无所应，失其正比。无所依归，终则败坏，所以凶。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>上六阴柔不中正，又远离九五，不得正应。故其比“无首”。“无所终也”，比而无所归附，自然不能有善终。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -40707,6 +40806,126 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>六十四卦之泽山咸</title>
+    <url>/20251119103840/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽山咸"><a href="#泽山咸" class="headerlink" title="泽山咸"></a>泽山咸</h1><p><img src="https://i.0920811.xyz/img_376.png"></p>
+<p>泽山咸，下（内）艮（山、止）上（外）兑（泽、悦），咸，感也。阴阳正应相互感应，交感流通，为夫妇之道。咸卦为《周易》下经首卦。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸，亨，利贞。取女吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：咸，感也。柔上而刚下，二气感应以相与。止而说，男下女。是以亨利贞，取女吉也。天地感而万物化生，圣人感人心而天下和平。观其所感，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰： 山上有泽，咸。君子以虚受人。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸，感也</strong> ： 咸卦由天地否卦上九和六三交换而来，否卦上九和六三阴阳正应，相互交换是柔上而刚下，成为泽山咸。阴阳交感，上下流通，打破否之阻塞，是以亨通。</li>
+<li><strong>止而说，男下女，是以亨利贞，取女吉也</strong> ： 艮为山为止、为少男，兑为泽为悦、为少女。少男位居少女之下，是少男以谦恭卑下的态度和少女相处，是男向女求婚之象，故取女吉也。</li>
+<li><strong>山上有泽，咸。君子以虚受人</strong> ： 山上有泽，象征大山能够包容下大泽，有广阔的胸怀，君子观此卦，应胸怀广阔，虚怀若谷，有容人之度。</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其拇。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其拇，志在外也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其拇，志在外也</strong> ： 拇，大脚趾。象征感应刚刚发生，尚在最轻微、最表面的阶段，尚未深入，也未行动。初六有九四为正应，故言志在外。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>拇，动之始也。感之微也。志动于外，故曰咸其拇。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>感之始也，意向未定，才动于外耳。</code></p>
+</li>
+<li><p><code>拇为足端，所感最微。夫妇之道，感于微，乃能成天下之大。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其腓，凶，居吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽凶居吉，顺不害也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其腓</strong> ： 腓，小腿、小腿肚。六二居内卦之中，得位得中，本有柔顺之德，宜静不宜动。虽有凶象，但安居可吉，是因为顺从正道，故不受害。六二在互巽中，巽为随顺，随顺不害。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>腓，随动之物也。以柔顺之质，而为感所牵，则凶。能守其中，不随外动，则吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六二顺而中，宜居以守，不宜随感而动。故虽凶，居则吉。</code></p>
+</li>
+<li><p><code>腓不自主，被动而随，若从其感，必有凶害。能居止守中，则感虽动亦不害。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其股，执其随，往吝。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其股，亦不处也。志在随人，所执下也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其股，执其随</strong> ： 股，大腿，行动的主力部分，象征强烈的行动欲。执，执着、坚持。固执地要跟着别人走。九三以阳居阳，刚而不中，又处内卦之终，上应于上六。刚躁好动，遇外诱即跃跃欲试，故 “亦不处也”。失其主，丧其守，志在随人，所以 “往吝”。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>股，行动之本也。感而动之，不能处也。执志随人，失其正也，故往必有吝。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>志随于人，以刚动之，必陷于过失。</code></p>
+</li>
+<li><p><code>大腿能行，故曰不处。随人而不由己，执志于下，故往必吝也。</code></p>
+</li>
+</ul>
+<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞吉悔亡，憧憧往来，朋从尔思。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：贞吉悔亡，未感害也。憧憧往来，未光大也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>贞吉悔亡，憧憧往来，朋从尔思</strong> ： 憧憧，心神不定、思绪摇摆的样子，反复纠结、进退不定的状态。憧憧往来，心神不定、反复走动之貌，象征内心无主、取舍不定。朋从尔思，志同道合者会理解并顺从你的核心想法，因本质未偏离正道，但未光大，只是部分感通。</li>
+</ul>
+<p>九四居外卦之始，上体为兑，兑为口、为悦，主 “外诱”。刚居柔位，不中不正，最易 “心随境转”，故先戒以 “贞”。四与初六相应，本有相感之势；但四位多惧，若一任情感而动，容易失足。故首提 “贞”——以正自持，方可 “悔亡”。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>贞则吉，守正则悔亡也。憧憧往来，志未定也。朋从尔思，党类相应，未能光大也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>利在守正，不可妄动。旷荡往来，志不专也。</code></p>
+</li>
+<li><p><code>往来无定，故憧憧。朋从其思，但同类之应，非深感之至。</code></p>
+</li>
+</ul>
+<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其脢，无悔。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其脢，志末也</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其脢，无悔</strong> ： 脢，脊背、背脊肉，身之正中。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>脢，近心之处也。感之深也。处得其正，故无悔。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>感之深而不失正，故无悔。志近而未至心，故曰志末。</code></p>
+</li>
+<li><p><code>脢者，心之所附，感之已深也。近心而不入心，志之末也。能感而中正，因此无悔。</code></p>
+</li>
+</ul>
+<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其辅、颊、舌</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其辅颊舌，滕口说也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>咸其辅颊舌，滕口说也</strong> ： 辅，两腮旁的骨、牙床。颊，面颊、脸颊。舌，舌头。滕口，张口、喋喋不休、口舌动的样子。说，通悦，取悦</li>
+</ul>
+<p>上六阴居卦极，与九三（盲动）相应，象征虚言。位高而无实，唯剩 “口说” 之应，故成 “滕口” 之象（“滕” 通 “腾”，腾涌、滔滔不绝之意），口惠而实不至。</p>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
     <title>六十四卦之山水蒙</title>
     <url>/20250826163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山水蒙"><a href="#山水蒙" class="headerlink" title="山水蒙"></a>山水蒙</h1><p><img src="https://i.0920811.xyz/img_340.png"></p>
@@ -40891,126 +41110,6 @@ width: 20%;
 <p>  <code>不利为寇，言不可恃强而横行；利御寇，言可以御恶以为正也。</code></p>
 </li>
 </ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之泽山咸</title>
-    <url>/20251119103840/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="泽山咸"><a href="#泽山咸" class="headerlink" title="泽山咸"></a>泽山咸</h1><p><img src="https://i.0920811.xyz/img_376.png"></p>
-<p>泽山咸，下（内）艮（山、止）上（外）兑（泽、悦），咸，感也。阴阳正应相互感应，交感流通，为夫妇之道。咸卦为《周易》下经首卦。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸，亨，利贞。取女吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：咸，感也。柔上而刚下，二气感应以相与。止而说，男下女。是以亨利贞，取女吉也。天地感而万物化生，圣人感人心而天下和平。观其所感，而天地万物之情可见矣。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰： 山上有泽，咸。君子以虚受人。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸，感也</strong> ： 咸卦由天地否卦上九和六三交换而来，否卦上九和六三阴阳正应，相互交换是柔上而刚下，成为泽山咸。阴阳交感，上下流通，打破否之阻塞，是以亨通。</li>
-<li><strong>止而说，男下女，是以亨利贞，取女吉也</strong> ： 艮为山为止、为少男，兑为泽为悦、为少女。少男位居少女之下，是少男以谦恭卑下的态度和少女相处，是男向女求婚之象，故取女吉也。</li>
-<li><strong>山上有泽，咸。君子以虚受人</strong> ： 山上有泽，象征大山能够包容下大泽，有广阔的胸怀，君子观此卦，应胸怀广阔，虚怀若谷，有容人之度。</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其拇。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其拇，志在外也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其拇，志在外也</strong> ： 拇，大脚趾。象征感应刚刚发生，尚在最轻微、最表面的阶段，尚未深入，也未行动。初六有九四为正应，故言志在外。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>拇，动之始也。感之微也。志动于外，故曰咸其拇。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>感之始也，意向未定，才动于外耳。</code></p>
-</li>
-<li><p><code>拇为足端，所感最微。夫妇之道，感于微，乃能成天下之大。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其腓，凶，居吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：虽凶居吉，顺不害也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其腓</strong> ： 腓，小腿、小腿肚。六二居内卦之中，得位得中，本有柔顺之德，宜静不宜动。虽有凶象，但安居可吉，是因为顺从正道，故不受害。六二在互巽中，巽为随顺，随顺不害。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>腓，随动之物也。以柔顺之质，而为感所牵，则凶。能守其中，不随外动，则吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六二顺而中，宜居以守，不宜随感而动。故虽凶，居则吉。</code></p>
-</li>
-<li><p><code>腓不自主，被动而随，若从其感，必有凶害。能居止守中，则感虽动亦不害。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其股，执其随，往吝。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其股，亦不处也。志在随人，所执下也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其股，执其随</strong> ： 股，大腿，行动的主力部分，象征强烈的行动欲。执，执着、坚持。固执地要跟着别人走。九三以阳居阳，刚而不中，又处内卦之终，上应于上六。刚躁好动，遇外诱即跃跃欲试，故 “亦不处也”。失其主，丧其守，志在随人，所以 “往吝”。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>股，行动之本也。感而动之，不能处也。执志随人，失其正也，故往必有吝。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>志随于人，以刚动之，必陷于过失。</code></p>
-</li>
-<li><p><code>大腿能行，故曰不处。随人而不由己，执志于下，故往必吝也。</code></p>
-</li>
-</ul>
-<h2 id="九四"><a href="#九四" class="headerlink" title="九四"></a>九四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贞吉悔亡，憧憧往来，朋从尔思。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：贞吉悔亡，未感害也。憧憧往来，未光大也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>贞吉悔亡，憧憧往来，朋从尔思</strong> ： 憧憧，心神不定、思绪摇摆的样子，反复纠结、进退不定的状态。憧憧往来，心神不定、反复走动之貌，象征内心无主、取舍不定。朋从尔思，志同道合者会理解并顺从你的核心想法，因本质未偏离正道，但未光大，只是部分感通。</li>
-</ul>
-<p>九四居外卦之始，上体为兑，兑为口、为悦，主 “外诱”。刚居柔位，不中不正，最易 “心随境转”，故先戒以 “贞”。四与初六相应，本有相感之势；但四位多惧，若一任情感而动，容易失足。故首提 “贞”——以正自持，方可 “悔亡”。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>贞则吉，守正则悔亡也。憧憧往来，志未定也。朋从尔思，党类相应，未能光大也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>利在守正，不可妄动。旷荡往来，志不专也。</code></p>
-</li>
-<li><p><code>往来无定，故憧憧。朋从其思，但同类之应，非深感之至。</code></p>
-</li>
-</ul>
-<h2 id="九五"><a href="#九五" class="headerlink" title="九五"></a>九五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其脢，无悔。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其脢，志末也</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其脢，无悔</strong> ： 脢，脊背、背脊肉，身之正中。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>脢，近心之处也。感之深也。处得其正，故无悔。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>感之深而不失正，故无悔。志近而未至心，故曰志末。</code></p>
-</li>
-<li><p><code>脢者，心之所附，感之已深也。近心而不入心，志之末也。能感而中正，因此无悔。</code></p>
-</li>
-</ul>
-<h2 id="上六"><a href="#上六" class="headerlink" title="上六"></a>上六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">咸其辅、颊、舌</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：咸其辅颊舌，滕口说也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>咸其辅颊舌，滕口说也</strong> ： 辅，两腮旁的骨、牙床。颊，面颊、脸颊。舌，舌头。滕口，张口、喋喋不休、口舌动的样子。说，通悦，取悦</li>
-</ul>
-<p>上六阴居卦极，与九三（盲动）相应，象征虚言。位高而无实，唯剩 “口说” 之应，故成 “滕口” 之象（“滕” 通 “腾”，腾涌、滔滔不绝之意），口惠而实不至。</p>
 ]]></content>
       <categories>
         <category>易学</category>
@@ -41631,105 +41730,6 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
-  </entry>
-  <entry>
-    <title>Loki 部署使用</title>
-    <url>/20260416162300/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Loki 是 Grafana 体系里的日志聚合系统，设计思路和 Prometheus 很像，但处理对象是日志。它和传统全文检索型日志系统的最大区别是： <strong>默认只索引标签（labels），不索引整条日志正文</strong> ，所以存储成本通常更低，扩展性也更好，特别适合 Kubernetes、Docker、主机系统日志、应用日志统一汇聚场景。</p>
-<p>截至 2026-04-16，Promtail 已经 EOL，新的采集端优先建议使用 <strong>Grafana Alloy</strong> ；另外，Loki 本身不内置认证层，生产环境应放在 Nginx 等反向代理或网关之后。</p>
-<p>它的典型链路是：</p>
-<p><strong>日志源 → 采集器（Alloy） → Loki → Grafana 查询与展示</strong></p>
-<p>其中：</p>
-<ul>
-<li><strong>Loki</strong> 负责接收、压缩、存储、查询日志。</li>
-<li><strong>Alloy</strong> 负责在主机或 K8s 节点上收集日志、打标签、做预处理，再推送到 Loki。</li>
-<li><strong>Grafana</strong> 负责可视化、检索、告警。</li>
-</ul>
-<p>Loki 核心架构逻辑上常见有这些组件：</p>
-<ul>
-<li><strong>Distributor</strong> ：接收写入请求</li>
-<li><strong>Ingester</strong> ：缓存并写入日志块</li>
-<li><strong>Querier</strong> ：执行查询</li>
-<li><strong>Query Frontend</strong> ：查询拆分与缓存</li>
-<li><strong>Compactor</strong> ：压缩、整理、保留策略</li>
-<li><strong>Index &#x2F; Storage</strong> ：索引和日志对象存储</li>
-</ul>
-<p><strong>标签设计建议</strong></p>
-<p>Loki 的性能很大程度取决于标签设计，因此标签设计非常关键。</p>
-<p><strong>建议保留低基数标签</strong> ：</p>
-<ul>
-<li><strong>job</strong></li>
-<li><strong>host</strong></li>
-<li><strong>env</strong></li>
-<li><strong>app</strong></li>
-<li><strong>namespace</strong></li>
-<li><strong>pod</strong></li>
-<li><strong>container</strong></li>
-</ul>
-<p><strong>不要把高基数内容做成标签</strong> ：</p>
-<ul>
-<li><strong>user_id</strong></li>
-<li><strong>request_id</strong></li>
-<li><strong>trace_id</strong></li>
-<li><strong>URL 全路径</strong></li>
-<li><strong>错误详情</strong></li>
-<li><strong>SQL 文本</strong></li>
-</ul>
-<p>官方文档强调 labels 是 Loki 的核心组织方式，但标签过多、基数过高会带来性能和成本问题。</p>
-<h1 id="Docker-Compose-部署示例"><a href="#Docker-Compose-部署示例" class="headerlink" title="Docker Compose 部署示例"></a>Docker Compose 部署示例</h1><ul>
-<li>Loki version 3.7.1</li>
-<li>alloy, version v1.15.1</li>
-</ul>
-<figure class="highlight yaml"><figcaption><span>docker-compose.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">services:</span></span><br><span class="line">  <span class="attr">loki:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/loki:latest</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&#x27;-config.file=/etc/loki/config.yaml&#x27;</span>    </span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3100:3100&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/loki/:/etc/loki/:ro&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/loki/:/data/loki&quot;</span></span><br><span class="line"></span><br><span class="line">  <span class="attr">grafana:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/grafana</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;3000:3000&quot;</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./config/grafana/:/etc/grafana/&quot;</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;./data/grafana/:/var/lib/grafana/&quot;</span></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">  <span class="attr">alloy:</span></span><br><span class="line">    <span class="attr">image:</span> <span class="string">grafana/alloy</span></span><br><span class="line">    <span class="attr">container_name:</span> <span class="string">alloy</span></span><br><span class="line">    <span class="attr">restart:</span> <span class="string">unless-stopped</span></span><br><span class="line">    <span class="attr">ports:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">&quot;12345:12345&quot;</span></span><br><span class="line">    <span class="attr">command:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">run</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--server.http.listen-addr=0.0.0.0:12345</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">--storage.path=/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/etc/alloy/config.alloy</span></span><br><span class="line">    <span class="attr">volumes:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./config/alloy/:/etc/alloy/:ro</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">./data/alloy/:/var/lib/alloy/data</span></span><br><span class="line">      <span class="bullet">-</span> <span class="string">/var/run/docker.sock:/var/run/docker.sock</span></span><br></pre></td></tr></table></figure>
-
-<p>主配置文件 <code>/etc/loki/config.yaml</code> 内容参考：</p>
-<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span></span><br><span class="line">  <span class="attr">ring:</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span></span><br><span class="line">  <span class="attr">filesystem:</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span></span><br></pre></td></tr></table></figure>
-
-<p>Alloy 配置文件参考：</p>
-<figure class="highlight yaml"><figcaption><span>config/alloy/config.alloy</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="string">logging</span> &#123;</span><br><span class="line">  <span class="string">level</span>  <span class="string">=</span> <span class="string">&quot;info&quot;</span></span><br><span class="line">  <span class="string">format</span> <span class="string">=</span> <span class="string">&quot;logfmt&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">discovery.relabel</span> <span class="string">&quot;docker_logs&quot;</span> &#123;</span><br><span class="line">  <span class="string">targets</span> <span class="string">=</span> <span class="string">discovery.docker.containers.targets</span></span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_name&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;container&quot;</span></span><br><span class="line">    <span class="string">regex</span>         <span class="string">=</span> <span class="string">&quot;/(.*)&quot;</span></span><br><span class="line">    <span class="string">replacement</span>   <span class="string">=</span> <span class="string">&quot;$1&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_log_stream&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;stream&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">rule</span> &#123;</span><br><span class="line">    <span class="string">source_labels</span> <span class="string">=</span> [<span class="string">&quot;__meta_docker_container_label_com_docker_compose_service&quot;</span>]</span><br><span class="line">    <span class="string">target_label</span>  <span class="string">=</span> <span class="string">&quot;service&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.source.docker</span> <span class="string">&quot;containers&quot;</span> &#123;</span><br><span class="line">  <span class="string">host</span>       <span class="string">=</span> <span class="string">&quot;unix:///var/run/docker.sock&quot;</span></span><br><span class="line">  <span class="string">targets</span>    <span class="string">=</span> <span class="string">discovery.relabel.docker_logs.output</span></span><br><span class="line">  <span class="string">forward_to</span> <span class="string">=</span> [<span class="string">loki.write.local.receiver</span>]</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"><span class="string">loki.write</span> <span class="string">&quot;local&quot;</span> &#123;</span><br><span class="line">  <span class="string">endpoint</span> &#123;</span><br><span class="line">    <span class="string">url</span> <span class="string">=</span> <span class="string">&quot;http://loki:3100/loki/api/v1/push&quot;</span></span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  <span class="string">external_labels</span> <span class="string">=</span> &#123;</span><br><span class="line">    <span class="string">host</span> <span class="string">=</span> <span class="string">&quot;prometheus-jumpserver&quot;</span>,</span><br><span class="line">    <span class="string">env</span>  <span class="string">=</span> <span class="string">&quot;prod&quot;</span>,</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>启动成功后，在 Grafana 中添加新的 Data Source。即可在 Grafana 中查看到日志。</p>
-<h1 id="配置文件详解"><a href="#配置文件详解" class="headerlink" title="配置文件详解"></a>配置文件详解</h1><h2 id="Loki-配置文件"><a href="#Loki-配置文件" class="headerlink" title="Loki 配置文件"></a>Loki 配置文件</h2><ul>
-<li>Loki version 3.7.1</li>
-</ul>
-<p>以下配置适用于单机、单副本、本地文件系统、保留 7 天数据的 Liki</p>
-<figure class="highlight yaml"><figcaption><span>/etc/loki/config.yaml</span></figcaption><table><tr><td class="code"><pre><span class="line"><span class="attr">auth_enabled:</span> <span class="literal">false</span></span><br><span class="line"></span><br><span class="line"><span class="attr">server:</span></span><br><span class="line">  <span class="attr">http_listen_port:</span> <span class="number">3100</span>      <span class="comment"># Loki 的 HTTP 服务监听端口。Grafana、Alloy 或自己用 curl 查询 Loki API 时，默认都会连这个端口。官方配置文档把 server 作为 Loki 进程网络与服务行为的基础配置入口。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">common:</span>                      <span class="comment"># Loki 多组件共用的基础参数（通用运行参数）。</span></span><br><span class="line">  <span class="attr">path_prefix:</span> <span class="string">/loki</span>         <span class="comment"># Loki 的本地工作目录前缀。很多组件的临时文件、索引缓存、压缩过程中的文件、规则文件等，都可能基于这个路径展开。官方示例中常见把它设成 /loki。在 Docker 部署中需要持久化</span></span><br><span class="line">  <span class="attr">replication_factor:</span> <span class="number">1</span>      <span class="comment"># 只保留 1 份副本。这适合单机或非高可用测试环境。官方示例中单机 / 简化部署也常用 1。想要高可用，通常需要 &gt;1，并配套 ring/多节点/对象存储</span></span><br><span class="line">  <span class="attr">ring:</span>                      <span class="comment"># ring 是分布式 Loki 用来协调实例状态、分片、接收写入等的关键机制。</span></span><br><span class="line">    <span class="attr">kvstore:</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">inmemory</span>        <span class="comment"># 表示 Loki 的 ring 元数据存储在内存里。好处是简单，坏处是进程重启后状态不持久，也不适合多实例生产。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">schema_config:</span>               <span class="comment"># 存储 schema 定义。这部分是 Loki 最关键的配置之一。schema 是按时间段生效的，Loki 会根据日志时间决定使用哪套 schema 来存储和查询数据。</span></span><br><span class="line">  <span class="attr">configs:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">from:</span> <span class="string">&quot;2024-01-01&quot;</span>     <span class="comment"># 表示从 2024-01-01 开始写入的数据，使用下面这一整套 schema。from 是时间分界点；如果后面再新增一条新 schema，比如 from: &quot;2026-05-01&quot;，那么之后的数据就会按新 schema 存。</span></span><br><span class="line">      <span class="attr">store:</span> <span class="string">tsdb</span>            <span class="comment"># 使用 TSDB 索引。从 Loki 2.8 起，TSDB 是推荐的索引方式，更高效、更快、可扩展性更好。</span></span><br><span class="line">      <span class="attr">object_store:</span> <span class="string">filesystem</span>     <span class="comment"># 日志块和相关对象数据存到本地文件系统，而不是 S3、GCS、Azure Blob 之类的对象存储。正式环境应该优先使用 S3 / MinIO / GCS 等对象存储</span></span><br><span class="line">      <span class="attr">schema:</span> <span class="string">v13</span>                  <span class="comment"># 这是 schema 版本。官方升级文档明确说，Structured Metadata 要求 active schema 同时使用 tsdb 和 v13；迁移文档也把 v13 作为推荐版本。</span></span><br><span class="line">      <span class="attr">index:</span></span><br><span class="line">        <span class="attr">prefix:</span> <span class="string">index_</span>             <span class="comment"># 索引前缀名。 Loki 会按自己的规则生成索引对象名或目录名，这个前缀就是命名的开头。</span></span><br><span class="line">        <span class="attr">period:</span> <span class="string">24h</span>                <span class="comment"># 这是非常关键的参数，表示索引按 24 小时切分。官方 retention 文档明确说明，retention 仅支持 24h index period。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">storage_config:</span>                    <span class="comment"># 底层存储配置</span></span><br><span class="line">  <span class="attr">filesystem:</span>                      <span class="comment"># schema 配置了 object_store: filesystem，就需要给 filesystem 指定目录。</span></span><br><span class="line">    <span class="attr">directory:</span> <span class="string">/loki/chunks</span>        <span class="comment"># 这个目录用于保存 Loki 的日志块数据。简单说，日志正文压缩后的 chunk 文件会在这里。你容器删除或这个目录丢失，就会失去本地日志数据。</span></span><br><span class="line"></span><br><span class="line"><span class="attr">limits_config:</span>                     <span class="comment"># 限制与功能开关。控制 Loki 的一些行为限制和特性。官方升级文档、structured metadata 文档以及 retention 相关文档都涉及这里的配置项。</span></span><br><span class="line">  <span class="attr">allow_structured_metadata:</span> <span class="literal">true</span>  <span class="comment"># 允许 Loki 使用 Structured Metadata（某些字段可以作为结构化元数据随日志返回）。官方说明，Structured Metadata 在 Loki 3.0 默认已启用，但前提是你的 active schema 必须是 TSDB + v13；如果不是，就需要关闭或迁移。</span></span><br><span class="line">  <span class="attr">retention_period:</span> <span class="string">168h</span>           <span class="comment"># 全局日志保留 168 小时，也就是 7 天。这个只是“希望保留多久”，真正执行删除还依赖 compactor 配置正确，并且索引周期满足要求</span></span><br><span class="line"></span><br><span class="line"><span class="attr">compactor:</span>                                 <span class="comment"># 压缩与保留删除执行者，Compactor 不只是做压缩，也负责 retention 相关处理。</span></span><br><span class="line">  <span class="attr">working_directory:</span> <span class="string">/loki/compactor</span>       <span class="comment"># compactor 的工作目录，用来存放压缩、保留、删除流程中的临时文件或处理中间状态。</span></span><br><span class="line">  <span class="attr">retention_enabled:</span> <span class="literal">true</span>                  <span class="comment"># 表示打开 retention 机制。没有这个，即使你写了 retention_period，compactor 也只会做压缩，不会执行基于保留期的删除。</span></span><br><span class="line">  <span class="attr">delete_request_store:</span> <span class="string">filesystem</span>         <span class="comment"># 若启用 retention，必须配置 delete_request_store；它决定删除请求存在哪种后端里。</span></span><br></pre></td></tr></table></figure>
-
-<h2 id="Alloy-配置文件详解"><a href="#Alloy-配置文件详解" class="headerlink" title="Alloy 配置文件详解"></a>Alloy 配置文件详解</h2><ul>
-<li>alloy, version v1.15.1</li>
-</ul>
-<p>Alloy 配置文件本质上是在描述一条 <strong>数据流水线</strong></p>
-<ul>
-<li><strong>发现目标 → 读取数据 → 处理&#x2F;加标签 → 写到 Loki &#x2F; Prometheus &#x2F; OTLP 等后端</strong></li>
-</ul>
-<p>Alloy 的配置语法由两类基础元素组成： <strong>attributes（属性） 和 blocks（块）</strong> 。属性用 <code>key = value</code> 赋值，块用来定义组件实例和嵌套配置。</p>
-<p>Alloy 官方把一些顶层块称为 <strong>configuration blocks</strong> ，它们用于配置 Alloy 进程本身，不是在采集业务日志或者输出日志。比如：</p>
-<ul>
-<li><code>logging</code></li>
-<li><code>tracing</code></li>
-<li><code>http</code></li>
-<li><code>livedebugging</code></li>
-<li><code>import.*</code></li>
-</ul>
-<p>Linux 下 Alloy 默认配置文件路径是 <code>/etc/alloy/config.alloy</code></p>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">logging &#123;                      # 配置 Alloy 自己的日志</span><br><span class="line">  level  = &quot;info&quot;              # Alloy 自己输出 info 级别日志</span><br><span class="line">  format = &quot;logfmt&quot;            # 输出为 logfmt 格式</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.docker &quot;containers&quot; &#123;             # 发现 Docker 容器，discovery.docker 会把每个容器映射成 target。</span><br><span class="line">  host = &quot;unix:///var/run/docker.sock&quot;      # 连接 Docker daemon、从 Docker 中发现容器目标、暴露出一组可供下游使用的 targets。要生效，你的容器通常要挂载 /var/run/docker.sock</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">discovery.relabel &quot;docker_logs&quot; &#123;                   # 重写或补充标签。把 Docker 自动发现到的元标签，转成在 Loki/Grafana 里更好用的业务标签。labels 是 Loki 的核心组织方式，必须谨慎设计，避免高基数标签。</span><br><span class="line">  targets = discovery.docker.containers.targets     # </span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_name&quot;]</span><br><span class="line">    target_label  = &quot;container&quot;</span><br><span class="line">    regex         = &quot;/(.*)&quot;</span><br><span class="line">    replacement   = &quot;$1&quot;</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  rule &#123;</span><br><span class="line">    source_labels = [&quot;__meta_docker_container_label_com_docker_compose_service&quot;]</span><br><span class="line">    target_label  = &quot;service&quot;</span><br><span class="line">  &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.source.docker &quot;containers&quot; &#123;                      # 读取 Docker 日志，这是日志采集核心。</span><br><span class="line">  host       = &quot;unix:///var/run/docker.sock&quot;           # 连接哪个 Docker daemon</span><br><span class="line">  targets    = discovery.docker.containers.targets     # 从哪里拿目标列表，从 discovery.docker &quot;containers&quot; 获取目标容器列表</span><br><span class="line">  forward_to = [loki.write.local.receiver]             # 日志下一步发给谁。把当前读到的日志，发给 loki.write &quot;local&quot; 这个组件的 receiver。</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">loki.write &quot;local&quot; &#123;                                   # 接收来自其他 Loki 组件的日志，把日志发到 Loki，这是输出端。</span><br><span class="line">  endpoint &#123;                                           # 定义目标 Loki 地址</span><br><span class="line">    url = &quot;http://loki:3100/loki/api/v1/push&quot;</span><br><span class="line">  &#125;</span><br><span class="line">  external_labels = &#123;                                  # 给所有发出去的日志统一追加静态标签。</span><br><span class="line">    host = &quot;prometheus-jumpserver&quot;,                    # 所有日志自动打上 host=prometheus-jumpserver，env=prod 标签</span><br><span class="line">    env  = &quot;prod&quot;,</span><br><span class="line">  &#125;  </span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-
-<p>可以把 Alloy 理解成 <strong>组件图</strong> 。比如上面的配置链路：</p>
-<ul>
-<li><code>discovery.docker</code> (用于 Docker 目标发现)去发现 Docker 容器</li>
-<li><code>loki.source.docker</code> 读取这些容器的日志，并转发给其他 <code>loki.*</code> 组件</li>
-<li><code>loki.write</code> 把日志发给 Loki，用于接收日志并通过 Loki logproto 发往远端 Loki</li>
-</ul>
-<p>如果不是采集 Docker，而是采集文件日志，这时通常会用：</p>
-<ul>
-<li><code>loki.source.file</code></li>
-<li><code>local.file_match</code></li>
-</ul>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">loki.source.file &quot;files&quot; &#123;</span><br><span class="line">  file_match &#123;</span><br><span class="line">    path_targets = [</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/*.log&quot;, &quot;job&quot; = &quot;system&quot;&#125;,</span><br><span class="line">      &#123;&quot;__path__&quot; = &quot;/var/log/nginx/*.log&quot;, &quot;job&quot; = &quot;nginx&quot;&#125;,</span><br><span class="line">    ]</span><br><span class="line">  &#125;</span><br><span class="line"></span><br><span class="line">  forward_to = [loki.write.local.receiver]</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
   </entry>
   <entry>
     <title>Linux bash 常用操作</title>
