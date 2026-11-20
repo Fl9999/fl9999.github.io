@@ -16417,75 +16417,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes 上部署 cert-manager 及使用</title>
-    <url>/202301050935/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Kubernetes 1.24</li>
-<li>cert-manager v1.7.1</li>
-</ul>
-<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
-<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.0920811.xyz/img_111.png"></p>
-<p>解释下几个关键的资源:</p>
-<ul>
-<li><code>Issuer/ClusterIssuer</code> : 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。 <code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书， <code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
-<li><code>Certificate</code> : 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
-</ul>
-<span id="more"></span>
-
-<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
-<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
-<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
-<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
-<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
-<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
-<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://0920811.xyz/202210071716/#安装-cert-manager">安装参考文档</a></p>
-<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
-<ol>
-<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.0920811.xyz/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.0920811.xyz/img_113.png"></p>
-</li>
-<li><p>将 Token 保存到 Secret 中:</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Secret</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">cloudflare-api-token-secret</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">cert-manager</span></span><br><span class="line"><span class="attr">type:</span> <span class="string">Opaque</span></span><br><span class="line"><span class="attr">stringData:</span></span><br><span class="line">  <span class="attr">api-token:</span> <span class="string">&lt;API</span> <span class="string">Token&gt;</span> <span class="comment"># 粘贴 Token 到这里，不需要 base64 加密。</span></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote">&lt;span class&#x3D;”hint–top hint–error hint–medium hint–rounded hint–bounce” aria-label&#x3D;”<a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a></p>
-</blockquote>
-</li>
-</ol>
-<p>“&gt;[3]</span></a></sup></p>
-<ol start="3">
-<li><p>创建 ClusterIssuer:</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">cert-manager.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">ClusterIssuer</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">letsencrypt-dns01</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">acme:</span></span><br><span class="line">    <span class="attr">privateKeySecretRef:</span></span><br><span class="line">      <span class="attr">name:</span> <span class="string">letsencrypt-dns01</span>     <span class="comment"># 用于储存 ACME Account 私钥的 Secret</span></span><br><span class="line">    <span class="attr">email:</span> <span class="string">my-cloudflare-acc@example.com</span></span><br><span class="line">    <span class="attr">server:</span> <span class="string">https://acme-v02.api.letsencrypt.org/directory</span></span><br><span class="line">    <span class="attr">solvers:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">dns01:</span></span><br><span class="line">        <span class="attr">cloudflare:</span></span><br><span class="line">          <span class="attr">email:</span> <span class="string">my-cloudflare-acc@example.com</span> <span class="comment"># 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span></span><br><span class="line">          <span class="attr">apiTokenSecretRef:</span></span><br><span class="line">            <span class="attr">key:</span> <span class="string">api-token</span>               <span class="comment"># 引用 secret 中的配置数据，key 为 secret 中配置的名称</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">cloudflare-api-token-secret</span>    <span class="comment"># 引用保存 cloudflare 认证信息的 Secret</span></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>创建 Certificate:</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">cert-manager.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Certificate</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">test-mydomain-com</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">default</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">dnsNames:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">test.mydomain.com</span> <span class="comment"># 要签发证书的域名</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">&quot;*.mydomain.com&quot;</span> </span><br><span class="line">  <span class="attr">issuerRef:</span></span><br><span class="line">    <span class="attr">kind:</span> <span class="string">ClusterIssuer</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">letsencrypt-dns01</span> <span class="comment"># 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span></span><br><span class="line">  <span class="attr">secretName:</span> <span class="string">test-mydomain-com-tls</span> <span class="comment"># 最终签发出来的证书会保存在这个 Secret 里面</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
-</li>
-<li><p>获取和使用证书</p>
-<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get certificate -n prod</span></span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
-
-<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
- <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe certificate test-mydomain-com -n prod</span></span><br></pre></td></tr></table></figure>
-
-<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code> )，可以通过 <code>kubectl</code> 查看:</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get secret test-mydomain-com-tls -n default</span></span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
-
-<p> 其中 <code>tls.crt</code> 就是证书， <code>tls.key</code> 是密钥。</p>
-<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code> ，示例:</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1beta1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">test-ingress</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">kubernetes.io/Ingress.class:</span> <span class="string">nginx</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">test.mydomain.com</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/web</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">serviceName:</span> <span class="string">web</span></span><br><span class="line">          <span class="attr">servicePort:</span> <span class="number">80</span></span><br><span class="line">  <span class="attr">tls:</span></span><br><span class="line">    <span class="attr">hosts:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">test.mydomain.com</span></span><br><span class="line">    <span class="attr">secretName:</span> <span class="string">test-mydomain-com-tls</span></span><br></pre></td></tr></table></figure>
-
-<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
-<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
-</li>
-</ol>
-<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
-      <categories>
-        <category>Tools</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes 常用命令示例</title>
     <url>/202209131536/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -17270,6 +17201,75 @@ width: 20%;
 <h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://cloud.tencent.com/developer/article/1931089">Back-off restarting failed container 怎么办</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://tonybai.com/2017/10/16/out-of-node-resource-handling-in-kubernetes-cluster/">ephemeral-storage 问题</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://github.com/k3s-io/k3s/issues/8089">GO 1.20.6 breaks cri-dockerd</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes 上部署 cert-manager 及使用</title>
+    <url>/202301050935/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Kubernetes 1.24</li>
+<li>cert-manager v1.7.1</li>
+</ul>
+<p>随着 HTTPS 不断普及，越来越多的网站都在从 HTTP 升级到 HTTPS，使用 HTTPS 就需要向权威机构申请证书，需要付出一定的成本，如果需求数量多，也是一笔不小的开支。cert-manager 是 Kubernetes 上的全能证书管理工具，如果对安全级别和证书功能要求不高，可以利用 cert-manager 基于 ACME 协议与 Let’s Encrypt 来签发免费证书并自动续期，实现永久免费使用证书。</p>
+<h1 id="cert-manager-工作原理"><a href="#cert-manager-工作原理" class="headerlink" title="cert-manager 工作原理"></a>cert-manager 工作原理</h1><p>cert-manager 部署到 Kubernetes 集群后，它会 watch 它所支持的 CRD 资源，我们通过创建 CRD 资源来指示 cert-manager 为我们签发证书并自动续期: <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[cert-manager 工作原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86)">[1]</span></a></sup><br><img src="https://i.0920811.xyz/img_111.png"></p>
+<p>解释下几个关键的资源:</p>
+<ul>
+<li><code>Issuer/ClusterIssuer</code> : 用于指示 cert-manager 用什么方式签发证书，本文主要讲解签发免费证书的 ACME 方式。 <code>ClusterIssuer</code> 与 <code>Issuer</code> 的唯一区别就是 <code>Issuer</code> 只能用来签发自己所在 <code>namespace</code> 下的证书， <code>ClusterIssuer</code> 可以签发任意 <code>namespace</code> 下的证书。</li>
+<li><code>Certificate</code> : 用于告诉 cert-manager 我们想要什么域名的证书以及签发证书所需要的一些配置，包括对 <code>Issuer/ClusterIssuer</code> 的引用。</li>
+</ul>
+<span id="more"></span>
+
+<h1 id="免费证书签发原理"><a href="#免费证书签发原理" class="headerlink" title="免费证书签发原理"></a>免费证书签发原理</h1><p>Let’s Encrypt 利用 ACME 协议来校验域名是否真的属于你，校验成功后就可以自动颁发免费证书，证书有效期只有 90 天，在到期前需要再校验一次来实现续期，幸运的是 cert-manager 可以自动续期，这样就可以使用永久免费的证书了。如何校验这个域名是否属于你呢？主流的两种校验方式是 HTTP-01 和 DNS-01，详细校验原理可参考 Let’s Encrypt 的运作方式，下面将简单描述下。</p>
+<h2 id="HTTP-01-校验原理"><a href="#HTTP-01-校验原理" class="headerlink" title="HTTP-01 校验原理"></a>HTTP-01 校验原理</h2><p>HTTP-01 的校验原理是给你域名指向的 HTTP 服务增加一个临时 location ，Let’s Encrypt 会发送 http 请求到 http:&#x2F;&#x2F;<YOUR_DOMAIN>&#x2F;.well-known&#x2F;acme-challenge&#x2F;<TOKEN>，YOUR_DOMAIN 就是被校验的域名，TOKEN 是 ACME 协议的客户端负责放置的文件，在这里 ACME 客户端就是 cert-manager，它通过修改或创建 Ingress 规则来增加这个临时校验路径并指向提供 TOKEN 的服务。Let’s Encrypt 会对比 TOKEN 是否符合预期，校验成功后就会颁发证书。此方法仅适用于给使用 Ingress 暴露流量的服务颁发证书，并且不支持泛域名证书。</p>
+<h2 id="DNS-01-校验原理"><a href="#DNS-01-校验原理" class="headerlink" title="DNS-01 校验原理"></a>DNS-01 校验原理</h2><p>DNS-01 的校验原理是利用 DNS 提供商的 API Key 拿到你的 DNS 控制权限， 在 Let’s Encrypt 为 ACME 客户端提供令牌后，ACME 客户端 (cert-manager) 将创建从该令牌和您的帐户密钥派生的 TXT 记录，并将该记录放在 _acme-challenge.<YOUR_DOMAIN>。 然后 Let’s Encrypt 将向 DNS 系统查询该记录，如果找到匹配项，就可以颁发证书。此方法不需要你的服务使用 Ingress，并且支持泛域名证书。</p>
+<h2 id="校验方式对比"><a href="#校验方式对比" class="headerlink" title="校验方式对比"></a>校验方式对比</h2><p>HTTP-01 的校验方式的优点是: 配置简单通用，不管使用哪个 DNS 提供商都可以使用相同的配置方法；缺点是：需要依赖 Ingress，如果你的服务不是用 Ingress 暴露流量的就不适用，而且不支持泛域名证书。</p>
+<p>DNS-01 的校验方式的优点是没有 HTTP-01 校验方式缺点，不依赖 Ingress，也支持泛域名；缺点就是不同 DNS 提供商的配置方式不一样，而且 DNS 提供商有很多，cert-manager 的 Issuer 不可能每个都去支持，不过有一些可以通过部署实现了 cert-manager 的 Webhook 的服务来扩展 Issuer 进行支持，比如 DNSPod 和 阿里 DNS，详细 Webhook 列表请参考: <a href="https://cert-manager.io/docs/configuration/acme/dns01/#webhook">https://cert-manager.io/docs/configuration/acme/dns01/#webhook</a></p>
+<p>选择哪种方式呢？条件允许的话，建议是尽量用 DNS-01 的方式，限制更少，功能更全。 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[免费证书签发原理](https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86)">[2]</span></a></sup></p>
+<h1 id="cert-manager-部署"><a href="#cert-manager-部署" class="headerlink" title="cert-manager 部署"></a>cert-manager 部署</h1><p><a href="https://0920811.xyz/202210071716/#安装-cert-manager">安装参考文档</a></p>
+<h1 id="cert-manager-使用"><a href="#cert-manager-使用" class="headerlink" title="cert-manager 使用"></a>cert-manager 使用</h1><h2 id="DNS-01-校验方式签发证书"><a href="#DNS-01-校验方式签发证书" class="headerlink" title="DNS-01 校验方式签发证书"></a>DNS-01 校验方式签发证书</h2><p>下面以 cloudflare 为例来签发证书：</p>
+<ol>
+<li><p>登录 cloudflare，点到 My Profile &gt; API Tokens &gt; Create Token 来创建 Token:<br><img src="https://i.0920811.xyz/img_112.png"><br>复制 Token 并妥善保管:<br><img src="https://i.0920811.xyz/img_113.png"></p>
+</li>
+<li><p>将 Token 保存到 Secret 中:</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Secret</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">cloudflare-api-token-secret</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">cert-manager</span></span><br><span class="line"><span class="attr">type:</span> <span class="string">Opaque</span></span><br><span class="line"><span class="attr">stringData:</span></span><br><span class="line">  <span class="attr">api-token:</span> <span class="string">&lt;API</span> <span class="string">Token&gt;</span> <span class="comment"># 粘贴 Token 到这里，不需要 base64 加密。</span></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>如果是要创建 ClusterIssuer，Secret 需要创建在 cert-manager 所在命名空间中，如果是 Issuer，那就创建在 Issuer 所在命名空间中。 <sup id="fnref:3"><a href="#fn:3" rel="footnote">&lt;span class&#x3D;”hint–top hint–error hint–medium hint–rounded hint–bounce” aria-label&#x3D;”<a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a></p>
+</blockquote>
+</li>
+</ol>
+<p>“&gt;[3]</span></a></sup></p>
+<ol start="3">
+<li><p>创建 ClusterIssuer:</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">cert-manager.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">ClusterIssuer</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">letsencrypt-dns01</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">acme:</span></span><br><span class="line">    <span class="attr">privateKeySecretRef:</span></span><br><span class="line">      <span class="attr">name:</span> <span class="string">letsencrypt-dns01</span>     <span class="comment"># 用于储存 ACME Account 私钥的 Secret</span></span><br><span class="line">    <span class="attr">email:</span> <span class="string">my-cloudflare-acc@example.com</span></span><br><span class="line">    <span class="attr">server:</span> <span class="string">https://acme-v02.api.letsencrypt.org/directory</span></span><br><span class="line">    <span class="attr">solvers:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="attr">dns01:</span></span><br><span class="line">        <span class="attr">cloudflare:</span></span><br><span class="line">          <span class="attr">email:</span> <span class="string">my-cloudflare-acc@example.com</span> <span class="comment"># 替换成你的 cloudflare 邮箱账号，API Token 方式认证非必需，API Keys 认证是必需</span></span><br><span class="line">          <span class="attr">apiTokenSecretRef:</span></span><br><span class="line">            <span class="attr">key:</span> <span class="string">api-token</span>               <span class="comment"># 引用 secret 中的配置数据，key 为 secret 中配置的名称</span></span><br><span class="line">            <span class="attr">name:</span> <span class="string">cloudflare-api-token-secret</span>    <span class="comment"># 引用保存 cloudflare 认证信息的 Secret</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>创建 Certificate:</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">cert-manager.io/v1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Certificate</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">test-mydomain-com</span></span><br><span class="line">  <span class="attr">namespace:</span> <span class="string">default</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">dnsNames:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">test.mydomain.com</span> <span class="comment"># 要签发证书的域名</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">&quot;*.mydomain.com&quot;</span> </span><br><span class="line">  <span class="attr">issuerRef:</span></span><br><span class="line">    <span class="attr">kind:</span> <span class="string">ClusterIssuer</span></span><br><span class="line">    <span class="attr">name:</span> <span class="string">letsencrypt-dns01</span> <span class="comment"># 引用 ClusterIssuer，指示采用 dns01 方式进行校验</span></span><br><span class="line">  <span class="attr">secretName:</span> <span class="string">test-mydomain-com-tls</span> <span class="comment"># 最终签发出来的证书会保存在这个 Secret 里面</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>获取和使用证书</p>
+<p>创建好 Certificate 后，等一小会儿，我们可以 kubectl 查看是否签发成功:</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get certificate -n prod</span></span><br><span class="line"> NAME                READY   SECRET                  AGE</span><br><span class="line"> test-mydomain-com   True    test-mydomain-com-tls   1m</span><br></pre></td></tr></table></figure>
+
+<p> 如果 READY 为 <code>False</code> 表示失败，可以通过 <code>describe</code> 查看 <code>event</code> 来排查失败原因:</p>
+ <figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe certificate test-mydomain-com -n prod</span></span><br></pre></td></tr></table></figure>
+
+<p> 如果为 <code>True</code> 表示签发成功，证书就保存在我们所指定的 <code>Secret 中</code> (上面的例子是 <code>default/test-mydomain-com-tls</code> )，可以通过 <code>kubectl</code> 查看:</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl get secret test-mydomain-com-tls -n default</span></span><br><span class="line"> ...</span><br><span class="line"> data:</span><br><span class="line">   tls.crt: &lt;cert&gt;</span><br><span class="line">   tls.key: &lt;private key&gt;</span><br></pre></td></tr></table></figure>
+
+<p> 其中 <code>tls.crt</code> 就是证书， <code>tls.key</code> 是密钥。</p>
+<p> 你可以将它们挂载到你需要证书的应用中，或者使用 Ingress，可以直接在 Ingress 中引用 <code>secret</code> ，示例:</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">apiVersion:</span> <span class="string">networking.k8s.io/v1beta1</span></span><br><span class="line"><span class="attr">kind:</span> <span class="string">Ingress</span></span><br><span class="line"><span class="attr">metadata:</span></span><br><span class="line">  <span class="attr">name:</span> <span class="string">test-ingress</span></span><br><span class="line">  <span class="attr">annotations:</span></span><br><span class="line">    <span class="attr">kubernetes.io/Ingress.class:</span> <span class="string">nginx</span></span><br><span class="line"><span class="attr">spec:</span></span><br><span class="line">  <span class="attr">rules:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">host:</span> <span class="string">test.mydomain.com</span></span><br><span class="line">    <span class="attr">http:</span></span><br><span class="line">      <span class="attr">paths:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">path:</span> <span class="string">/web</span></span><br><span class="line">        <span class="attr">backend:</span></span><br><span class="line">          <span class="attr">serviceName:</span> <span class="string">web</span></span><br><span class="line">          <span class="attr">servicePort:</span> <span class="number">80</span></span><br><span class="line">  <span class="attr">tls:</span></span><br><span class="line">    <span class="attr">hosts:</span></span><br><span class="line">    <span class="bullet">-</span> <span class="string">test.mydomain.com</span></span><br><span class="line">    <span class="attr">secretName:</span> <span class="string">test-mydomain-com-tls</span></span><br></pre></td></tr></table></figure>
+
+<p>签发证书异常，可以检查 cert-manager 的 pod 的日志，查看报错信息。</p>
+<p>nginx 使用 cert-manager 颁发的证书，可以将 cert 和 key 文件内容追加到同一个文件中(pem)，Nginx 配置证书和 key 都使用此文件。</p>
+</li>
+</ol>
+<h1 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h1><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#cert-manager-%E5%B7%A5%E4%BD%9C%E5%8E%9F%E7%90%86">cert-manager 工作原理</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#%E5%85%8D%E8%B4%B9%E8%AF%81%E4%B9%A6%E7%AD%BE%E5%8F%91%E5%8E%9F%E7%90%86">免费证书签发原理</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li><li id="fn:3"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">3.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://imroc.cc/k8s/trick/sign-free-certs-with-cert-manager/#dns-01-%E6%A0%A1%E9%AA%8C%E6%96%B9%E5%BC%8F%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6">DNS-01 校验方式签发证书</a><a href="#fnref:3" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Tools</category>
       </categories>
       <tags>
         <tag>Kubernetes</tag>
@@ -18718,31 +18718,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Kubernetes Pod 调度</title>
-    <url>/202305221527/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-<li>Kubernetes 1.24</li>
-</ul>
-<h1 id="污点和容忍度"><a href="#污点和容忍度" class="headerlink" title="污点和容忍度"></a>污点和容忍度</h1><p>默认情况下，集群中的 master 节点被设置成了污点，以确保只有控制平面的 Pod 才能调度部署到主节点上。</p>
-<h2 id="显示节点的污点信息"><a href="#显示节点的污点信息" class="headerlink" title="显示节点的污点信息"></a>显示节点的污点信息</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe node k8s-master1</span></span><br><span class="line">Name:               k8s-master1</span><br><span class="line">Roles:              control-plane</span><br><span class="line">Labels:             beta.kubernetes.io/arch=amd64</span><br><span class="line">                    beta.kubernetes.io/os=linux</span><br><span class="line">                    kubernetes.io/arch=amd64</span><br><span class="line">                    kubernetes.io/hostname=k8s-master1</span><br><span class="line">                    kubernetes.io/os=linux</span><br><span class="line">                    node-role.kubernetes.io/control-plane=</span><br><span class="line">                    node.kubernetes.io/exclude-from-external-load-balancers=</span><br><span class="line">Annotations:        flannel.alpha.coreos.com/backend-data: &#123;&quot;VNI&quot;:1,&quot;VtepMAC&quot;:&quot;de:75:a4:67:58:1f&quot;&#125;</span><br><span class="line">                    flannel.alpha.coreos.com/backend-type: vxlan</span><br><span class="line">                    flannel.alpha.coreos.com/kube-subnet-manager: true</span><br><span class="line">                    flannel.alpha.coreos.com/public-ip: 172.31.26.116</span><br><span class="line">                    kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/cri-dockerd.sock</span><br><span class="line">                    management.cattle.io/pod-limits: &#123;&quot;cpu&quot;:&quot;100m&quot;,&quot;memory&quot;:&quot;390Mi&quot;&#125;</span><br><span class="line">                    management.cattle.io/pod-requests: &#123;&quot;cpu&quot;:&quot;950m&quot;,&quot;memory&quot;:&quot;290Mi&quot;,&quot;pods&quot;:&quot;8&quot;&#125;</span><br><span class="line">                    node.alpha.kubernetes.io/ttl: 0</span><br><span class="line">                    volumes.kubernetes.io/controller-managed-attach-detach: true</span><br><span class="line">CreationTimestamp:  Tue, 06 Dec 2022 17:50:49 +0800</span><br><span class="line">Taints:             node-role.kubernetes.io/control-plane:NoSchedule</span><br><span class="line">                    node-role.kubernetes.io/master:NoSchedule</span><br></pre></td></tr></table></figure>
-
-<p>Master 节点包含 2 个污点</p>
-<ul>
-<li><code>node-role.kubernetes.io/control-plane:NoSchedule</code></li>
-<li><code>node-role.kubernetes.io/master:NoSchedule</code></li>
-</ul>
-<p>这 2 个污点将阻止 Pod 调度到这个节点上面，除非有 Pod 能够容忍这个污点(Taints)，通常能容忍这个污点的都是控制平面的 Pod。</p>
-<h2 id="查看-Pod-的容忍度"><a href="#查看-Pod-的容忍度" class="headerlink" title="查看 Pod 的容忍度"></a>查看 Pod 的容忍度</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe pod -n kube-system kube-proxy-2cslw</span></span><br><span class="line">...</span><br><span class="line">Tolerations:                 op=Exists</span><br><span class="line">                             node.kubernetes.io/disk-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/memory-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/network-unavailable:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/not-ready:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/pid-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/unreachable:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/unschedulable:NoSchedule op=Exists</span><br><span class="line">Events:                      &lt;none&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Kubernetes</category>
-      </categories>
-      <tags>
-        <tag>Kubernetes</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>kubernetes Service 详解</title>
     <url>/202305030923/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p>Kubernetes 的 Service 代表的是 Kubernetes 后端服务的入口，它主要包含服务的访问 IP（虚拟 IP）和端口，工作在 L4.</p>
@@ -18778,6 +18753,31 @@ width: 20%;
 <li><code>KUBE-SEP-*</code> - 通过 DNAT 将数据包的目的地址（IP:PORT）修改为后端就绪的 Pod 的 IP:PORT，从而将流量转发到相应的 Pod</li>
 </ul>
 <p><code>kube-proxy</code> 的 iptables 模式因为使用 DNAT 转发数据包，存在一定的性能损耗，另外，当集群中的 Service 数量上万时，节点上的 iptables rules 会非常庞大，对管理是个不小的负担，性能也会大打折扣。</p>
+]]></content>
+      <categories>
+        <category>Kubernetes</category>
+      </categories>
+      <tags>
+        <tag>Kubernetes</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Kubernetes Pod 调度</title>
+    <url>/202305221527/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+<li>Kubernetes 1.24</li>
+</ul>
+<h1 id="污点和容忍度"><a href="#污点和容忍度" class="headerlink" title="污点和容忍度"></a>污点和容忍度</h1><p>默认情况下，集群中的 master 节点被设置成了污点，以确保只有控制平面的 Pod 才能调度部署到主节点上。</p>
+<h2 id="显示节点的污点信息"><a href="#显示节点的污点信息" class="headerlink" title="显示节点的污点信息"></a>显示节点的污点信息</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe node k8s-master1</span></span><br><span class="line">Name:               k8s-master1</span><br><span class="line">Roles:              control-plane</span><br><span class="line">Labels:             beta.kubernetes.io/arch=amd64</span><br><span class="line">                    beta.kubernetes.io/os=linux</span><br><span class="line">                    kubernetes.io/arch=amd64</span><br><span class="line">                    kubernetes.io/hostname=k8s-master1</span><br><span class="line">                    kubernetes.io/os=linux</span><br><span class="line">                    node-role.kubernetes.io/control-plane=</span><br><span class="line">                    node.kubernetes.io/exclude-from-external-load-balancers=</span><br><span class="line">Annotations:        flannel.alpha.coreos.com/backend-data: &#123;&quot;VNI&quot;:1,&quot;VtepMAC&quot;:&quot;de:75:a4:67:58:1f&quot;&#125;</span><br><span class="line">                    flannel.alpha.coreos.com/backend-type: vxlan</span><br><span class="line">                    flannel.alpha.coreos.com/kube-subnet-manager: true</span><br><span class="line">                    flannel.alpha.coreos.com/public-ip: 172.31.26.116</span><br><span class="line">                    kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/cri-dockerd.sock</span><br><span class="line">                    management.cattle.io/pod-limits: &#123;&quot;cpu&quot;:&quot;100m&quot;,&quot;memory&quot;:&quot;390Mi&quot;&#125;</span><br><span class="line">                    management.cattle.io/pod-requests: &#123;&quot;cpu&quot;:&quot;950m&quot;,&quot;memory&quot;:&quot;290Mi&quot;,&quot;pods&quot;:&quot;8&quot;&#125;</span><br><span class="line">                    node.alpha.kubernetes.io/ttl: 0</span><br><span class="line">                    volumes.kubernetes.io/controller-managed-attach-detach: true</span><br><span class="line">CreationTimestamp:  Tue, 06 Dec 2022 17:50:49 +0800</span><br><span class="line">Taints:             node-role.kubernetes.io/control-plane:NoSchedule</span><br><span class="line">                    node-role.kubernetes.io/master:NoSchedule</span><br></pre></td></tr></table></figure>
+
+<p>Master 节点包含 2 个污点</p>
+<ul>
+<li><code>node-role.kubernetes.io/control-plane:NoSchedule</code></li>
+<li><code>node-role.kubernetes.io/master:NoSchedule</code></li>
+</ul>
+<p>这 2 个污点将阻止 Pod 调度到这个节点上面，除非有 Pod 能够容忍这个污点(Taints)，通常能容忍这个污点的都是控制平面的 Pod。</p>
+<h2 id="查看-Pod-的容忍度"><a href="#查看-Pod-的容忍度" class="headerlink" title="查看 Pod 的容忍度"></a>查看 Pod 的容忍度</h2><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">kubectl describe pod -n kube-system kube-proxy-2cslw</span></span><br><span class="line">...</span><br><span class="line">Tolerations:                 op=Exists</span><br><span class="line">                             node.kubernetes.io/disk-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/memory-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/network-unavailable:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/not-ready:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/pid-pressure:NoSchedule op=Exists</span><br><span class="line">                             node.kubernetes.io/unreachable:NoExecute op=Exists</span><br><span class="line">                             node.kubernetes.io/unschedulable:NoSchedule op=Exists</span><br><span class="line">Events:                      &lt;none&gt;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
 ]]></content>
       <categories>
         <category>Kubernetes</category>
@@ -27340,6 +27340,73 @@ width: 20%;
       </tags>
   </entry>
   <entry>
+    <title>Mysql 多主一从即多源复制</title>
+    <url>/2207210946/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
+<li>Mysql 5.7 之后版本支持多主一从</li>
+</ul>
+<h3 id="配置步骤"><a href="#配置步骤" class="headerlink" title="配置步骤"></a>配置步骤</h3><h4 id="分别在-Master-1-和-Master-2-上导出需要同步的数据库"><a href="#分别在-Master-1-和-Master-2-上导出需要同步的数据库" class="headerlink" title="分别在 Master_1 和 Master_2 上导出需要同步的数据库"></a>分别在 Master_1 和 Master_2 上导出需要同步的数据库</h4><p>分别在 Master_1 和 Master_2 上执行以下命令，导出需要同步的数据库备份</p>
+<figure class="highlight shell"><figcaption><span>Master_1</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db1  &gt; db1.sql</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight shell"><figcaption><span>Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db2  &gt; db2.sql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>备份完成后，将备份数据拷贝到从库服务器上面</p>
+<span id="more"></span>
+
+<h4 id="在-Master-1-和-Master-2-上创建复制账号"><a href="#在-Master-1-和-Master-2-上创建复制账号" class="headerlink" title="在 Master_1 和 Master_2 上创建复制账号"></a>在 Master_1 和 Master_2 上创建复制账号</h4><blockquote>
+<p>如果已有复制账号，跳过此步骤</p>
+</blockquote>
+<p>分别在 Master_1 和 Master_2 上执行以下命令，创建复制账号</p>
+<figure class="highlight shell"><figcaption><span>Master_1 Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br></pre></td></tr></table></figure>
+
+<h4 id="更改-slave-配置以支持多主一从"><a href="#更改-slave-配置以支持多主一从" class="headerlink" title="更改 slave 配置以支持多主一从"></a>更改 slave 配置以支持多主一从</h4><p>mysql 支持多主一从(多源复制)的关键配置。<br>要配置 mysql 支持多源复制，必须配置 mysql 存储同步信息的方式，主要有以下 2 种方式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[存储同步信息的方式说明](https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html)
+">[1]</span></a></sup></p>
+<ul>
+<li>FILE  默认配置，此时同步信息存储在文件 master.info 和 relay-log.info</li>
+<li>TABLE  同步信息存储在 mysql.slave_master_info 和 mysql.slave_relay_log_info</li>
+</ul>
+<p>更改 mysql 配置文件(默认&#x2F;etc&#x2F;my.cnf)，配置存储同步信息的方式</p>
+<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">master_info_repository=TABLE</span><br><span class="line">relay_log_info_repository=TABLE</span><br></pre></td></tr></table></figure>
+
+<p>更改配置后，重启 mysql 生效</p>
+<h4 id="slave-上恢复-Master-1-和-Master-2-的备份数据"><a href="#slave-上恢复-Master-1-和-Master-2-的备份数据" class="headerlink" title="slave 上恢复 Master_1 和 Master_2 的备份数据"></a>slave 上恢复 Master_1 和 Master_2 的备份数据</h4><figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">mysql -uroot -p  &lt; db1.sql</span><br><span class="line">mysql -uroot -p  &lt; db2.sql</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>因为在 <code>mysqldump</code> 备份时，使用了选项 <code>--add-drop-database</code> ，slave 导入备份时，无需指定 db</p>
+</blockquote>
+<h4 id="slave-上配置多源复制"><a href="#slave-上配置多源复制" class="headerlink" title="slave 上配置多源复制"></a>slave 上配置多源复制</h4><h5 id="找到配置主从需要的-binlog-位置和-Pos-位置"><a href="#找到配置主从需要的-binlog-位置和-Pos-位置" class="headerlink" title="找到配置主从需要的 binlog 位置和 Pos 位置"></a>找到配置主从需要的 binlog 位置和 Pos 位置</h5><p>分别在 Master_1 和 Master_2 的备份数据中，查找以下内容，找到需要的 binlog 位置和 Pos 位置</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">cat db1.sql |grep &quot; CHANGE MASTER&quot;</span><br><span class="line">cat db2.sql |grep &quot; CHANGE MASTER&quot;</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>这些信息是由  <code>mysqldump</code> 的选项 <code>--master-data=2</code> 提供 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[--master-data=2说明](https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html)
+">[2]</span></a></sup><br>结果中包含以下类似内容：</p>
+</blockquote>
+<blockquote>
+<p>CHANGE MASTER TO MASTER_LOG_FILE&#x3D;’log-bin.000001’, MASTER_LOG_POS&#x3D;1539;</p>
+</blockquote>
+<h5 id="登录-salve-数据库配置多源复制"><a href="#登录-salve-数据库配置多源复制" class="headerlink" title="登录 salve 数据库配置多源复制"></a>登录 salve 数据库配置多源复制</h5><p>登录 slave 数据库，分别执行以下命令，创建到 Master_1 和 Master_2 的复制</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_1&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_1&#x27;;</span><br><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_2&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_2&#x27;; </span><br><span class="line"> </span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>不同的主从复制以最后的 <code>FOR CHANNEL</code> 来区分</p>
+</blockquote>
+<h5 id="启动主从复制"><a href="#启动主从复制" class="headerlink" title="启动主从复制"></a>启动主从复制</h5><p>在 slave 数据库中执行以下命令分别启动复制</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">start slave for channel &quot;Master_1&quot;;</span><br><span class="line">start slave for channel &quot;Master_1&quot;;</span><br></pre></td></tr></table></figure>
+
+<p>也可以通过 <code>start slave;</code> 启动所有的复制</p>
+<p>可以通过以下命令查看启动复制后的状态</p>
+<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_1&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_2&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS\G</span><br></pre></td></tr></table></figure>
+
+<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://dev.mysql.com/doc/">Mysql 官网</a></p>
+<h3 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h3><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html">存储同步信息的方式说明</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html">--master-data=2说明</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
+      <categories>
+        <category>Mysql</category>
+      </categories>
+      <tags>
+        <tag>Mysql</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>MySQL 备份及主从恢复</title>
     <url>/94ee2c23/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -27414,73 +27481,6 @@ width: 20%;
 
 <p>通过命令 <code>show slave status\G</code> 检查主从同步状态</p>
 ]]></content>
-      <categories>
-        <category>Mysql</category>
-      </categories>
-      <tags>
-        <tag>Mysql</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Mysql 多主一从即多源复制</title>
-    <url>/2207210946/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h3 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h3><ul>
-<li>Mysql 5.7 之后版本支持多主一从</li>
-</ul>
-<h3 id="配置步骤"><a href="#配置步骤" class="headerlink" title="配置步骤"></a>配置步骤</h3><h4 id="分别在-Master-1-和-Master-2-上导出需要同步的数据库"><a href="#分别在-Master-1-和-Master-2-上导出需要同步的数据库" class="headerlink" title="分别在 Master_1 和 Master_2 上导出需要同步的数据库"></a>分别在 Master_1 和 Master_2 上导出需要同步的数据库</h4><p>分别在 Master_1 和 Master_2 上执行以下命令，导出需要同步的数据库备份</p>
-<figure class="highlight shell"><figcaption><span>Master_1</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db1  &gt; db1.sql</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight shell"><figcaption><span>Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">mysqldump -uroot -p123456 --master-data=2 --single-transaction --databases  --add-drop-database  db2  &gt; db2.sql</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>备份完成后，将备份数据拷贝到从库服务器上面</p>
-<span id="more"></span>
-
-<h4 id="在-Master-1-和-Master-2-上创建复制账号"><a href="#在-Master-1-和-Master-2-上创建复制账号" class="headerlink" title="在 Master_1 和 Master_2 上创建复制账号"></a>在 Master_1 和 Master_2 上创建复制账号</h4><blockquote>
-<p>如果已有复制账号，跳过此步骤</p>
-</blockquote>
-<p>分别在 Master_1 和 Master_2 上执行以下命令，创建复制账号</p>
-<figure class="highlight shell"><figcaption><span>Master_1 Master_2</span></figcaption><table><tr><td class="code"><pre><span class="line">grant replication slave on *.* to &#x27;repl&#x27;@&#x27;%&#x27; identified by &#x27;123456&#x27;;</span><br></pre></td></tr></table></figure>
-
-<h4 id="更改-slave-配置以支持多主一从"><a href="#更改-slave-配置以支持多主一从" class="headerlink" title="更改 slave 配置以支持多主一从"></a>更改 slave 配置以支持多主一从</h4><p>mysql 支持多主一从(多源复制)的关键配置。<br>要配置 mysql 支持多源复制，必须配置 mysql 存储同步信息的方式，主要有以下 2 种方式 <sup id="fnref:1"><a href="#fn:1" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[存储同步信息的方式说明](https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html)
-">[1]</span></a></sup></p>
-<ul>
-<li>FILE  默认配置，此时同步信息存储在文件 master.info 和 relay-log.info</li>
-<li>TABLE  同步信息存储在 mysql.slave_master_info 和 mysql.slave_relay_log_info</li>
-</ul>
-<p>更改 mysql 配置文件(默认&#x2F;etc&#x2F;my.cnf)，配置存储同步信息的方式</p>
-<figure class="highlight shell"><figcaption><span>/etc/my.cnf</span></figcaption><table><tr><td class="code"><pre><span class="line">master_info_repository=TABLE</span><br><span class="line">relay_log_info_repository=TABLE</span><br></pre></td></tr></table></figure>
-
-<p>更改配置后，重启 mysql 生效</p>
-<h4 id="slave-上恢复-Master-1-和-Master-2-的备份数据"><a href="#slave-上恢复-Master-1-和-Master-2-的备份数据" class="headerlink" title="slave 上恢复 Master_1 和 Master_2 的备份数据"></a>slave 上恢复 Master_1 和 Master_2 的备份数据</h4><figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">mysql -uroot -p  &lt; db1.sql</span><br><span class="line">mysql -uroot -p  &lt; db2.sql</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>因为在 <code>mysqldump</code> 备份时，使用了选项 <code>--add-drop-database</code> ，slave 导入备份时，无需指定 db</p>
-</blockquote>
-<h4 id="slave-上配置多源复制"><a href="#slave-上配置多源复制" class="headerlink" title="slave 上配置多源复制"></a>slave 上配置多源复制</h4><h5 id="找到配置主从需要的-binlog-位置和-Pos-位置"><a href="#找到配置主从需要的-binlog-位置和-Pos-位置" class="headerlink" title="找到配置主从需要的 binlog 位置和 Pos 位置"></a>找到配置主从需要的 binlog 位置和 Pos 位置</h5><p>分别在 Master_1 和 Master_2 的备份数据中，查找以下内容，找到需要的 binlog 位置和 Pos 位置</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">cat db1.sql |grep &quot; CHANGE MASTER&quot;</span><br><span class="line">cat db2.sql |grep &quot; CHANGE MASTER&quot;</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>这些信息是由  <code>mysqldump</code> 的选项 <code>--master-data=2</code> 提供 <sup id="fnref:2"><a href="#fn:2" rel="footnote"><span class="hint--top hint--error hint--medium hint--rounded hint--bounce" aria-label="[--master-data=2说明](https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html)
-">[2]</span></a></sup><br>结果中包含以下类似内容：</p>
-</blockquote>
-<blockquote>
-<p>CHANGE MASTER TO MASTER_LOG_FILE&#x3D;’log-bin.000001’, MASTER_LOG_POS&#x3D;1539;</p>
-</blockquote>
-<h5 id="登录-salve-数据库配置多源复制"><a href="#登录-salve-数据库配置多源复制" class="headerlink" title="登录 salve 数据库配置多源复制"></a>登录 salve 数据库配置多源复制</h5><p>登录 slave 数据库，分别执行以下命令，创建到 Master_1 和 Master_2 的复制</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_1&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_1&#x27;;</span><br><span class="line">CHANGE MASTER TO MASTER_HOST=&#x27;Master_2&#x27;,MASTER_USER=&#x27;repl&#x27;, MASTER_PASSWORD=&#x27;123456&#x27;,MASTER_LOG_FILE=&#x27;log-bin.000001&#x27;,MASTER_LOG_POS=1539 FOR CHANNEL &#x27;Master_2&#x27;; </span><br><span class="line"> </span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p>不同的主从复制以最后的 <code>FOR CHANNEL</code> 来区分</p>
-</blockquote>
-<h5 id="启动主从复制"><a href="#启动主从复制" class="headerlink" title="启动主从复制"></a>启动主从复制</h5><p>在 slave 数据库中执行以下命令分别启动复制</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">start slave for channel &quot;Master_1&quot;;</span><br><span class="line">start slave for channel &quot;Master_1&quot;;</span><br></pre></td></tr></table></figure>
-
-<p>也可以通过 <code>start slave;</code> 启动所有的复制</p>
-<p>可以通过以下命令查看启动复制后的状态</p>
-<figure class="highlight shell"><figcaption><span>slave</span></figcaption><table><tr><td class="code"><pre><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_1&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS FOR CHANNEL &#x27;Master_2&#x27;\G</span><br><span class="line">SHOW SLAVE STATUS\G</span><br></pre></td></tr></table></figure>
-
-<h3 id="参考链接"><a href="#参考链接" class="headerlink" title="参考链接"></a>参考链接</h3><p><a href="https://dev.mysql.com/doc/">Mysql 官网</a></p>
-<h3 id="脚注"><a href="#脚注" class="headerlink" title="脚注"></a>脚注</h3><div id="footnotes"><hr><div id="footnotelist"><ol style="list-style: none; padding-left: 0; margin-left: 40px"><li id="fn:1"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">1.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/refman/5.7/en/replication-multi-source-configuration.html">存储同步信息的方式说明</a><a href="#fnref:1" rev="footnote"> ↩</a></span></li><li id="fn:2"><span style="display: inline-block; vertical-align: top; padding-right: 10px; margin-left: -40px">2.</span><span style="display: inline-block; vertical-align: top; margin-left: 10px;"><a href="https://dev.mysql.com/doc/mysql-replication-excerpt/5.7/en/replication-howto-mysqldump.html">--master-data=2说明</a><a href="#fnref:2" rev="footnote"> ↩</a></span></li></ol></div></div>]]></content>
       <categories>
         <category>Mysql</category>
       </categories>
@@ -29920,33 +29920,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>Prometheus Federation 安装配置</title>
-    <url>/202306271310/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><img src="https://i.0920811.xyz/img_183.png"></p>
-<p>如上图所示，在每个数据中心部署单独的 Prometheus Server，用于采集当前数据中心监控数据。并由一个中心的 Prometheus Server 负责聚合多个数据中心的监控数据。这一特性在 Promthues 中称为 Federation (联邦集群）。</p>
-<p>Prometheus Federation (联邦集群)的核心在于每一个 Prometheus Server 都包含一个用于获取当前实例中监控样本的接口 <code>/federate</code> 。对于中心 Prometheus Server 而言，无论是从其他的 Prometheus 实例还是 Exporter 实例中获取数据实际上并没有任何差异。</p>
-<p>以下配置示例在中心 Prometheus Server 配置其抓取其他 Prometheus Server 的指标，必须至少有一个 <code>match</code> 配置，以指定要抓取的目标 Prometheus Server 的 Job 名称，可以使用正则表达式匹配抓取任务</p>
-<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">scrape_configs:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">job_name:</span> <span class="string">&#x27;federate&#x27;</span></span><br><span class="line">    <span class="attr">scrape_interval:</span> <span class="string">15s</span></span><br><span class="line">    <span class="attr">honor_labels:</span> <span class="literal">true</span>    <span class="comment"># 保留 Leaf 上抓取的指标的标签</span></span><br><span class="line">    <span class="attr">honor_timestamps:</span> <span class="literal">false</span>  <span class="comment"># 强制使用 Master 的当前时间，防止时间差导致无法抓取指标</span></span><br><span class="line">    <span class="attr">metrics_path:</span> <span class="string">&#x27;/federate&#x27;</span></span><br><span class="line">    <span class="attr">params:</span></span><br><span class="line">      <span class="string">&#x27;match[]&#x27;</span><span class="string">:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="string">&#x27;&#123;__name__=~&quot;.+&quot;&#125;&#x27;</span>     <span class="comment"># 抓取所有指标</span></span><br><span class="line">    <span class="attr">static_configs:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">targets:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="string">&#x27;192.168.77.11:9090&#x27;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="string">&#x27;192.168.77.12:9090&#x27;</span></span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p><code>__name__</code> 是 Prometheus 特殊的预定义标签，表示指标的名称<br>使用以下配置采集目标 Prometheus Server 的所有指标</p>
-</blockquote>
-<blockquote>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">params:</span><br><span class="line">  &#x27;match[]&#x27;:</span><br><span class="line">    - &#x27;&#123;job=~&quot;.+&quot;&#125;&#x27;</span><br></pre></td></tr></table></figure>
-</blockquote>
-<p><strong>Master Prometheus 的 Explorer（Web）中不会出现 Leaf 抓取的 Target，可以使用具体的指标如 <code>up</code> 等检查是否抓取到了数据</strong></p>
-<p>Master prometheus 上面测试 <code>match</code> 是否能抓取指标：</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl -G <span class="string">&#x27;http://43.13.23.59:9090/federate&#x27;</span> --data-urlencode <span class="string">&#x27;match[]=&#123;__name__=~&quot;.+&quot;&#125;&#x27;</span> | <span class="built_in">tail</span></span></span><br><span class="line"></span><br><span class="line">scrape_series_added&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.64.15:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 0 1770621129341</span><br><span class="line">scrape_series_added&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.0.7:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 0 1770621132594</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">TYPE up untyped</span></span><br><span class="line">up&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.64.6:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 1 1770621137089</span><br><span class="line">up&#123;Project=&quot;CDN&quot;,instance=&quot;localhost:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 0 1770621124836</span><br><span class="line">up&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.64.17:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 1 1770621132241</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Tools</category>
-        <category>Prometheus</category>
-      </categories>
-      <tags>
-        <tag>Prometheus</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Prometheus 和 Grafana 使用示例</title>
     <url>/202306061334/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
@@ -29979,6 +29952,33 @@ width: 20%;
       <categories>
         <category>Tools</category>
       </categories>
+  </entry>
+  <entry>
+    <title>Prometheus Federation 安装配置</title>
+    <url>/202306271310/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><p><img src="https://i.0920811.xyz/img_183.png"></p>
+<p>如上图所示，在每个数据中心部署单独的 Prometheus Server，用于采集当前数据中心监控数据。并由一个中心的 Prometheus Server 负责聚合多个数据中心的监控数据。这一特性在 Promthues 中称为 Federation (联邦集群）。</p>
+<p>Prometheus Federation (联邦集群)的核心在于每一个 Prometheus Server 都包含一个用于获取当前实例中监控样本的接口 <code>/federate</code> 。对于中心 Prometheus Server 而言，无论是从其他的 Prometheus 实例还是 Exporter 实例中获取数据实际上并没有任何差异。</p>
+<p>以下配置示例在中心 Prometheus Server 配置其抓取其他 Prometheus Server 的指标，必须至少有一个 <code>match</code> 配置，以指定要抓取的目标 Prometheus Server 的 Job 名称，可以使用正则表达式匹配抓取任务</p>
+<figure class="highlight yaml"><table><tr><td class="code"><pre><span class="line"><span class="attr">scrape_configs:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="attr">job_name:</span> <span class="string">&#x27;federate&#x27;</span></span><br><span class="line">    <span class="attr">scrape_interval:</span> <span class="string">15s</span></span><br><span class="line">    <span class="attr">honor_labels:</span> <span class="literal">true</span>    <span class="comment"># 保留 Leaf 上抓取的指标的标签</span></span><br><span class="line">    <span class="attr">honor_timestamps:</span> <span class="literal">false</span>  <span class="comment"># 强制使用 Master 的当前时间，防止时间差导致无法抓取指标</span></span><br><span class="line">    <span class="attr">metrics_path:</span> <span class="string">&#x27;/federate&#x27;</span></span><br><span class="line">    <span class="attr">params:</span></span><br><span class="line">      <span class="string">&#x27;match[]&#x27;</span><span class="string">:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="string">&#x27;&#123;__name__=~&quot;.+&quot;&#125;&#x27;</span>     <span class="comment"># 抓取所有指标</span></span><br><span class="line">    <span class="attr">static_configs:</span></span><br><span class="line">      <span class="bullet">-</span> <span class="attr">targets:</span></span><br><span class="line">        <span class="bullet">-</span> <span class="string">&#x27;192.168.77.11:9090&#x27;</span></span><br><span class="line">        <span class="bullet">-</span> <span class="string">&#x27;192.168.77.12:9090&#x27;</span></span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p><code>__name__</code> 是 Prometheus 特殊的预定义标签，表示指标的名称<br>使用以下配置采集目标 Prometheus Server 的所有指标</p>
+</blockquote>
+<blockquote>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">params:</span><br><span class="line">  &#x27;match[]&#x27;:</span><br><span class="line">    - &#x27;&#123;job=~&quot;.+&quot;&#125;&#x27;</span><br></pre></td></tr></table></figure>
+</blockquote>
+<p><strong>Master Prometheus 的 Explorer（Web）中不会出现 Leaf 抓取的 Target，可以使用具体的指标如 <code>up</code> 等检查是否抓取到了数据</strong></p>
+<p>Master prometheus 上面测试 <code>match</code> 是否能抓取指标：</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">curl -G <span class="string">&#x27;http://43.13.23.59:9090/federate&#x27;</span> --data-urlencode <span class="string">&#x27;match[]=&#123;__name__=~&quot;.+&quot;&#125;&#x27;</span> | <span class="built_in">tail</span></span></span><br><span class="line"></span><br><span class="line">scrape_series_added&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.64.15:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 0 1770621129341</span><br><span class="line">scrape_series_added&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.0.7:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 0 1770621132594</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">TYPE up untyped</span></span><br><span class="line">up&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.64.6:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 1 1770621137089</span><br><span class="line">up&#123;Project=&quot;CDN&quot;,instance=&quot;localhost:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 0 1770621124836</span><br><span class="line">up&#123;Project=&quot;CDN&quot;,instance=&quot;110.120.64.17:9100&quot;,job=&quot;cdn_node_exporter&quot;&#125; 1 1770621132241</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Tools</category>
+        <category>Prometheus</category>
+      </categories>
+      <tags>
+        <tag>Prometheus</tag>
+      </tags>
   </entry>
   <entry>
     <title>Prometheus 安装配置</title>
@@ -34236,59 +34236,6 @@ width: 20%;
       </tags>
   </entry>
   <entry>
-    <title>vim</title>
-    <url>/202208181117/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
-<li>Centos 7</li>
-</ul>
-<h1 id="vim-配置"><a href="#vim-配置" class="headerlink" title="vim 配置"></a>vim 配置</h1><p><code>vim</code> 启动时会读取 <code>/etc/vimrc</code> （全局配置） 和 <code>~/.vimrc</code> （用户配置）</p>
-<p>常用配置如下，使用 <code>&quot;</code> 注释</p>
-<figure class="highlight shell"><figcaption><span>/etc/vimrc</span></figcaption><table><tr><td class="code"><pre><span class="line">&quot; 自动缩进 </span><br><span class="line">set ai</span><br><span class="line">set autoindent</span><br><span class="line"></span><br><span class="line">&quot; 保存历史命令数量</span><br><span class="line">set history=50</span><br><span class="line"></span><br><span class="line">&quot; 右下角显示当前鼠标位置（行列数）</span><br><span class="line">set ruler</span><br><span class="line"></span><br><span class="line">&quot; 鼠标位置所在行显示下划线</span><br><span class="line">set cursorline</span><br><span class="line"></span><br><span class="line">&quot; 开启语法高亮</span><br><span class="line">syntax on</span><br><span class="line"></span><br><span class="line">&quot; 高亮搜索结果</span><br><span class="line">set hlsearch</span><br><span class="line"></span><br><span class="line">&quot; 搜索时不区分大小写</span><br><span class="line">set ignorecase</span><br><span class="line"></span><br><span class="line">&quot; 将 tab 转换为空格</span><br><span class="line">set expandtab</span><br><span class="line"></span><br><span class="line">&quot; tab 转换为4个空格</span><br><span class="line">set tabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 删除时，可以一次删除4个空格</span><br><span class="line">set softtabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 显示行数</span><br><span class="line">set nu</span><br><span class="line"></span><br><span class="line">&quot; 禁用格式化指令。</span><br><span class="line">set paste</span><br></pre></td></tr></table></figure>
-
-<span id="more"></span>
-
-<blockquote>
-<p><strong><code>set paste</code> 要谨慎配置，它会禁用所有的格式化指令，如 <code>set autoindent</code> 等，会导致其不可用</strong></p>
-</blockquote>
-<h1 id="vim-常见用法"><a href="#vim-常见用法" class="headerlink" title="vim 常见用法"></a>vim 常见用法</h1><h2 id="读写加解密文件"><a href="#读写加解密文件" class="headerlink" title="读写加解密文件"></a>读写加解密文件</h2><h3 id="创建新的加密文件"><a href="#创建新的加密文件" class="headerlink" title="创建新的加密文件"></a>创建新的加密文件</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vim -x mysecfile</span><br></pre></td></tr></table></figure>
-
-<p>使用 <code>vim</code> 的 <code>-x</code> 选项，将创建一个新的文件，并提示需要设置加密密码，输入 2 次密码后，将进入 <code>vim</code> 界面，编辑完内容，保存后，产生的文件为 <code>vim</code> 加密的文件，使用 <code>file</code> 命令查看，显示如下</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file mysecfile</span></span><br><span class="line">mysecfile: Vim encrypted file data</span><br><span class="line"></span><br></pre></td></tr></table></figure>
-
-<p>之后要使用 <code>vim</code> 编辑此文件，都要按照提示输入密码，如果未输入密码或者输入的密码错误，打开的文件内容将显示为乱码，只有输入正确的密码，才能看到正确的文件内容，如果使用其他编辑器，可以直接打开文件，但是内容乱码  </p>
-<h3 id="加密已有文件"><a href="#加密已有文件" class="headerlink" title="加密已有文件"></a>加密已有文件</h3><p>对于已经存在的未加密文件，使用 <code>vim</code> 的 <code>-x</code> 选项时，会要求输入密码，此时不输入密码，或者随便输入，都会打开正确的文件内容(因为文件并未被 <code>vim</code> 加密保护)  </p>
-<p>对于已经存在的未加密文件，若要使用 <code>vim</code> 进行加密，可以在 <code>vim</code> 打开文件后，使用 <code>vim</code> 的 <code>X</code> 命令对文件进行加密。具体操作为： 在 <code>vim</code> 的一般模式下（按 <code>Esc</code> 进入），输入</p>
-<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">:X</span><br></pre></td></tr></table></figure>
-
-<p>确定后 <code>vim</code> 会提示输入 2 次密码，完成加密，最后保存文件</p>
-<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:wq</span><br></pre></td></tr></table></figure>
-
-<blockquote>
-<p><strong>对于 <code>vim</code> 已经加密的文件，如果使用 <code>vim</code> 打开时输入错误的密码或者未输入密码，打开文件显示乱码，此时如果对文件进行了保存，会导致乱码被保存为文件内容，导致文件内容丢失</strong></p>
-</blockquote>
-<h3 id="文件解密"><a href="#文件解密" class="headerlink" title="文件解密"></a>文件解密</h3><p>对 <code>vim</code> 已加密的文件，需要解密的话，在正确打开文件后，可以通过 <a href="#%E5%8A%A0%E5%AF%86%E5%B7%B2%E6%9C%89%E6%96%87%E4%BB%B6">加密已有文件</a> 中的步骤，将文件密码设置为空即可<br>或者正确打开加密文件后，进入一般模式下，执行以下命令</p>
-<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:set key=</span><br></pre></td></tr></table></figure>
-
-<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="vim-INSERT-模式中无法使用鼠标复制粘贴"><a href="#vim-INSERT-模式中无法使用鼠标复制粘贴" class="headerlink" title="vim INSERT 模式中无法使用鼠标复制粘贴"></a>vim INSERT 模式中无法使用鼠标复制粘贴</h2><p><strong>环境信息</strong> ：</p>
-<ul>
-<li>Debian GNU&#x2F;Linux 12</li>
-<li>VIM - Vi IMproved 9.0</li>
-</ul>
-<p>在 Debian 的 Docker 镜像中安装 <code>apt install vim</code> 后， 在 <code>vim</code> INSERT 模式下无法使用鼠标复制粘贴内容，这是由于 <code>vim</code> 默认的鼠标配置干扰了鼠标操作。 <strong>禁用鼠标模式即可解决</strong></p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set mouse=</span><br></pre></td></tr></table></figure>
-
-<p>复制粘贴到 <code>vim</code> 后格式可能会错乱，使用 <code>paste</code> 模式解决</p>
-<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set paste</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Linux</category>
-        <category>常用命令</category>
-      </categories>
-      <tags>
-        <tag>Linux</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Philippines VISA</title>
     <url>/202609160000/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="菲律宾-VISA"><a href="#菲律宾-VISA" class="headerlink" title="菲律宾 VISA"></a>菲律宾 VISA</h1><h2 id="SRRV-Classic（普通外籍人士走这条）"><a href="#SRRV-Classic（普通外籍人士走这条）" class="headerlink" title="SRRV Classic（普通外籍人士走这条）"></a>SRRV Classic（普通外籍人士走这条）</h2><p>押金按年龄和有无养老金分四档：</p>
@@ -34340,6 +34287,59 @@ width: 20%;
       </categories>
       <tags>
         <tag>生活日常</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>vim</title>
+    <url>/202208181117/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h1><ul>
+<li>Centos 7</li>
+</ul>
+<h1 id="vim-配置"><a href="#vim-配置" class="headerlink" title="vim 配置"></a>vim 配置</h1><p><code>vim</code> 启动时会读取 <code>/etc/vimrc</code> （全局配置） 和 <code>~/.vimrc</code> （用户配置）</p>
+<p>常用配置如下，使用 <code>&quot;</code> 注释</p>
+<figure class="highlight shell"><figcaption><span>/etc/vimrc</span></figcaption><table><tr><td class="code"><pre><span class="line">&quot; 自动缩进 </span><br><span class="line">set ai</span><br><span class="line">set autoindent</span><br><span class="line"></span><br><span class="line">&quot; 保存历史命令数量</span><br><span class="line">set history=50</span><br><span class="line"></span><br><span class="line">&quot; 右下角显示当前鼠标位置（行列数）</span><br><span class="line">set ruler</span><br><span class="line"></span><br><span class="line">&quot; 鼠标位置所在行显示下划线</span><br><span class="line">set cursorline</span><br><span class="line"></span><br><span class="line">&quot; 开启语法高亮</span><br><span class="line">syntax on</span><br><span class="line"></span><br><span class="line">&quot; 高亮搜索结果</span><br><span class="line">set hlsearch</span><br><span class="line"></span><br><span class="line">&quot; 搜索时不区分大小写</span><br><span class="line">set ignorecase</span><br><span class="line"></span><br><span class="line">&quot; 将 tab 转换为空格</span><br><span class="line">set expandtab</span><br><span class="line"></span><br><span class="line">&quot; tab 转换为4个空格</span><br><span class="line">set tabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 删除时，可以一次删除4个空格</span><br><span class="line">set softtabstop=4</span><br><span class="line"></span><br><span class="line">&quot; 显示行数</span><br><span class="line">set nu</span><br><span class="line"></span><br><span class="line">&quot; 禁用格式化指令。</span><br><span class="line">set paste</span><br></pre></td></tr></table></figure>
+
+<span id="more"></span>
+
+<blockquote>
+<p><strong><code>set paste</code> 要谨慎配置，它会禁用所有的格式化指令，如 <code>set autoindent</code> 等，会导致其不可用</strong></p>
+</blockquote>
+<h1 id="vim-常见用法"><a href="#vim-常见用法" class="headerlink" title="vim 常见用法"></a>vim 常见用法</h1><h2 id="读写加解密文件"><a href="#读写加解密文件" class="headerlink" title="读写加解密文件"></a>读写加解密文件</h2><h3 id="创建新的加密文件"><a href="#创建新的加密文件" class="headerlink" title="创建新的加密文件"></a>创建新的加密文件</h3><figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">vim -x mysecfile</span><br></pre></td></tr></table></figure>
+
+<p>使用 <code>vim</code> 的 <code>-x</code> 选项，将创建一个新的文件，并提示需要设置加密密码，输入 2 次密码后，将进入 <code>vim</code> 界面，编辑完内容，保存后，产生的文件为 <code>vim</code> 加密的文件，使用 <code>file</code> 命令查看，显示如下</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line"><span class="meta prompt_">$ </span><span class="language-bash">file mysecfile</span></span><br><span class="line">mysecfile: Vim encrypted file data</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>之后要使用 <code>vim</code> 编辑此文件，都要按照提示输入密码，如果未输入密码或者输入的密码错误，打开的文件内容将显示为乱码，只有输入正确的密码，才能看到正确的文件内容，如果使用其他编辑器，可以直接打开文件，但是内容乱码  </p>
+<h3 id="加密已有文件"><a href="#加密已有文件" class="headerlink" title="加密已有文件"></a>加密已有文件</h3><p>对于已经存在的未加密文件，使用 <code>vim</code> 的 <code>-x</code> 选项时，会要求输入密码，此时不输入密码，或者随便输入，都会打开正确的文件内容(因为文件并未被 <code>vim</code> 加密保护)  </p>
+<p>对于已经存在的未加密文件，若要使用 <code>vim</code> 进行加密，可以在 <code>vim</code> 打开文件后，使用 <code>vim</code> 的 <code>X</code> 命令对文件进行加密。具体操作为： 在 <code>vim</code> 的一般模式下（按 <code>Esc</code> 进入），输入</p>
+<figure class="highlight text"><table><tr><td class="code"><pre><span class="line">:X</span><br></pre></td></tr></table></figure>
+
+<p>确定后 <code>vim</code> 会提示输入 2 次密码，完成加密，最后保存文件</p>
+<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:wq</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p><strong>对于 <code>vim</code> 已经加密的文件，如果使用 <code>vim</code> 打开时输入错误的密码或者未输入密码，打开文件显示乱码，此时如果对文件进行了保存，会导致乱码被保存为文件内容，导致文件内容丢失</strong></p>
+</blockquote>
+<h3 id="文件解密"><a href="#文件解密" class="headerlink" title="文件解密"></a>文件解密</h3><p>对 <code>vim</code> 已加密的文件，需要解密的话，在正确打开文件后，可以通过 <a href="#%E5%8A%A0%E5%AF%86%E5%B7%B2%E6%9C%89%E6%96%87%E4%BB%B6">加密已有文件</a> 中的步骤，将文件密码设置为空即可<br>或者正确打开加密文件后，进入一般模式下，执行以下命令</p>
+<figure class="highlight shell"><figcaption><span>vim</span></figcaption><table><tr><td class="code"><pre><span class="line">:set key=</span><br></pre></td></tr></table></figure>
+
+<h1 id="常见错误"><a href="#常见错误" class="headerlink" title="常见错误"></a>常见错误</h1><h2 id="vim-INSERT-模式中无法使用鼠标复制粘贴"><a href="#vim-INSERT-模式中无法使用鼠标复制粘贴" class="headerlink" title="vim INSERT 模式中无法使用鼠标复制粘贴"></a>vim INSERT 模式中无法使用鼠标复制粘贴</h2><p><strong>环境信息</strong> ：</p>
+<ul>
+<li>Debian GNU&#x2F;Linux 12</li>
+<li>VIM - Vi IMproved 9.0</li>
+</ul>
+<p>在 Debian 的 Docker 镜像中安装 <code>apt install vim</code> 后， 在 <code>vim</code> INSERT 模式下无法使用鼠标复制粘贴内容，这是由于 <code>vim</code> 默认的鼠标配置干扰了鼠标操作。 <strong>禁用鼠标模式即可解决</strong></p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set mouse=</span><br></pre></td></tr></table></figure>
+
+<p>复制粘贴到 <code>vim</code> 后格式可能会错乱，使用 <code>paste</code> 模式解决</p>
+<figure class="highlight shell"><table><tr><td class="code"><pre><span class="line">:set paste</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Linux</category>
+        <category>常用命令</category>
+      </categories>
+      <tags>
+        <tag>Linux</tag>
       </tags>
   </entry>
   <entry>
@@ -35796,161 +35796,6 @@ width: 20%;
       </categories>
   </entry>
   <entry>
-    <title>六十四卦之地山谦</title>
-    <url>/20250925102040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地山谦"><a href="#地山谦" class="headerlink" title="地山谦"></a>地山谦</h1><p><img src="https://i.0920811.xyz/img_355.png"></p>
-<p>谦，上（外）坤（土、地）下（内）艮（山、刚健），山在地下，山虽然高大，但处于地下，不露锋芒，象征着谦逊。谦卦是《周易》中少有的 <strong>全吉之卦</strong> ，是六十四卦中最推崇的一卦，被称为 <strong>六十四卦中无不吉者，唯谦独亨</strong></p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">谦：亨，君子有终。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：谦，亨，天道下济而光明，地道卑而上行。天道亏盈而益谦，地道变盈而流谦，鬼神害盈而福谦，人道恶盈而好谦。谦尊而光，卑而不可踰，君子之终也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地中有山，谦;君子以裒多益寡，称物平施。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>君子有终</strong> ： 君子以谦处世，能够善终，不致中途败亡。</li>
-<li><strong>天道下济而光明，地道卑而上行</strong> ： 天道不高高在上，而是向下施予（阳光普照、雨水滋润），更显显得光明普照。地道（大地山川）谦卑不张扬（大地承载万物、低处汇聚水流），更能孕育滋养万物，使万物向上生长。</li>
-<li><strong>天道亏盈而益谦，地道变盈而流谦</strong> ： 天道会减损盈满（月满则亏、水满则溢），增益谦逊不足（新月渐盈、水向下流）；地道会改变盈满，滋养谦逊之物。</li>
-<li><strong>谦尊而光，卑而不可踰</strong> ： 踰，通逾，跨过、越过，可引申为超越、凌驾、突破某种界限或标准。谦逊的人即便身居高位（尊），也不会因谦逊而失威严，反而会因 “谦德” 让声望更光明；谦逊的人即便地位低微（卑），也不会因谦逊而被轻视，反而因 “守分寸、有底线”，让人不会小视。</li>
-<li><strong>君子以裒（póu）多益寡，称物平施</strong> ： 裒，收取、聚合、聚集、收集。称，衡量、考量。平施，公平施予。将自身或环境中多余、充裕的部分（如资源、能力、机会等）收拢、整合，给予不足、匮乏的一方，核心是 针对寡的定向帮扶，强调 填补空缺、平衡差距。天道损有余以补不足。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>谦者，不自盈也。盈则溢，谦则益，故能亨。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>谦者，天下之极致也。天地鬼神人道，皆恶盈而好谦。君子以谦自处，无往不吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>谦，卦中六爻皆吉，无凶咎者，以谦而已。</code></p>
-</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">谦谦君子，用涉大川，吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：谦谦君子，卑以自牧也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>谦谦君子，卑以自牧也</strong> ： 谦谦表示谦逊到了极点，非常谦虚。卑，下、处低位。自牧，表示自我修养、自我约束和管理。</li>
-</ul>
-<p>初六是 下卦艮卦（象征山、刚健）的最下位爻，柔顺处下，处于 谦卦 的起点，是 低位时的自我约束、修养（卑以自牧），凭此（谦谦的品德）可跨越重大困境（用涉大川）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>初六以阴居卑，谦之至也。处卑而能自谦，虽涉险难，终得吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>谦以自牧，则虽在险难，必得其助，故吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>谦谦君子，言其谦之又谦也。处下而能谦，虽涉大川，亦吉。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">鸣谦，贞吉。  </span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：鸣谦贞吉，中心得也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>鸣谦贞吉，中心得也</strong> ： 鸣，鸣叫、发声、显露。中心，内心、本心。此处指 谦德的自然表达与外显。心中有谦，故言行显谦，内心真正认同并坚守谦德</li>
-</ul>
-<p>六二为阴爻居阴位，又处下卦中位，属 得位得中，以中正之德而谦而不虚伪，真正合乎内心，所以吉</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六二以阴居中，有谦德之实，故能鸣谦。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>谦而中正，出于中心，非伪饰也。谦如此，吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>鸣谦，谦之著也。六二居下卦之中，谦之至也。</code></p>
-</li>
-</ul>
-<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">劳谦君子，有终吉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：劳谦君子，万民服也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>劳谦君子，万民服也</strong> ： 劳，勤劳、努力、付出、辛劳做事。</li>
-</ul>
-<p>九三爻，阳爻居阳位，位置阳刚得当。劳而有功之象，阳爻在下卦之极，既有才力，又能谦逊，所以成劳谦之象。九三刚正有功，而能自谦，百姓悦服，故吉。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>九三以阳居阳，有功劳之象；处下体之极，谦而不矜，故吉。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>有功而能谦，斯为大德。谦能保终，吉之道也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>劳谦者，劳而能谦也。九三有功而不伐，是以万民悦服。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无不利，撝谦。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无不利，撝谦；不违则也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>撝（wéi）谦</strong> ： 撝，持守、推行、发扬、主持。</li>
-</ul>
-<p>六四阴爻居阴位，得其正，且处于上卦坤之初，紧邻六五（君位），六四本位柔顺，能守谦，是非常合适的位置。接近尊位，若骄矜则凶；但若 “撝谦”，即始终持谦而行，则无不利。谦是天地人鬼所共喜的法则，不违背它，就不会有害。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六四以阴居阴，得位而不失谦，持谦而行，故无不利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>居尊位之侧，最当谦抑。能以谦自牧，不违谦之则，则事无不利。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>撝谦，持谦也。六四近君，尤宜谦抑，能守之，则无往不利。</code></p>
-</li>
-<li><p>撝，持也。能持谦，不失谦道，故无所不利。</p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不富，以其邻，利用侵伐，无不利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用侵伐，征不服也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>不富，以其邻</strong> ： 富，富有、积累资源和财富。不富，非指不富有（物质匮乏），而是不过度积累占据资源，而是以谦逊为德，与邻（同伴或关联方、合作方）共享资源、凝聚力量。</li>
-<li><strong>利用侵伐，征不服也</strong> ： 侵伐，战争、侵略，此处更多象征针对 不谦、不服 的对象采取正当行动，纠正错误或不正当的行为。</li>
-</ul>
-<p>不富者，谦也。能以邻助，征伐不服，非为私也，故无不利。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>六五以柔中居尊，不自富大，能任贤以伐不服，故无不利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>谦之至者，不恃己力而能用贤。虽伐人，非为己，乃征不服于道者，故无不利。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>不富，以其邻，谓不自恃富而能用人。利用侵伐，谓征不服正者也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">鸣谦，利用行师，征邑国。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：鸣谦，志未得也。可用行师，征邑国也。</span><br></pre></td></tr></table></figure>
-
-<p>鸣谦，谓谦德著闻也。然未能尽行其志，故利用行师以征不服之邑国。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>上六处谦之极，谦之声闻（鸣谦），然志未得，故须用兵征伐，以成谦道。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>谦之极而在上，虽著闻天下，然志未能尽得，必用兵以伐不服，斯乃谦之用也。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>鸣谦谓谦之闻也；利用行师，征邑国，谓征不顺也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
     <title>六十四卦之地水师</title>
     <url>/20250908163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地水师"><a href="#地水师" class="headerlink" title="地水师"></a>地水师</h1><p><img src="https://i.0920811.xyz/img_346.png"></p>
@@ -36105,6 +35950,161 @@ width: 20%;
 </li>
 <li><p>朱熹</p>
 <p>  <code>上六居卦之极，事已终矣。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
+    <title>六十四卦之地山谦</title>
+    <url>/20250925102040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="地山谦"><a href="#地山谦" class="headerlink" title="地山谦"></a>地山谦</h1><p><img src="https://i.0920811.xyz/img_355.png"></p>
+<p>谦，上（外）坤（土、地）下（内）艮（山、刚健），山在地下，山虽然高大，但处于地下，不露锋芒，象征着谦逊。谦卦是《周易》中少有的 <strong>全吉之卦</strong> ，是六十四卦中最推崇的一卦，被称为 <strong>六十四卦中无不吉者，唯谦独亨</strong></p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">谦：亨，君子有终。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：谦，亨，天道下济而光明，地道卑而上行。天道亏盈而益谦，地道变盈而流谦，鬼神害盈而福谦，人道恶盈而好谦。谦尊而光，卑而不可踰，君子之终也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：地中有山，谦;君子以裒多益寡，称物平施。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>君子有终</strong> ： 君子以谦处世，能够善终，不致中途败亡。</li>
+<li><strong>天道下济而光明，地道卑而上行</strong> ： 天道不高高在上，而是向下施予（阳光普照、雨水滋润），更显显得光明普照。地道（大地山川）谦卑不张扬（大地承载万物、低处汇聚水流），更能孕育滋养万物，使万物向上生长。</li>
+<li><strong>天道亏盈而益谦，地道变盈而流谦</strong> ： 天道会减损盈满（月满则亏、水满则溢），增益谦逊不足（新月渐盈、水向下流）；地道会改变盈满，滋养谦逊之物。</li>
+<li><strong>谦尊而光，卑而不可踰</strong> ： 踰，通逾，跨过、越过，可引申为超越、凌驾、突破某种界限或标准。谦逊的人即便身居高位（尊），也不会因谦逊而失威严，反而会因 “谦德” 让声望更光明；谦逊的人即便地位低微（卑），也不会因谦逊而被轻视，反而因 “守分寸、有底线”，让人不会小视。</li>
+<li><strong>君子以裒（póu）多益寡，称物平施</strong> ： 裒，收取、聚合、聚集、收集。称，衡量、考量。平施，公平施予。将自身或环境中多余、充裕的部分（如资源、能力、机会等）收拢、整合，给予不足、匮乏的一方，核心是 针对寡的定向帮扶，强调 填补空缺、平衡差距。天道损有余以补不足。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>谦者，不自盈也。盈则溢，谦则益，故能亨。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>谦者，天下之极致也。天地鬼神人道，皆恶盈而好谦。君子以谦自处，无往不吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>谦，卦中六爻皆吉，无凶咎者，以谦而已。</code></p>
+</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">谦谦君子，用涉大川，吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：谦谦君子，卑以自牧也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>谦谦君子，卑以自牧也</strong> ： 谦谦表示谦逊到了极点，非常谦虚。卑，下、处低位。自牧，表示自我修养、自我约束和管理。</li>
+</ul>
+<p>初六是 下卦艮卦（象征山、刚健）的最下位爻，柔顺处下，处于 谦卦 的起点，是 低位时的自我约束、修养（卑以自牧），凭此（谦谦的品德）可跨越重大困境（用涉大川）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>初六以阴居卑，谦之至也。处卑而能自谦，虽涉险难，终得吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>谦以自牧，则虽在险难，必得其助，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>谦谦君子，言其谦之又谦也。处下而能谦，虽涉大川，亦吉。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">鸣谦，贞吉。  </span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：鸣谦贞吉，中心得也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>鸣谦贞吉，中心得也</strong> ： 鸣，鸣叫、发声、显露。中心，内心、本心。此处指 谦德的自然表达与外显。心中有谦，故言行显谦，内心真正认同并坚守谦德</li>
+</ul>
+<p>六二为阴爻居阴位，又处下卦中位，属 得位得中，以中正之德而谦而不虚伪，真正合乎内心，所以吉</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六二以阴居中，有谦德之实，故能鸣谦。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>谦而中正，出于中心，非伪饰也。谦如此，吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>鸣谦，谦之著也。六二居下卦之中，谦之至也。</code></p>
+</li>
+</ul>
+<h2 id="九三"><a href="#九三" class="headerlink" title="九三"></a>九三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">劳谦君子，有终吉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：劳谦君子，万民服也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>劳谦君子，万民服也</strong> ： 劳，勤劳、努力、付出、辛劳做事。</li>
+</ul>
+<p>九三爻，阳爻居阳位，位置阳刚得当。劳而有功之象，阳爻在下卦之极，既有才力，又能谦逊，所以成劳谦之象。九三刚正有功，而能自谦，百姓悦服，故吉。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>九三以阳居阳，有功劳之象；处下体之极，谦而不矜，故吉。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>有功而能谦，斯为大德。谦能保终，吉之道也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>劳谦者，劳而能谦也。九三有功而不伐，是以万民悦服。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">无不利，撝谦。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：无不利，撝谦；不违则也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>撝（wéi）谦</strong> ： 撝，持守、推行、发扬、主持。</li>
+</ul>
+<p>六四阴爻居阴位，得其正，且处于上卦坤之初，紧邻六五（君位），六四本位柔顺，能守谦，是非常合适的位置。接近尊位，若骄矜则凶；但若 “撝谦”，即始终持谦而行，则无不利。谦是天地人鬼所共喜的法则，不违背它，就不会有害。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六四以阴居阴，得位而不失谦，持谦而行，故无不利。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>居尊位之侧，最当谦抑。能以谦自牧，不违谦之则，则事无不利。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>撝谦，持谦也。六四近君，尤宜谦抑，能守之，则无往不利。</code></p>
+</li>
+<li><p>撝，持也。能持谦，不失谦道，故无所不利。</p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">不富，以其邻，利用侵伐，无不利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：利用侵伐，征不服也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>不富，以其邻</strong> ： 富，富有、积累资源和财富。不富，非指不富有（物质匮乏），而是不过度积累占据资源，而是以谦逊为德，与邻（同伴或关联方、合作方）共享资源、凝聚力量。</li>
+<li><strong>利用侵伐，征不服也</strong> ： 侵伐，战争、侵略，此处更多象征针对 不谦、不服 的对象采取正当行动，纠正错误或不正当的行为。</li>
+</ul>
+<p>不富者，谦也。能以邻助，征伐不服，非为私也，故无不利。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>六五以柔中居尊，不自富大，能任贤以伐不服，故无不利。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>谦之至者，不恃己力而能用贤。虽伐人，非为己，乃征不服于道者，故无不利。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>不富，以其邻，谓不自恃富而能用人。利用侵伐，谓征不服正者也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">鸣谦，利用行师，征邑国。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：鸣谦，志未得也。可用行师，征邑国也。</span><br></pre></td></tr></table></figure>
+
+<p>鸣谦，谓谦德著闻也。然未能尽行其志，故利用行师以征不服之邑国。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>上六处谦之极，谦之声闻（鸣谦），然志未得，故须用兵征伐，以成谦道。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>谦之极而在上，虽著闻天下，然志未能尽得，必用兵以伐不服，斯乃谦之用也。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>鸣谦谓谦之闻也；利用行师，征邑国，谓征不顺也。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -38271,6 +38271,150 @@ width: 20%;
       </categories>
   </entry>
   <entry>
+    <title>六十四卦之山地剥</title>
+    <url>/20251009153340/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山地剥"><a href="#山地剥" class="headerlink" title="山地剥"></a>山地剥</h1><p><img src="https://i.0920811.xyz/img_363.png"></p>
+<p>剥，上（外）艮（山、止）下（内）坤（地、顺），山附地上，顺而止之。五阴剥一阳，阴盛侵阳、阳气衰微、正道被剥蚀，衰败之极、危亡将至，但顺天之道、静以待时。</p>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥，不利有攸往。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：剥，剥也，柔变刚也。不利有攸往，小人长也。顺而止之，观象也。君子尚消息盈虚，天行也。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山附地上，剥;上以厚下，安宅。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>君子尚消息盈虚，天行也</strong> ： 消，消退、减退。消息，消长、消退又复长。盈虚，消长、满空。君子知道（崇尚）万物都有消长盈虚、极则必反，此为自然之道。</li>
+<li><strong>山附地上，剥;上以厚下，安宅</strong> ： 山附地上，五阴剥一阳，根基已被（阴柔）侵蚀，根基不稳，阳刚被阴柔侵蚀，正气衰微。此时要以仁厚安民，稳固根基。</li>
+</ul>
+<p><strong>剥</strong> ，剥落，象征正道被蚀、阳气尽失。此时不宜行动，只可守正以待复兴。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>山附于地，根将剥落，剥之象也。君子宜厚下安民，以守其基。</code></p>
+</li>
+<li><p><code>文以饰实，实以居文。内实而外文，乃文之正。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>剥者，损阳益阴也。阴盛阳微，故不利往也。君子观其象，以止为安。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>剥之时，君子当自守其正，不可与小人竞。守静以待复，乃天理之道。</code></p>
+</li>
+</ul>
+<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥床以足，蔑贞，凶</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥床以足，以灭下也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>剥床以足</strong> ： 床，象征根基、承载之物。从床的足部开始剥落，象征从根基最底层开始侵蚀。</li>
+<li><strong>蔑贞凶</strong> ： 蔑，轻蔑、轻视、忽视、不顾。忽视正道、不自警惕（剥床以足），轻视根基剥落的隐患，终将凶险。</li>
+<li><strong>以灭下也</strong> ： 下，根本、基础、根基。这种剥落会导致基础被破坏，最终导致整个结构的崩溃。强调了基础的重要性，以及在面对剥落时，必须重视基础的稳固。</li>
+</ul>
+<p>初六阴爻居最下位，象征阴气萌动、开始侵蚀阳刚之基，是衰败（阴剥阳）之始。像床脚开始被蛀蚀、削坏一样，危机虽小，但根基动摇。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>剥自下起，阴始动也。足者床之本也，剥其足，则床危矣。阴始害阳之象也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>阴始侵阳，象若剥床以足。其害未大，而可觉也。若不正守，则凶祸及矣。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥床以辨，蔑贞，凶</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥床以辨，未有与也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>剥床以辨，未有与也</strong> ： 辨，《程注》谓 <strong>床之干也，是床足之上，床身之下，分辨处也</strong> 。未有与也 指 六二虽居中，却孤立无援，没有志同道合的辅佐者，小人当道、君子失势，孤立而不能止剥。</li>
+</ul>
+<p>六二处下卦中位，本为柔中之爻，按理可守中正而免祸，但在剥卦中，阴盛阳衰，不能自正，正道被逐层削弱。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>剥床以辨，剥之渐也。处中之阴，不能自正，蔑贞而凶也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>床以安身，辨者，床之边也。剥及于辨，则坏之渐深矣。阴剥阳，渐至于辨，蔑乎贞则凶矣。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥之，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥之无咎，失上下也。</span><br></pre></td></tr></table></figure>
+
+<p><strong>六三阴爻居阳位，是剥卦中唯一无咎的阴爻</strong> 。在剥卦五阴剥一阳的格局中，六三处下卦之终，上卦之下，是全卦中和唯一刚爻有正应关系得爻，因此不像其他阴爻一般剥蚀唯一得刚爻（失上下也）。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>旨在剥去害者则无咎。六三阴居不正，剥势方炽，失其上下之助，孤也，故唯有自去其害，乃得无咎。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>六三居下之极，剥势既深，能知止而剥之，则可免咎；所谓失上下，即不比二、不应上九，孤而能自守。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥床以肤，凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥床以肤，切近灾也。</span><br></pre></td></tr></table></figure>
+
+<p>肤，体也。阴剥阳之体，近灾也。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>剥床以肤，剥之深也。阴盛剥阳，已及其身矣。切近灾也者，灾之将至也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>肤者，近体之言。剥及于肤，则危极矣。阴剥阳几尽矣，故凶。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贯鱼，以宫人宠，无不利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：以宫人宠，终无尤也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>贯鱼，以宫人宠</strong> ： 贯，串连、串联、穿成一串。鱼，常与阴柔关联，众阴之象，此处指五阴爻。贯鱼，象征有序管控阴柔势力，避免无序侵蚀。</li>
+</ul>
+<p>六五阴居阳位虽不正，但尊位居中柔而顺阳，能联众阴、承上阳，是阴极转阳、衰极思复的转机。阴盛至极，阳将再生。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>言阴得中而顺阳也。虽不当位，得中以应刚，终无尤也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>阴居尊位，以柔顺承阳，得其正也。故曰以宫人宠，无不利。言能顺而不专也。</code></p>
+</li>
+<li><p><code>贯鱼者，阴气相连也。以宫人宠者，柔顺而承阳也。阴极而能顺阳，则无不利。</code></p>
+</li>
+<li><p><code>贯鱼，阴类相从之象。以宫人宠，言柔顺而承刚也。五以阴居尊位，不可自用，能顺阳则无不利。</code></p>
+</li>
+<li><p><code>五居尊位而阴柔，能自抑以承阳，此剥极将复之机也。</code></p>
+</li>
+</ul>
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">硕果不食，君子得舆，小人剥庐。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子得舆，民所载也。小人剥庐，终不可用也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>硕果不食，君子得舆，小人剥庐</strong> ： 硕果，大果、成熟之果，此处象征阳刚之道；舆，车舆、马车、能载人之车，象征得民所载；庐，简陋的房屋、茅屋。阳刚之气虽被剥离几尽，但尚有生机（硕果不食）。君子得民所载、复起于衰世，小人势消（阴消阳复）</li>
+</ul>
+<p>剥卦至此，五阴剥尽，仅余一阳（上九）。阳虽孤危，但未灭（硕果未食）。阴极将衰、阳德将复。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>硕果不食者，言阳道虽孤，犹有余贞，不可复剥也。君子得舆，民所载也；小人剥庐，阴穷之象也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>硕果不食，言阳德未尽。君子得舆，民心归之；小人剥庐，阴剥穷也。阴穷而阳复，剥极而复之时也。</code></p>
+</li>
+<li><p><code>阳为果，硕果谓阳也。不食，藏之也。君子阳也，得舆民载也。小人阴也，剥庐阴尽也。</code></p>
+</li>
+<li><p><code>剥尽而上阳独存，犹硕果不食也。君子得舆者，民载之也。小人剥庐，居无所安也。</code></p>
+</li>
+<li><p><code>此剥卦之终也。阳道未灭，阴极阳生。君子得舆，小人剥庐，阴阳消长之理至此昭然。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
+  </entry>
+  <entry>
     <title>六十四卦之乾为天</title>
     <url>/20250828163229/</url>
     <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="乾为天"><a href="#乾为天" class="headerlink" title="乾为天"></a>乾为天</h1><p><img src="https://i.0920811.xyz/img_341.png"></p>
@@ -38470,150 +38614,6 @@ width: 20%;
 </li>
 <li><p>朱熹</p>
 <p>  <code>六爻皆阳，至于上九而无所止，亢而无应，过也。盈不可久，故有悔也。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之山地剥</title>
-    <url>/20251009153340/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山地剥"><a href="#山地剥" class="headerlink" title="山地剥"></a>山地剥</h1><p><img src="https://i.0920811.xyz/img_363.png"></p>
-<p>剥，上（外）艮（山、止）下（内）坤（地、顺），山附地上，顺而止之。五阴剥一阳，阴盛侵阳、阳气衰微、正道被剥蚀，衰败之极、危亡将至，但顺天之道、静以待时。</p>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥，不利有攸往。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：剥，剥也，柔变刚也。不利有攸往，小人长也。顺而止之，观象也。君子尚消息盈虚，天行也。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山附地上，剥;上以厚下，安宅。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>君子尚消息盈虚，天行也</strong> ： 消，消退、减退。消息，消长、消退又复长。盈虚，消长、满空。君子知道（崇尚）万物都有消长盈虚、极则必反，此为自然之道。</li>
-<li><strong>山附地上，剥;上以厚下，安宅</strong> ： 山附地上，五阴剥一阳，根基已被（阴柔）侵蚀，根基不稳，阳刚被阴柔侵蚀，正气衰微。此时要以仁厚安民，稳固根基。</li>
-</ul>
-<p><strong>剥</strong> ，剥落，象征正道被蚀、阳气尽失。此时不宜行动，只可守正以待复兴。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>山附于地，根将剥落，剥之象也。君子宜厚下安民，以守其基。</code></p>
-</li>
-<li><p><code>文以饰实，实以居文。内实而外文，乃文之正。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>剥者，损阳益阴也。阴盛阳微，故不利往也。君子观其象，以止为安。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>剥之时，君子当自守其正，不可与小人竞。守静以待复，乃天理之道。</code></p>
-</li>
-</ul>
-<h2 id="初六"><a href="#初六" class="headerlink" title="初六"></a>初六</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥床以足，蔑贞，凶</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥床以足，以灭下也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>剥床以足</strong> ： 床，象征根基、承载之物。从床的足部开始剥落，象征从根基最底层开始侵蚀。</li>
-<li><strong>蔑贞凶</strong> ： 蔑，轻蔑、轻视、忽视、不顾。忽视正道、不自警惕（剥床以足），轻视根基剥落的隐患，终将凶险。</li>
-<li><strong>以灭下也</strong> ： 下，根本、基础、根基。这种剥落会导致基础被破坏，最终导致整个结构的崩溃。强调了基础的重要性，以及在面对剥落时，必须重视基础的稳固。</li>
-</ul>
-<p>初六阴爻居最下位，象征阴气萌动、开始侵蚀阳刚之基，是衰败（阴剥阳）之始。像床脚开始被蛀蚀、削坏一样，危机虽小，但根基动摇。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>剥自下起，阴始动也。足者床之本也，剥其足，则床危矣。阴始害阳之象也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>阴始侵阳，象若剥床以足。其害未大，而可觉也。若不正守，则凶祸及矣。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥床以辨，蔑贞，凶</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥床以辨，未有与也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>剥床以辨，未有与也</strong> ： 辨，《程注》谓 <strong>床之干也，是床足之上，床身之下，分辨处也</strong> 。未有与也 指 六二虽居中，却孤立无援，没有志同道合的辅佐者，小人当道、君子失势，孤立而不能止剥。</li>
-</ul>
-<p>六二处下卦中位，本为柔中之爻，按理可守中正而免祸，但在剥卦中，阴盛阳衰，不能自正，正道被逐层削弱。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>剥床以辨，剥之渐也。处中之阴，不能自正，蔑贞而凶也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>床以安身，辨者，床之边也。剥及于辨，则坏之渐深矣。阴剥阳，渐至于辨，蔑乎贞则凶矣。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥之，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥之无咎，失上下也。</span><br></pre></td></tr></table></figure>
-
-<p><strong>六三阴爻居阳位，是剥卦中唯一无咎的阴爻</strong> 。在剥卦五阴剥一阳的格局中，六三处下卦之终，上卦之下，是全卦中和唯一刚爻有正应关系得爻，因此不像其他阴爻一般剥蚀唯一得刚爻（失上下也）。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>旨在剥去害者则无咎。六三阴居不正，剥势方炽，失其上下之助，孤也，故唯有自去其害，乃得无咎。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>六三居下之极，剥势既深，能知止而剥之，则可免咎；所谓失上下，即不比二、不应上九，孤而能自守。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">剥床以肤，凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：剥床以肤，切近灾也。</span><br></pre></td></tr></table></figure>
-
-<p>肤，体也。阴剥阳之体，近灾也。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>剥床以肤，剥之深也。阴盛剥阳，已及其身矣。切近灾也者，灾之将至也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>肤者，近体之言。剥及于肤，则危极矣。阴剥阳几尽矣，故凶。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">贯鱼，以宫人宠，无不利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：以宫人宠，终无尤也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>贯鱼，以宫人宠</strong> ： 贯，串连、串联、穿成一串。鱼，常与阴柔关联，众阴之象，此处指五阴爻。贯鱼，象征有序管控阴柔势力，避免无序侵蚀。</li>
-</ul>
-<p>六五阴居阳位虽不正，但尊位居中柔而顺阳，能联众阴、承上阳，是阴极转阳、衰极思复的转机。阴盛至极，阳将再生。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>言阴得中而顺阳也。虽不当位，得中以应刚，终无尤也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>阴居尊位，以柔顺承阳，得其正也。故曰以宫人宠，无不利。言能顺而不专也。</code></p>
-</li>
-<li><p><code>贯鱼者，阴气相连也。以宫人宠者，柔顺而承阳也。阴极而能顺阳，则无不利。</code></p>
-</li>
-<li><p><code>贯鱼，阴类相从之象。以宫人宠，言柔顺而承刚也。五以阴居尊位，不可自用，能顺阳则无不利。</code></p>
-</li>
-<li><p><code>五居尊位而阴柔，能自抑以承阳，此剥极将复之机也。</code></p>
-</li>
-</ul>
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">硕果不食，君子得舆，小人剥庐。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：君子得舆，民所载也。小人剥庐，终不可用也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>硕果不食，君子得舆，小人剥庐</strong> ： 硕果，大果、成熟之果，此处象征阳刚之道；舆，车舆、马车、能载人之车，象征得民所载；庐，简陋的房屋、茅屋。阳刚之气虽被剥离几尽，但尚有生机（硕果不食）。君子得民所载、复起于衰世，小人势消（阴消阳复）</li>
-</ul>
-<p>剥卦至此，五阴剥尽，仅余一阳（上九）。阳虽孤危，但未灭（硕果未食）。阴极将衰、阳德将复。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>硕果不食者，言阳道虽孤，犹有余贞，不可复剥也。君子得舆，民所载也；小人剥庐，阴穷之象也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>硕果不食，言阳德未尽。君子得舆，民心归之；小人剥庐，阴剥穷也。阴穷而阳复，剥极而复之时也。</code></p>
-</li>
-<li><p><code>阳为果，硕果谓阳也。不食，藏之也。君子阳也，得舆民载也。小人阴也，剥庐阴尽也。</code></p>
-</li>
-<li><p><code>剥尽而上阳独存，犹硕果不食也。君子得舆者，民载之也。小人剥庐，居无所安也。</code></p>
-</li>
-<li><p><code>此剥卦之终也。阳道未灭，阴极阳生。君子得舆，小人剥庐，阴阳消长之理至此昭然。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -38928,137 +38928,6 @@ width: 20%;
 </li>
 <li><p>朱熹</p>
 <p>  <code>白贲，质素也。文极而反质，纯诚自然，故无咎。</code></p>
-</li>
-</ul>
-]]></content>
-      <categories>
-        <category>易学</category>
-      </categories>
-  </entry>
-  <entry>
-    <title>六十四卦之山雷颐</title>
-    <url>/20251112142040/</url>
-    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山雷颐"><a href="#山雷颐" class="headerlink" title="山雷颐"></a>山雷颐</h1><p><img src="https://i.0920811.xyz/img_372.png"></p>
-<p>山雷颐，下震（雷、动）尚艮（山、止），颐，最初之意为嘴和下巴部分，引申为养。</p>
-<blockquote>
-<p><strong>颐指气使</strong> ，指有权势的人使用下巴指使人。 <strong>颐养天年</strong> 中，颐为养，通过口吃食物获取营养。</p>
-</blockquote>
-<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">颐，贞吉。观颐，自求口实。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：颐贞吉，养正则吉也。观颐，观其所养也。自求口实，观其自养也。天地养万物，圣人养贤以及万民。颐之时义大矣哉。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山下有雷，颐。君子以慎言语，节饮食。</span><br></pre></td></tr></table></figure>
-
-<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">舍尔灵龟，观我朵颐，凶</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我朵颐，亦不足贵也</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>舍而灵龟</strong> ： 山雷颐卦由风地观卦九五初六互换爻位而来，在周易体系中，内卦为我，外卦为他，观卦九五来到初九，变为颐卦，是舍弃尊位来到下位，故称 “舍尔灵龟”，灵龟象征 “心之灵明”“德之根本”，人若舍此而追外物，是 “舍本逐末”。</li>
-<li><strong>观我朵颐</strong> ： 朵，数目缀满花叶下垂的样子。朵颐，下颌张开咬食多西、动嘴咀嚼、鼓动腮帮子进食的样子，引申为口腹、物欲之乐。</li>
-</ul>
-<p>舍天理而逐口欲，虽养形而害心，虽富而不贵。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>灵龟者，道心也。舍而观朵颐者，逐物也。失正养而凶，理之必然。</code></p>
-</li>
-<li><p><code>灵龟知吉凶，象有明智。舍灵龟而观朵颐，谓舍知而逐欲，故凶。</code></p>
-</li>
-<li><p><code>灵龟，象心也。舍心从口，是舍道逐欲，凶。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>灵龟者，神物也。舍其神以事口，反养为害，故凶。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>人之养也，贵乎以理养心。初九舍其灵明之性，而以口腹为养，故凶。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>灵龟，内明之象。朵颐，口实之象。舍其内而求外，失养之正，凶。</code></p>
-</li>
-</ul>
-<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">颠颐，拂经，于丘颐，征凶。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二征凶，行失类也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>颠颐，拂经于丘颐，征凶</strong> ： 颠，颠动、颠倒、倒置。拂，违背、违逆。经，常道、常理。丘，高、高丘、山丘、高地，喻指上位者、高位者。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>养道本在内自养，而今颠之，拂之，求之于外，故凶。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>颠其所养，是失正也；拂经，失其道也。于丘求养，失其本也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>颠者，不正也；拂经者，逆理也。求养于丘，舍己从人，失养之道。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>颠颐谓自求口腹而失养心之正；拂经谓违理；于丘颐，依人也。行斯有凶。</code></p>
-</li>
-</ul>
-<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拂颐，贞凶。十年勿用，无攸利。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：十年勿用，道大悖也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>拂颐，贞凶。十年勿用，无攸利</strong> ： 违背养正之道，使用错误的方式自养或养人，坚持不变（贞）则凶，已悖养正之道，要尽早改正，否则越坚持越坏。</li>
-</ul>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p>王弼</p>
-<p><code>拂颐，违养也。违养而固执之，其凶必矣。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>拂颐，失道也。失道而固之，凶。十年者，久长之辞。大悖则久不可用。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>失养之正而固守其失，是以凶。久必不能任用。</code></p>
-</li>
-</ul>
-<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">颠颐，吉。虎视眈眈，其欲逐逐，无咎。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：颠颐之吉，上施光也。</span><br></pre></td></tr></table></figure>
-
-<ul>
-<li><strong>虎视眈眈，其欲逐逐</strong> ： 虎视眈眈，老虎伏击猎物时的全神贯注、谨慎下视的样子。逐逐，小心、轻轻收敛、谨慎逐取的样子。</li>
-</ul>
-<p>六四阴居阴位，得正，有全卦主爻初九为正应，上临尊位，是转向养正。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>得正而向上，故云上施光也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>改过向上，是颠而吉。虎视者，慎动也。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>颠其所养而反向上，自反以求正也，故吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>向下求养则凶，向上求养则吉。</code></p>
-</li>
-</ul>
-<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拂经，居贞吉。不可涉大川。</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：居贞之吉，顺以从上也。</span><br></pre></td></tr></table></figure>
-
-<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">由颐，历吉。利涉大川</span><br></pre></td></tr></table></figure>
-
-<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：由颐，历吉，大有庆也。</span><br></pre></td></tr></table></figure>
-
-<p>上九变卦之前为观卦上九，观卦两个上爻处于被阴爻避退（剥）的局面，观卦九五下到初九后，消除了剥的局面，由厉而变吉，故 “厉吉”，下有六三为正应，有援，利涉大川。</p>
-<p><strong>古人注解</strong> ：</p>
-<ul>
-<li><p><code>得正而向上，故云上施光也。</code></p>
-</li>
-<li><p>王弼</p>
-<p><code>由颐，得养也。得养者，无所不利。</code></p>
-</li>
-<li><p>程颐</p>
-<p>  <code>由颐，而有所养也。故虽厉而能吉。</code></p>
-</li>
-<li><p>朱熹</p>
-<p>  <code>由正养而来者也。德充而能胜险。</code></p>
 </li>
 </ul>
 ]]></content>
@@ -41730,6 +41599,137 @@ width: 20%;
       <tags>
         <tag>Linux</tag>
       </tags>
+  </entry>
+  <entry>
+    <title>六十四卦之山雷颐</title>
+    <url>/20251112142040/</url>
+    <content><![CDATA[<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/hint.css/2.4.1/hint.min.css"><h1 id="山雷颐"><a href="#山雷颐" class="headerlink" title="山雷颐"></a>山雷颐</h1><p><img src="https://i.0920811.xyz/img_372.png"></p>
+<p>山雷颐，下震（雷、动）尚艮（山、止），颐，最初之意为嘴和下巴部分，引申为养。</p>
+<blockquote>
+<p><strong>颐指气使</strong> ，指有权势的人使用下巴指使人。 <strong>颐养天年</strong> 中，颐为养，通过口吃食物获取营养。</p>
+</blockquote>
+<figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">颐，贞吉。观颐，自求口实。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>彖</span></figcaption><table><tr><td class="code"><pre><span class="line">彖曰：颐贞吉，养正则吉也。观颐，观其所养也。自求口实，观其自养也。天地养万物，圣人养贤以及万民。颐之时义大矣哉。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：山下有雷，颐。君子以慎言语，节饮食。</span><br></pre></td></tr></table></figure>
+
+<h2 id="初九"><a href="#初九" class="headerlink" title="初九"></a>初九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">舍尔灵龟，观我朵颐，凶</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：观我朵颐，亦不足贵也</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>舍而灵龟</strong> ： 山雷颐卦由风地观卦九五初六互换爻位而来，在周易体系中，内卦为我，外卦为他，观卦九五来到初九，变为颐卦，是舍弃尊位来到下位，故称 “舍尔灵龟”，灵龟象征 “心之灵明”“德之根本”，人若舍此而追外物，是 “舍本逐末”。</li>
+<li><strong>观我朵颐</strong> ： 朵，数目缀满花叶下垂的样子。朵颐，下颌张开咬食多西、动嘴咀嚼、鼓动腮帮子进食的样子，引申为口腹、物欲之乐。</li>
+</ul>
+<p>舍天理而逐口欲，虽养形而害心，虽富而不贵。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>灵龟者，道心也。舍而观朵颐者，逐物也。失正养而凶，理之必然。</code></p>
+</li>
+<li><p><code>灵龟知吉凶，象有明智。舍灵龟而观朵颐，谓舍知而逐欲，故凶。</code></p>
+</li>
+<li><p><code>灵龟，象心也。舍心从口，是舍道逐欲，凶。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>灵龟者，神物也。舍其神以事口，反养为害，故凶。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>人之养也，贵乎以理养心。初九舍其灵明之性，而以口腹为养，故凶。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>灵龟，内明之象。朵颐，口实之象。舍其内而求外，失养之正，凶。</code></p>
+</li>
+</ul>
+<h2 id="六二"><a href="#六二" class="headerlink" title="六二"></a>六二</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">颠颐，拂经，于丘颐，征凶。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：六二征凶，行失类也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>颠颐，拂经于丘颐，征凶</strong> ： 颠，颠动、颠倒、倒置。拂，违背、违逆。经，常道、常理。丘，高、高丘、山丘、高地，喻指上位者、高位者。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>养道本在内自养，而今颠之，拂之，求之于外，故凶。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>颠其所养，是失正也；拂经，失其道也。于丘求养，失其本也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>颠者，不正也；拂经者，逆理也。求养于丘，舍己从人，失养之道。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>颠颐谓自求口腹而失养心之正；拂经谓违理；于丘颐，依人也。行斯有凶。</code></p>
+</li>
+</ul>
+<h2 id="六三"><a href="#六三" class="headerlink" title="六三"></a>六三</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拂颐，贞凶。十年勿用，无攸利。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：十年勿用，道大悖也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>拂颐，贞凶。十年勿用，无攸利</strong> ： 违背养正之道，使用错误的方式自养或养人，坚持不变（贞）则凶，已悖养正之道，要尽早改正，否则越坚持越坏。</li>
+</ul>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p>王弼</p>
+<p><code>拂颐，违养也。违养而固执之，其凶必矣。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>拂颐，失道也。失道而固之，凶。十年者，久长之辞。大悖则久不可用。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>失养之正而固守其失，是以凶。久必不能任用。</code></p>
+</li>
+</ul>
+<h2 id="六四"><a href="#六四" class="headerlink" title="六四"></a>六四</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">颠颐，吉。虎视眈眈，其欲逐逐，无咎。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：颠颐之吉，上施光也。</span><br></pre></td></tr></table></figure>
+
+<ul>
+<li><strong>虎视眈眈，其欲逐逐</strong> ： 虎视眈眈，老虎伏击猎物时的全神贯注、谨慎下视的样子。逐逐，小心、轻轻收敛、谨慎逐取的样子。</li>
+</ul>
+<p>六四阴居阴位，得正，有全卦主爻初九为正应，上临尊位，是转向养正。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>得正而向上，故云上施光也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>改过向上，是颠而吉。虎视者，慎动也。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>颠其所养而反向上，自反以求正也，故吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>向下求养则凶，向上求养则吉。</code></p>
+</li>
+</ul>
+<h2 id="六五"><a href="#六五" class="headerlink" title="六五"></a>六五</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">拂经，居贞吉。不可涉大川。</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：居贞之吉，顺以从上也。</span><br></pre></td></tr></table></figure>
+
+<h2 id="上九"><a href="#上九" class="headerlink" title="上九"></a>上九</h2><figure class="highlight text"><figcaption><span>易</span></figcaption><table><tr><td class="code"><pre><span class="line">由颐，历吉。利涉大川</span><br></pre></td></tr></table></figure>
+
+<figure class="highlight text"><figcaption><span>象</span></figcaption><table><tr><td class="code"><pre><span class="line">象曰：由颐，历吉，大有庆也。</span><br></pre></td></tr></table></figure>
+
+<p>上九变卦之前为观卦上九，观卦两个上爻处于被阴爻避退（剥）的局面，观卦九五下到初九后，消除了剥的局面，由厉而变吉，故 “厉吉”，下有六三为正应，有援，利涉大川。</p>
+<p><strong>古人注解</strong> ：</p>
+<ul>
+<li><p><code>得正而向上，故云上施光也。</code></p>
+</li>
+<li><p>王弼</p>
+<p><code>由颐，得养也。得养者，无所不利。</code></p>
+</li>
+<li><p>程颐</p>
+<p>  <code>由颐，而有所养也。故虽厉而能吉。</code></p>
+</li>
+<li><p>朱熹</p>
+<p>  <code>由正养而来者也。德充而能胜险。</code></p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>易学</category>
+      </categories>
   </entry>
   <entry>
     <title>Linux bash 常用操作</title>
